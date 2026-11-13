@@ -38,6 +38,10 @@ export interface DaySignal {
   orLow: number;
   /** this kind of signal (buy / short) passed the past test */
   trusted: boolean;
+  /** learned chance that this signal makes money (0–1), when the app has learned */
+  chance?: number;
+  /** the learning passed its unseen-days check and decided this signal */
+  ml?: boolean;
   /** found while catching up: the breakout happened earlier than the latest 5-minute bar */
   late?: boolean;
   announced?: boolean;

@@ -60,6 +60,8 @@ export interface SessionStore {
   dayLive: DayLive;
   /** 5-minute history download progress */
   intradayProgress: { done: number; total: number; running: boolean; at: number; error?: string };
+  /** self-learning in progress (app v1.0) */
+  mlProgress: { done: number; total: number; running: boolean; at: number };
   /** last time the 5-minute history was checked for missing days */
   intradayCheckedAt: number;
   /** result of the past-year test of the picks (v0.8.0), with the inputs it was computed for */

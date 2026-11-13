@@ -10,7 +10,7 @@ import { inTheNews } from '../data/news';
 import { marketMood } from '../advisor/mood';
 import { newsFor } from './newsJobs';
 import { appendBar, completedBars, dayExitAt, liveConfig, marketMove, minutesIST, sideWord, signalFrom, slotStart, type DayLive, type LiveStock } from '../daytrade/live';
-import { DEFAULT_RULES, OPEN_T, dayTradePnl, findBreakout, hhmm, openingRange, relativeVolume } from '../daytrade/rules';
+import { DEFAULT_RULES, OPEN_T, dayTradePnl, findBreakout, hhmm, openingRange, relativeVolume, type Breakout } from '../daytrade/rules';
 import type { DaySignal, DayTrade, Side } from '../daytrade/types';
 import { createLogger } from '../lib/log';
 import { createQueue } from '../lib/queue';
@@ -22,6 +22,7 @@ import { getDb } from '../storage/db';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { UpstoxError } from '../upstox/errors';
+import { scoreLive } from './mlJobs';
 
 /**
  * Day-trade mode in the service worker (v0.11.0): downloads the 5-minute history, raises BUY / SELL
@@ -158,6 +159,22 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   log.info(`Day-trade signal(s): ${add.map((s) => `${sideWord(s.side)} ${s.symbol}@${s.entry}${s.late ? ' (late)' : ''}`).join(', ')}`);
 }
 
+/**
+ * A breakout becomes a signal by the plain rules — or, when the self-learning passed its check on
+ * unseen days, when its learned chance is at least the bar it chose. Every signal shows the chance.
+ */
+async function scoredSignal(date: string, key: string, s: LiveStock, bo: Breakout, price: number, market: number | null, cfg: ReturnType<typeof liveConfig>, now: number, late = false): Promise<DaySignal | null> {
+  const score = await scoreLive(date, key, s, bo, market);
+  const learningDecides = !!score?.inUse;
+  if (learningDecides && score!.chance < score!.threshold) return null;
+  const sig = signalFrom(date, key, s, bo, price, market, cfg, now, late, learningDecides);
+  if (sig && score) {
+    sig.chance = Math.round(score.chance * 100) / 100;
+    if (learningDecides) sig.ml = true;
+  }
+  return sig;
+}
+
 /** Loads today's finished 5-minute bars for every watched stock from Upstox and looks for breakouts so far. */
 async function loadToday(date: string, now: number): Promise<void> {
   const [settings, keys, quotes, test] = await Promise.all([getSettings(), dayKeys(), getQuotes(), getLocal('dayTest')]);
@@ -204,7 +221,7 @@ async function loadToday(date: string, now: number): Promise<void> {
     if (!bo) continue;
     s.done = true;
     const late = bo.barCloseT < st.lastSlotT;
-    const sig = signalFrom(date, key, s, bo, late ? bo.close : ((await getQuotes())[key]?.ltp ?? bo.close), market, cfg, now, late);
+    const sig = await scoredSignal(date, key, s, bo, late ? bo.close : ((await getQuotes())[key]?.ltp ?? bo.close), market, cfg, now, late);
     if (sig) fresh.push(sig);
   }
   await setSession('dayLive', st);
@@ -259,7 +276,7 @@ export async function dayTick(now = Date.now()): Promise<{ signals: number; stat
       if (q && now - q.fetchedAt > 90_000) continue;
       const bo = appendBar(s, barT, q, R);
       if (!bo || !q) continue;
-      const sig = signalFrom(date, key, s, bo, q.ltp, market, cfg, now);
+      const sig = await scoredSignal(date, key, s, bo, q.ltp, market, cfg, now);
       if (sig) fresh.push(sig);
     }
   }

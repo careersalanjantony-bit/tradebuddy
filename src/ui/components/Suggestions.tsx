@@ -13,6 +13,7 @@ import { StudyButton } from './Explain';
 import { BoughtForm, GttBox, recordPurchase } from './Bought';
 import { DownloadNote } from './DownloadNote';
 import { PriceRange } from './PriceRange';
+import { openTrade } from './TradeSheet';
 
 const pct = (x: number | null) => (x === null ? '—' : `${Math.round(x * 100)}%`);
 
@@ -218,6 +219,11 @@ function PickCard({
   });
 
   const practice = async () => {
+    // app: practice picks go into the practice-money wallet (kept overnight, sells at its safety price or target)
+    openTrade({ key: s.key, symbol: s.symbol, side: 'buy', qty: p.qty, stop: p.stop, target: p.target, sellByClose: false, source: 'Top pick' });
+  };
+  // the extension's separate practice list (kept for older practice trades)
+  const practiceOld = async () => {
     try {
       const r = await callBackground('practice:buy', { plan: planMsg() });
       const text =

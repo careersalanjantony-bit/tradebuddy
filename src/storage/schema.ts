@@ -26,6 +26,8 @@ export interface Settings {
     /** price filter for picks and lists (₹); max null = no limit */
     priceMin: number;
     priceMax: number | null;
+    /** the first-launch guide was finished or skipped (app v1.0) */
+    guideSeen: boolean;
   };
   risk: {
     /** Trading capital in ₹. Entered by the owner; never hard-coded (§24). */
@@ -271,6 +273,8 @@ export interface LocalStore {
   dayTrades: DayTrade[];
   /** latest past test of the day-trade rules, with the inputs it was computed for */
   dayTest: { key: string; report: DayTestReport } | null;
+  /** self-learning: the latest learned model and its check (app v1.0) */
+  mlModel: import('../ml/learn').MlReport | null;
   /** practice money (app v1.0); null until first used */
   wallet: import('../wallet/wallet').WalletState | null;
 }

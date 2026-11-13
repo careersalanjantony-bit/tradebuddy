@@ -64,6 +64,8 @@ export interface ApiMap {
   'practice:buy': { req: { plan: NewPlanMsg }; res: { id: string; status: 'open' | 'planned'; price: number | null } };
   'practice:sell': { req: { id: string }; res: { price: number; pnl: number } };
   'practice:reset': { req: undefined; res: { removed: number } };
+  /** self-learning: learn now from the stored 5-minute history */
+  'ml:learn': { req: undefined; res: { samples: number; passed: boolean } };
   /** practice money (app v1.0) */
   'wallet:order': { req: import('../wallet/wallet').OrderRequest; res: { order: import('../wallet/wallet').PaperOrder; filledAt?: number } };
   'wallet:cancel': { req: { id: string }; res: { done: true } };

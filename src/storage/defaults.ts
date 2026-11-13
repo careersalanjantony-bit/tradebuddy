@@ -2,7 +2,7 @@ import type { AuthState, LocalStore, Settings } from './schema';
 
 /** Defaults from the spec (§9, §11, §12, §13, §15.1). */
 export const DEFAULT_SETTINGS: Settings = {
-  ui: { theme: 'system', mode: 'simple', priceMin: 0, priceMax: null },
+  ui: { theme: 'system', mode: 'simple', priceMin: 0, priceMax: null, guideSeen: false },
   risk: {
     capitalInr: null,
     riskPerTradePct: 1,
@@ -78,5 +78,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     dayTrades: [],
     dayTest: null,
     wallet: null,
+    mlModel: null,
   };
 }

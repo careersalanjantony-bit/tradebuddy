@@ -377,3 +377,121 @@ table.past-record td:first-child { white-space: nowrap; }
 .news-list li { padding: 3px 0; border-top: 1px solid var(--border); }
 .news-list li:first-child { border-top: 0; }
 .news-list a { color: inherit; }
+
+/* ===================== TradeBuddy app (v1.0): phone-first layout ===================== */
+html, body { font-size: 15px; -webkit-tap-highlight-color: transparent; }
+body { overscroll-behavior-y: none; }
+.boot { padding: 40vh 16px 0; text-align: center; color: var(--muted); }
+.app { flex-direction: row; min-height: 100vh; min-height: 100dvh; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+.statusbar { padding-top: calc(6px + env(safe-area-inset-top)); }
+main { width: 100%; max-width: 760px; margin: 0 auto; padding: 12px; }
+.screen { display: flex; flex-direction: column; gap: 12px; }
+.card { border-radius: 14px; padding: 14px; }
+.btn { min-height: 38px; border-radius: 10px; padding: 6px 14px; }
+.btn.small { min-height: 32px; padding: 4px 10px; border-radius: 8px; }
+.btn.block { display: block; width: 100%; margin-top: 10px; min-height: 46px; font-weight: 600; }
+.btn.grow { flex: 1; }
+.btn.buy, .btn.primary.buy { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.sell, .btn.primary.sell { background: var(--err); border-color: var(--err); color: #fff; }
+.btn.sell:disabled { opacity: 0.45; }
+input, select { min-height: 40px; border-radius: 10px; }
+.link-btn { min-height: 28px; }
+
+/* bottom bar (phones) */
+.bottom-nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: flex; background: var(--surface); border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bottom-nav button {
+  flex: 1; position: relative; border: 0; background: transparent; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px 7px; cursor: pointer;
+}
+.bottom-nav .ic { font-size: 19px; line-height: 1; }
+.bottom-nav .lbl { font-size: 11px; }
+.bottom-nav button[aria-current='page'] { color: var(--accent); font-weight: 600; }
+.bottom-nav button[aria-current='page']::before { content: ''; position: absolute; top: 0; left: 30%; right: 30%; height: 3px; border-radius: 0 0 3px 3px; background: var(--accent); }
+.bottom-nav .count, .side-nav .count, .menu .count { background: var(--err); color: #fff; border-radius: 9px; font-size: 10px; padding: 0 6px; margin-left: 4px; }
+.bottom-nav .count { position: absolute; top: 4px; right: 22%; }
+
+/* side menu (tablets, laptops) */
+.side-nav { display: none; }
+@media (min-width: 900px) {
+  .side-nav {
+    display: flex; flex-direction: column; gap: 2px; width: 220px; flex: none; position: sticky; top: 0; height: 100vh;
+    padding: 14px 10px; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto;
+  }
+  .side-nav .brand { font-weight: 700; font-size: 18px; padding: 4px 10px 14px; }
+  .side-nav .brand .logo { color: var(--ok); }
+  .side-nav button { display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: transparent; color: var(--muted); padding: 9px 10px; border-radius: 10px; cursor: pointer; }
+  .side-nav button:hover { background: var(--surface-2); color: var(--fg); }
+  .side-nav button[aria-current='page'] { background: var(--accent); color: var(--accent-fg); }
+  .side-nav .ic { width: 20px; text-align: center; }
+  .bottom-nav { display: none; }
+  .content { padding-bottom: 0; }
+  main { max-width: 980px; padding: 18px; }
+}
+
+/* More menu */
+.menu { padding: 4px 0; }
+.menu-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); background: transparent; padding: 12px 14px; cursor: pointer; }
+.menu-item:last-child { border-bottom: 0; }
+.menu-item .ic { font-size: 20px; width: 28px; text-align: center; }
+.menu-item .txt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.menu-item .chev { color: var(--muted); font-size: 20px; }
+
+/* practice wallet */
+.wallet-card { background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%); }
+.wallet-total { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.wallet-pnl { display: flex; flex-wrap: wrap; gap: 4px 14px; font-weight: 600; }
+.wallet-split { margin-top: 4px; }
+.holding-list { display: flex; flex-direction: column; }
+.holding { padding: 10px 0; border-top: 1px solid var(--border); }
+.holding:first-child { border-top: 0; padding-top: 0; }
+.big-num { font-weight: 600; font-variant-numeric: tabular-nums; }
+.order-row { gap: 6px; padding: 6px 0; border-top: 1px solid var(--border); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* trade sheet */
+.sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-end; justify-content: center; }
+.sheet {
+  width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; background: var(--surface);
+  border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.25);
+}
+@media (min-width: 900px) { .sheet-backdrop { align-items: center; } .sheet { border-radius: 18px; } }
+.seg { display: flex; background: var(--surface-2); border-radius: 12px; padding: 3px; margin-bottom: 10px; }
+.seg button { flex: 1; border: 0; background: transparent; padding: 9px; border-radius: 10px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.seg button.on.buy { background: var(--ok); color: #fff; }
+.seg button.on.sell { background: var(--err); color: #fff; }
+.stock-pick { padding: 10px 12px; background: var(--surface-2); border-radius: 12px; margin-bottom: 8px; gap: 8px; }
+.results { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; margin-top: 4px; max-height: 240px; overflow-y: auto; }
+.result { text-align: left; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); padding: 9px 10px; cursor: pointer; }
+.result:last-child { border-bottom: 0; }
+.quick-amounts { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.chip-btn { border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
+.trade-summary { margin-top: 8px; }
+
+/* learning */
+.verdict { border-radius: 12px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--border); }
+.verdict.pass { background: var(--ok-bg, rgba(34, 197, 94, 0.12)); border-color: var(--ok); }
+.verdict.fail { background: var(--surface-2); }
+.chance { display: inline-block; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.chance.hi { background: rgba(34, 197, 94, 0.18); color: var(--ok); }
+.chance.mid { background: rgba(234, 179, 8, 0.18); color: var(--warn); }
+.chance.lo { background: rgba(239, 68, 68, 0.15); color: var(--err); }
+
+/* first-launch guide */
+.guide-overlay { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+.guide { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; }
+.guide-icon { font-size: 52px; text-align: center; }
+.guide h2 { text-align: center; margin: 4px 0; font-size: 22px; }
+.guide-body { font-size: 15px; line-height: 1.55; }
+.guide .dots { display: flex; justify-content: center; gap: 6px; margin: 10px 0; }
+.guide .dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.guide .dots span.on { background: var(--accent); width: 22px; border-radius: 4px; }
+.guide-buttons { gap: 8px; }
+.timeline { padding-left: 18px; margin: 6px 0; }
+.timeline li { margin: 6px 0; }
+.guide-dl dt { font-weight: 700; margin-top: 8px; }
+.guide-dl dd { margin: 2px 0 0; }

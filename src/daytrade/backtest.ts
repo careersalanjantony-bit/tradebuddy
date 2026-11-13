@@ -1,4 +1,5 @@
 import type { DayBars, Side } from './types';
+import { featureVector, prevDayOf, type PrevDay } from '../ml/features';
 import { DEFAULT_RULES, OPEN_T, dayTradePnl, findBreakout, openingRange, relativeVolume, simulateExit, stopFor, targetFor, type DayRules } from './rules';
 
 /**
@@ -15,6 +16,8 @@ import { DEFAULT_RULES, OPEN_T, dayTradePnl, findBreakout, openingRange, relativ
  */
 
 export const DAY_RULES_VERSION = 'orb-v1';
+/** position of the market feature in the feature vector (src/ml/features.ts) */
+const MARKET_FEATURE = 12;
 
 export interface DayStockRef {
   key: string;
@@ -59,6 +62,8 @@ export interface Candidate {
   outcomes: Record<TargetKey, { price: number; t: number; reason: 'stop' | 'target' | 'time' }>;
   /** average move of all studied stocks from their open at the signal bar (filled after all stocks are read) */
   market: number;
+  /** what the self-learning sees at the signal (src/ml/features.ts) */
+  f?: number[];
 }
 
 export interface DayTestTrade {
@@ -164,7 +169,11 @@ export async function buildCandidates(
     const days = (await loadDays(s.key)).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
     if (days.length) stocksWithData++;
     const prevVols: number[] = [];
+    const prevDays: PrevDay[] = [];
     for (const d of days) {
+      const pd = prevDayOf(d);
+      const before = prevDays.slice(-10);
+      if (pd) prevDays.push(pd);
       const or = openingRange(d, r);
       if (!or) continue;
       // market average: this stock's move from its open, at every 5-minute slot
@@ -202,7 +211,7 @@ export async function buildCandidates(
         const ex = simulateExit(d, entryIdx, bo.side, stop, targetFor(bo.side, raw, stop, t.mult, s.tick), r);
         outcomes[t.key] = { price: bo.side === 'long' ? ex.price * (1 - slip) : ex.price * (1 + slip), t: ex.t, reason: ex.reason };
       }
-      candidates.push({ key: s.key, symbol: s.symbol, date: d.date, side: bo.side, signalT: bo.barCloseT, slot: Math.floor((d.t[bo.idx]! - OPEN_T) / r.barMinutes), rvol, entry, stop, outcomes, market: 0 });
+      candidates.push({ key: s.key, symbol: s.symbol, date: d.date, side: bo.side, signalT: bo.barCloseT, slot: Math.floor((d.t[bo.idx]! - OPEN_T) / r.barMinutes), rvol, entry, stop, outcomes, market: 0, f: featureVector(d, bo.idx, bo.side, or, before, 0, rvol) });
     }
     cfg.onProgress?.(si + 1, stocks.length);
     if (Date.now() - lastYield > (cfg.yieldMs ?? 40)) {
@@ -213,6 +222,7 @@ export async function buildCandidates(
   for (const c of candidates) {
     const n = mktCnt.get(c.date)?.[c.slot] ?? 0;
     c.market = n ? mktSum.get(c.date)![c.slot]! / n : 0;
+    if (c.f) c.f[MARKET_FEATURE] = Math.max(-10, Math.min(10, (c.side === 'long' ? 1 : -1) * c.market * 100));
   }
   const dates = [...mktSum.keys()].sort();
   return { candidates, dates, stocksWithData };
@@ -227,11 +237,27 @@ export function passes(c: Pick<Candidate, 'side' | 'rvol' | 'market'>, v: Varian
 
 /** Follows one variant day by day: first signals first, `slots` trades a day, stop after `maxLosses` losses. */
 export function simulateVariant(byDate: Map<string, Candidate[]>, dates: string[], v: Variant, cfg: Pick<DayTestConfig, 'amount' | 'slots' | 'maxLosses'>): { result: DayTestResult; trades: DayTestTrade[]; dayPnl: Map<string, number> } {
+  return simulatePolicy(byDate, dates, (c) => passes(c, v), v.target, cfg, (a, b) => b.rvol - a.rvol);
+}
+
+/**
+ * Any trading policy, day by day, in the order signals appear: `accept` decides which signals to
+ * take (the rules, or the self-learning's chance), `tie` orders signals of the same 5 minutes.
+ */
+export function simulatePolicy(
+  byDate: Map<string, Candidate[]>,
+  dates: string[],
+  accept: (c: Candidate) => boolean,
+  target: TargetKey,
+  cfg: Pick<DayTestConfig, 'amount' | 'slots' | 'maxLosses'>,
+  tie: (a: Candidate, b: Candidate) => number,
+): { result: DayTestResult; trades: DayTestTrade[]; dayPnl: Map<string, number> } {
+  const v = { target };
   const alloc = cfg.amount / cfg.slots;
   const trades: DayTestTrade[] = [];
   const dayPnl = new Map<string, number>();
   for (const date of dates) {
-    const list = (byDate.get(date) ?? []).filter((c) => passes(c, v)).sort((a, b) => a.signalT - b.signalT || b.rvol - a.rvol);
+    const list = (byDate.get(date) ?? []).filter(accept).sort((a, b) => a.signalT - b.signalT || tie(a, b));
     const taken: DayTestTrade[] = [];
     for (const c of list) {
       if (taken.length >= cfg.slots) break;

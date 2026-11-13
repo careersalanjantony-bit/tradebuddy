@@ -97,9 +97,10 @@ export function liveConfig(test: DayTestReport | null | undefined, priceMin: num
 }
 
 /** A breakout becomes a signal only if the stock is busy enough, the market agrees and the price fits. */
-export function signalFrom(date: string, key: string, stock: LiveStock, bo: Breakout, price: number, market: number | null, cfg: LiveConfig, now: number, late = false): DaySignal | null {
+export function signalFrom(date: string, key: string, stock: LiveStock, bo: Breakout, price: number, market: number | null, cfg: LiveConfig, now: number, late = false, learningDecides = false): DaySignal | null {
   if (stock.rvol === null || market === null) return null;
-  if (!passes({ side: bo.side, rvol: stock.rvol, market }, cfg.variant)) return null;
+  // when the self-learning passed its check, its chance replaces the volume/market filters (as in its test)
+  if (!learningDecides && !passes({ side: bo.side, rvol: stock.rvol, market }, cfg.variant)) return null;
   if (bo.side === 'short' && !stock.shortAllowed) return null;
   if (price < cfg.priceMin || (cfg.priceMax !== null && price > cfg.priceMax)) return null;
   const stop = stopFor(bo.side, price, bo.or, cfg.rules, stock.tick);

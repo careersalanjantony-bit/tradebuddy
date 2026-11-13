@@ -39,6 +39,7 @@ import { getSettings, updateSettings } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { walletCancel, walletOrder, walletReset, walletUpdate } from './walletJobs';
 import { WALLET_START } from '../wallet/wallet';
+import { learnIfDue, learnNow } from './mlJobs';
 
 initLogging('background');
 const log = createLogger('bg');
@@ -78,6 +79,8 @@ const ready = startup();
 ready.catch(() => undefined); // logged above; keep the rejection from being "unhandled"
 // Missed jobs (expiry, reminder, holidays). Separate from `ready` because it may call Upstox.
 ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up failed', { error: err }));
+// Self-learning: learn again when the last learning is a day old (a minute after start, so the screens come first).
+ready.then(() => setTimeout(() => void learnIfDue().catch(() => undefined), 60_000)).catch(() => undefined);
 
 chrome.runtime.onInstalled.addListener((details) => {
   void ready.finally(() =>
@@ -258,6 +261,10 @@ const handlers: Handlers = {
     // a newly bought stock needs prices at once
     void pollAndEvaluate(true).catch(() => undefined);
     return r;
+  },
+  'ml:learn': async () => {
+    const r = await learnNow();
+    return r ? { samples: r.samples, passed: r.passed } : { samples: 0, passed: false };
   },
   'wallet:cancel': async ({ id }) => {
     await walletCancel(id);

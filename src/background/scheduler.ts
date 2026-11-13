@@ -11,6 +11,7 @@ import { ensureInstruments, eodDue, keysWithoutHistory, morningDue, pollAndEvalu
 import { ensureUniverse } from '../data/universe';
 import { ensureIntraday } from './dayJobs';
 import { loginReminderDue, nextRun, type JobName } from './schedule';
+import { learnIfDue } from './mlJobs';
 
 /**
  * chrome.alarms scheduler (spec §17). Every job records its last run; next fire times are computed
@@ -101,6 +102,8 @@ export async function runJob(name: JobName, now = Date.now()): Promise<void> {
       case 'eod-candles':
         try {
           await runEndOfDay(now);
+          // the evening is when the newest day is in the history: learn again
+          void learnIfDue(now).catch(() => undefined);
         } catch (err) {
           if (err instanceof UpstoxError && err.kind === 'not_logged_in') {
             log.warn('End-of-day sync skipped: not logged in and no Analytics Token');

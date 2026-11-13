@@ -15,6 +15,8 @@ import { BoughtForm } from '../components/Bought';
 import { MoodLine, NewsCard, UpstoxSyncLine } from '../components/Market';
 import { useInstrumentMap, useQuotes, useStudyKeys } from '../data';
 import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '../hooks';
+import { openTrade } from '../components/TradeSheet';
+import { LearningCard } from '../components/Learning';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -99,6 +101,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
       {on && amount ? (
         <>
           <MoodLine />
+          <LearningCard go={go} />
           <SignalsCard amount={amount} slots={slots} />
           <UpstoxSyncLine />
           <DayTradesCard />
@@ -228,6 +231,15 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
         <dd>
           Close it by <b>3:10 pm</b> whatever happens
         </dd>
+        {s.chance !== undefined && (
+          <>
+            <dt>Chance</dt>
+            <dd data-testid="day-chance">
+              <span class={`chance ${s.chance >= 0.55 ? 'hi' : s.chance >= 0.45 ? 'mid' : 'lo'}`}>{Math.round(s.chance * 100)}%</span>{' '}
+              <span class="small muted">{s.ml ? 'learned from past signals — passed its check on unseen days' : 'learned, but not trusted yet (still the plain rules)'}</span>
+            </dd>
+          </>
+        )}
         <dt>Why</dt>
         <dd class="small">
           {long ? 'Broke above' : 'Broke below'} its first-15-minutes range (₹{formatNumberIN(s.orLow)} – ₹{formatNumberIN(s.orHigh)}) with {formatNumberIN(s.rvol, 1)}× its usual opening volume, and the
@@ -246,7 +258,16 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
       {state === 'fresh' && canTake && !form && (
         <div class="row">
           {!tookPractice && !limitReached.practice && (
-            <button class="btn small practice-btn" type="button" data-testid="day-practice" onClick={() => void take(true)}>
+            <button
+              class="btn small practice-btn"
+              type="button"
+              data-testid="day-practice"
+              onClick={() =>
+                long
+                  ? openTrade({ key: s.key, symbol: s.symbol, side: 'buy', qty, stop: s.stop, target: s.target, sellByClose: true, source: 'Day trade signal' })
+                  : void take(true)
+              }
+            >
               Practice (pretend money)
             </button>
           )}
@@ -524,7 +545,11 @@ function DayTestCard({ keys, listLabel, amount, slots }: { keys: string[]; listL
     })
       .then(async (report) => {
         if (id !== runId.current) return;
-        if (report) await setLocal('dayTest', { key: testKey, report });
+        if (report) {
+          await setLocal('dayTest', { key: testKey, report });
+          // the self-learning uses the same history: learn again right after the test
+          void callBackground('ml:learn').catch(() => undefined);
+        }
         else setError(`Not enough 5-minute history yet (at least ${MIN_SESSIONS} trading days are needed).`);
       })
       .catch((err: unknown) => setError(errorMessage(err)))
