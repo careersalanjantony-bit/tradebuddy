@@ -26,6 +26,19 @@ inside the app (see *How it is built*).
 **Updates:** install the newer APK over the old one; data is kept (every build is signed with the
 same key, `android/signing/`). Uninstalling deletes all app data, including practice trades.
 
+## New in 1.2
+
+- **News tab** (bottom bar): news only for today's buy ideas (highest chance first), stocks rising now,
+  top picks and your shares — grouped per stock, each with why it is there, a 👍/👎 mood line, filter
+  chips and a Practice-buy button. The news requests follow the same priority (`newsTargets`).
+- **Day trade redesigned:** idea cards with an animated chance ring, three price tiles (buy around /
+  take profit at / sell if it falls to), buyers line, details folded; rising stocks with a buyers bar.
+- **Stocks redesigned:** cards with a 30-day line, flashing prices, change pills, one-tap filter chips;
+  "Rising / Falling today" now work from the live price before the history has downloaded.
+- **More motion:** cards slide in as they scroll into view, pages slide left/right by tab, one highlight
+  slides between the tabs, tap ripples, the practice-money card tilts and shines under your finger,
+  a slow glow behind the Home header, animated empty states. Two columns on wide screens.
+
 ## New in 1.1
 
 - **New look:** dark, calm design with gradients, line icons, smooth page and card animations, numbers

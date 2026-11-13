@@ -676,3 +676,127 @@ body { font-family: Inter, 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', 
 .details-card > summary { cursor: pointer; list-style: none; padding: 2px 0; }
 .details-card > summary::-webkit-details-marker { display: none; }
 .details-card[open] > summary { margin-bottom: 10px; }
+
+/* ===================== TradeBuddy 1.2: more motion, News, new Day trade + Stocks ===================== */
+/* scroll reveal (only when the motion script runs; otherwise everything is simply visible) */
+.reveal-ready .screen > * { animation: none; }
+.reveal-ready :is(.card, .idea-card, .hero-card, .holding, .stock-card, .news-item, .rise-tile, .quick, .menu-item, .day-signal, .plan-step, .nudge):not(.in) { opacity: 0; transform: translateY(18px) scale(0.985); }
+.reveal-ready :is(.card, .idea-card, .hero-card, .holding, .stock-card, .news-item, .rise-tile, .quick, .menu-item, .day-signal, .plan-step, .nudge).in { opacity: 1; transform: none; transition: opacity 0.55s var(--ease) var(--rd, 0ms), transform 0.6s var(--ease) var(--rd, 0ms); }
+.reveal-ready .hero-card.in { transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: opacity 0.55s var(--ease) var(--rd, 0ms), transform 0.35s var(--ease); }
+
+/* page slides, by tab direction */
+@keyframes fromRight { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes fromLeft { from { opacity: 0; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
+.page.from-right { animation: fromRight 0.32s var(--ease) both; }
+.page.from-left { animation: fromLeft 0.32s var(--ease) both; }
+
+/* tap ripple */
+.ripple { position: absolute; border-radius: 50%; pointer-events: none; background: currentColor; opacity: 0.18; transform: scale(0); animation: ripple 0.6s ease-out forwards; }
+@keyframes ripple { to { transform: scale(1); opacity: 0; } }
+
+/* hero tilt + glare that follows the finger */
+.hero-card { transform-style: preserve-3d; will-change: transform; }
+.hero-card .glare { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.3s; background: radial-gradient(circle at var(--gx, 50%) var(--gy, 0%), rgba(255, 255, 255, 0.35), transparent 45%); z-index: 1; }
+.hero-card.tilting .glare { opacity: 1; }
+.hero-card::before { content: ''; position: absolute; inset: -40%; background: conic-gradient(from 0deg, transparent, rgba(255, 255, 255, 0.10), transparent 30%); animation: spin 9s linear infinite; pointer-events: none; }
+
+/* moving glow behind the Home header */
+.home-head { position: relative; isolation: isolate; }
+.home-head::before, .home-head::after { content: ''; position: absolute; z-index: -1; width: 180px; height: 180px; border-radius: 50%; filter: blur(48px); opacity: 0.35; animation: drift 12s ease-in-out infinite alternate; }
+.home-head::before { left: -40px; top: -70px; background: #6d5dfc; }
+.home-head::after { right: -30px; top: -50px; background: #3ba3ff; animation-delay: -6s; }
+@keyframes drift { 0% { transform: translate(0, 0) scale(1); } 50% { transform: translate(30px, 16px) scale(1.15); } 100% { transform: translate(-10px, 26px) scale(0.95); } }
+
+/* bottom bar: one highlight that slides between the tabs */
+.bottom-nav { position: fixed; }
+.bottom-nav .nav-pill { position: absolute; top: 8px; left: 0; height: 30px; width: calc(100% / var(--tabs)); transform: translateX(calc(var(--tab) * 100%)); transition: transform 0.38s var(--ease); pointer-events: none; display: flex; justify-content: center; }
+.bottom-nav .nav-pill::before { content: ''; width: 52px; height: 30px; border-radius: 15px; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.bottom-nav button[aria-current='page'] .ic { background: transparent; }
+.bottom-nav .ic { width: 46px; }
+.bottom-nav .lbl { font-size: 10.5px; }
+.bottom-nav button[aria-current='page'] .icon { animation: pop 0.35s var(--ease); }
+@keyframes pop { 0% { transform: scale(0.8); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+/* chance ring + buyers bar */
+.ring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.ring .ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 3.5; }
+.ring .ring-fg { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; animation: ringFill 1.2s var(--ease) 0.15s forwards; }
+.ring.hi .ring-fg { stroke: var(--ok); }
+.ring.mid .ring-fg { stroke: var(--warn); }
+.ring.lo .ring-fg { stroke: var(--err); }
+.ring b { font-size: 12.5px; }
+@keyframes ringFill { to { stroke-dashoffset: calc(100 - var(--p)); } }
+.buyers-bar { display: block; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--err) 55%, var(--surface-2)); overflow: hidden; margin: 8px 0 4px; }
+.buyers-bar .buy { display: block; height: 100%; background: var(--ok); border-radius: 3px; animation: grow 0.9s var(--ease) both; transform-origin: left; }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* Day trade idea cards */
+.day-signal { border-radius: 20px; padding: 16px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); margin-top: 10px; }
+.day-signal[data-side='long']:not(.stale) { border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 20%, transparent), var(--shadow); }
+.sig-head { display: flex; align-items: center; gap: 10px; }
+.sig-title { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.sig-title h3 { margin: 0; font-size: 22px; letter-spacing: -0.02em; width: 100%; order: 1; }
+.sig-title .chip, .sig-title .muted { order: 0; }
+.sig-title .chip.setup, .sig-title .chip.flag { order: 2; }
+.sig-grid { margin-top: 12px; }
+.sig-flow { margin-top: 8px; }
+.sig-more { margin-top: 8px; }
+.sig-more > summary { cursor: pointer; color: var(--accent); list-style: none; padding: 4px 0; }
+.sig-more > summary::-webkit-details-marker { display: none; }
+.sig-more[open] > summary { margin-bottom: 6px; }
+
+/* Stocks: chips, search, cards */
+.filter-chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: none; scroll-snap-type: x proximity; }
+.filter-chips::-webkit-scrollbar { display: none; }
+.filter-chip { flex: none; scroll-snap-align: start; border: 1px solid var(--border); background: var(--surface); color: var(--muted); padding: 7px 14px; border-radius: 999px; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.25s var(--ease), color 0.25s, border-color 0.25s; }
+.filter-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.count-pill { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: rgba(127, 127, 127, 0.2); font-size: 11px; text-align: center; }
+.search-row input[type='search'] { border-radius: 14px; padding-left: 14px; }
+.stock-card { border-radius: 16px; box-shadow: var(--shadow); transition: transform 0.15s var(--ease); }
+.stock-card .stock-main { padding: 12px 14px; }
+.stock-card .line1 b { font-size: 15px; }
+.stock-card .px { align-items: center; }
+.stock-card .px .price { padding: 1px 3px; margin: -1px -3px; }
+.ch-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.ch-pill.up { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.ch-pill.down { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+.stock-card .spark { margin-right: 2px; }
+
+/* News */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.page-head h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
+.icon-btn { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; flex: none; }
+.icon-btn.spin .icon { animation: spin 0.8s linear infinite; }
+.news-grid { display: grid; gap: 12px; }
+.news-item { border-radius: 18px; padding: 14px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.news-sym { font-size: 17px; }
+.reason-chip { padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; margin-left: 8px; background: var(--surface-2); color: var(--muted); }
+.reason-chip.idea { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.reason-chip.rising { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.reason-chip.pick { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.mood-line { margin: 8px 0 2px; font-size: 13px; font-weight: 600; }
+.mood-line.good { color: var(--ok); }
+.mood-line.bad { color: var(--err); }
+.headlines { list-style: none; margin: 8px 0 10px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.headlines li { display: flex; gap: 8px; align-items: baseline; line-height: 1.4; }
+.headlines a { color: var(--fg); text-decoration: none; }
+.headlines a:hover { text-decoration: underline; }
+.empty-state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 26px 16px; border-radius: 18px; border: 1px dashed var(--border); }
+.empty-state svg { animation: float 3s ease-in-out infinite; }
+.es-paper { fill: var(--surface-2); stroke: var(--border); }
+.es-line { fill: var(--border); }
+.es-line.strong { fill: var(--accent); opacity: 0.7; }
+.es-dot { fill: var(--warn); }
+
+/* wide screens: two columns */
+@media (min-width: 900px) {
+  .news-grid { grid-template-columns: repeat(2, 1fr); }
+  .home { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; align-items: start; }
+  .home > .home-head, .home > .nudge, .home > [data-testid='rising-carousel'], .home > .quick-grid { grid-column: 1 / -1; }
+  .stock-list, [data-testid='auto-list'] { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+}
+@media (min-width: 1300px) { [data-testid='auto-list'] { grid-template-columns: repeat(3, 1fr); } }
+/* keep decorative glows inside the screen (no sideways scrolling) */
+.content { overflow-x: clip; }
+html, body { overflow-x: hidden; }

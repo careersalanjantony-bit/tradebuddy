@@ -16,6 +16,7 @@ import { MoodLine, NewsCard, UpstoxSyncLine } from '../components/Market';
 import { useInstrumentMap, useQuotes, useStudyKeys } from '../data';
 import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '../hooks';
 import { openTrade } from '../components/TradeSheet';
+import { ChanceRing } from '../components/Motion';
 import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
 
@@ -131,7 +132,6 @@ export function DayTradeScreen({ go }: { go: Go }) {
           <LearningCard go={go} />
           <DayTradesCard />
           <UpstoxSyncLine />
-          <NewsCard limit={4} />
           <details class="card details-card" data-testid="day-details">
             <summary>
               <b>How well did these rules do in the past?</b> <span class="small muted">— the past test and how it works</span>
@@ -231,14 +231,38 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
 
   return (
     <div class={`suggestion day-signal ${state !== 'fresh' ? 'stale' : ''}`} data-symbol={s.symbol} data-side={s.side}>
-      <div class="row">
-        <span class={`chip day ${long ? 'buy' : 'sell'}`}>{long ? '▲ BUY' : '▼ SELL (short)'}</span>
-        <h3 style={{ margin: 0 }}>{s.symbol}</h3>
-        <span class="exch">NSE</span>
-        <span class="muted small">signal at {formatTimeIST(s.at).slice(0, 5)}</span>
-        <span class="spacer" />
-        {state === 'fresh' ? <span class="chip setup good">act now</span> : <span class="chip flag">{s.late ? 'happened earlier — skip' : state === 'moved' ? 'price moved — skip' : 'too late — skip'}</span>}
+      <div class="sig-head">
+        <div class="sig-title">
+          <span class={`chip day ${long ? 'buy' : 'sell'}`}>{long ? '▲ BUY' : '▼ SELL first'}</span>
+          <h3>{s.symbol}</h3>
+          <span class="muted small">at {formatTimeIST(s.at).slice(0, 5)} · NSE</span>
+          {state === 'fresh' ? <span class="chip setup good">act now</span> : <span class="chip flag">{s.late ? 'happened earlier — skip' : state === 'moved' ? 'price moved — skip' : 'too late — skip'}</span>}
+        </div>
+        {s.chance !== undefined && <ChanceRing value={s.chance} />}
       </div>
+      <div class="idea-grid sig-grid">
+        <div>
+          <span>{long ? 'Buy around' : 'Sell first at'}</span>
+          <b>₹{formatNumberIN(price)}</b>
+        </div>
+        <div>
+          <span>Take profit at</span>
+          <b class="ok-text">{s.target !== null ? `₹${formatNumberIN(s.target)}` : '3:10 pm'}</b>
+        </div>
+        <div>
+          <span>{long ? 'Sell if it falls to' : 'Buy back if it rises to'}</span>
+          <b class="err-text">₹{formatNumberIN(s.stop)}</b>
+        </div>
+      </div>
+      {s.buyers && (
+        <div class="sig-flow small">
+          <span class={`dot-meter ${meterTone(s.buyers)}`}>{s.buyers}</span>
+          {s.pace ? <span class="muted"> · {formatNumberIN(s.pace, 1)}× the usual trading</span> : null}
+          {s.newsMood && s.newsMood !== 'neutral' && <span class="muted"> · news {s.newsMood === 'good' ? '👍' : '👎'}</span>}
+        </div>
+      )}
+      <details class="sig-more">
+        <summary class="small">Details: how many shares, the amounts, why</summary>
       <dl class="kv simple-plan">
         <dt>{long ? 'Buy' : 'Sell first'}</dt>
         <dd>
@@ -298,6 +322,7 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
           </>
         )}
       </dl>
+      </details>
       {state === 'fresh' && canTake && !form && (
         <div class="row">
           {!tookPractice && !limitReached.practice && (

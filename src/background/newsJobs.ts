@@ -18,23 +18,38 @@ export const NEWS_EVERY_MS = 15 * 60_000;
 const KEEP_MS = 3 * 24 * 3600_000;
 const MAX_ITEMS = 80;
 
-/** The stocks to fetch news for, most important first (at most 30). */
-export async function newsKeys(now = Date.now()): Promise<string[]> {
+export type NewsReason = 'idea' | 'rising' | 'pick' | 'holding' | 'trade';
+
+/**
+ * The stocks to fetch news for (owner, 14 Nov 2026: "news based on the rising stocks or high chance to
+ * rise stocks, not random news"). Most important first, at most 30 (one Upstox request):
+ *   1. today's buy ideas, highest learned chance first;
+ *   2. stocks rising now (buyers in control), best first;
+ *   3. today's top picks (hold a few days);
+ *   4. what you hold: real trades, then practice shares.
+ */
+export async function newsTargets(now = Date.now()): Promise<Array<{ key: string; reason: NewsReason }>> {
   const today = istDate(now);
   const [plans, dayTrades, signals, picks, wallet, flow] = await Promise.all([getLocal('plans'), getLocal('dayTrades'), getSession('daySignals'), getSession('announcedPicks'), getLocal('wallet'), getSession('flow')]);
-  const keys: string[] = [];
-  for (const t of dayTrades ?? []) if (t.status === 'open' && !t.practice) keys.push(t.key);
-  for (const p of plans ?? []) if (p.status === 'open' && !p.practice) keys.push(p.key);
-  if (signals?.date === today) for (const s of signals.signals) keys.push(s.key);
-  for (const p of plans ?? []) if (p.status === 'planned' && !p.practice) keys.push(p.key);
-  if (picks?.day === today) keys.push(...picks.keys);
-  // app v1.0: practice-money holdings and waiting orders, then the "rising now" list
-  for (const h of wallet?.holdings ?? []) keys.push(h.key);
-  for (const o of wallet?.orders ?? []) if (o.status === 'open') keys.push(o.key);
-  for (const t of dayTrades ?? []) if (t.status === 'open' && t.practice) keys.push(t.key);
-  for (const p of plans ?? []) if (p.status === 'open' && p.practice) keys.push(p.key);
-  for (const r of flow?.rising ?? []) keys.push(r.key);
-  return [...new Set(keys)].slice(0, 30);
+  const out: Array<{ key: string; reason: NewsReason }> = [];
+  const add = (key: string, reason: NewsReason) => {
+    if (!out.some((x) => x.key === key)) out.push({ key, reason });
+  };
+  if (signals?.date === today) {
+    for (const s of [...signals.signals].filter((x) => !x.late).sort((a, b) => (b.chance ?? 0.5) - (a.chance ?? 0.5))) add(s.key, 'idea');
+  }
+  for (const r of flow?.rising ?? []) add(r.key, 'rising');
+  if (picks?.day === today) for (const k of picks.keys) add(k, 'pick');
+  for (const p of plans ?? []) if (p.status === 'planned' && !p.practice) add(p.key, 'pick');
+  for (const t of dayTrades ?? []) if (t.status === 'open' && !t.practice) add(t.key, 'trade');
+  for (const p of plans ?? []) if (p.status === 'open' && !p.practice) add(p.key, 'trade');
+  for (const h of wallet?.holdings ?? []) add(h.key, 'holding');
+  return out.slice(0, 30);
+}
+
+/** Instrument keys only (kept for older callers). */
+export async function newsKeys(now = Date.now()): Promise<string[]> {
+  return (await newsTargets(now)).map((x) => x.key);
 }
 
 export function mergeNews(old: NewsItem[], fresh: NewsItem[], now: number): NewsItem[] {
@@ -71,14 +86,16 @@ export function refreshNews(now = Date.now(), force = false): Promise<number> {
   running ??= (async () => {
     const prev = await getSession('news');
     if (!force && prev && now - prev.at < NEWS_EVERY_MS) return prev.items.length;
-    const keys = await newsKeys(now);
+    const targets = await newsTargets(now);
+    const keys = targets.map((t) => t.key);
+    const reasons = Object.fromEntries(targets.map((t) => [t.key, t.reason]));
     if (!keys.length) {
-      await setSession('news', { at: now, items: mergeNews(prev?.items ?? [], [], now) });
+      await setSession('news', { at: now, items: mergeNews(prev?.items ?? [], [], now), targets: {} });
       return 0;
     }
     try {
       const items = mergeNews(prev?.items ?? [], await fetchNews(keys), now);
-      await setSession('news', { at: now, items });
+      await setSession('news', { at: now, items, targets: reasons });
       return items.length;
     } catch (err) {
       const msg = err instanceof UpstoxError ? err.message : errorMessage(err);

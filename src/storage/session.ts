@@ -53,7 +53,7 @@ export interface SessionStore {
   /** instant price feed (WebSocket) state */
   feedStatus: { connected: boolean; lastTickAt: number; at: number; keys: number; error?: string };
   /** latest headlines for the stocks that matter today (owned, signalled, top picks) */
-  news: { at: number; items: NewsItem[]; error?: string };
+  news: { at: number; items: NewsItem[]; error?: string; targets?: Record<string, import('../background/newsJobs').NewsReason> };
   /** today's day-trade signals (v0.11.0) */
   daySignals: { date: string; signals: DaySignal[] };
   /** live day-trade engine: today's 5-minute bars per stock */

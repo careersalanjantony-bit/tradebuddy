@@ -107,7 +107,7 @@ export function UpstoxSyncLine() {
   return (
     <div class={`banner ${on && st && !st.ok ? 'warn' : 'info'} small`} data-testid="upstox-sync">
       <label class="row" style={{ gap: '6px' }}>
-        <input type="checkbox" checked={on} data-testid="upstox-sync-toggle" onChange={(e) => void updateSettings({ portfolio: { autoSync: (e.currentTarget as HTMLInputElement).checked } })} />
+        <input type="checkbox" role="switch" class="switch" checked={on} data-testid="upstox-sync-toggle" onChange={(e) => void updateSettings({ portfolio: { autoSync: (e.currentTarget as HTMLInputElement).checked } })} />
         <span>
           <b>Find my Upstox trades automatically:</b> {text}
         </span>

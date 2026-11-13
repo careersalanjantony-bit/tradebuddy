@@ -44,6 +44,24 @@ export function WatchlistScreen({ go }: { go: Go }) {
 const VERDICT_ORDER = ['Good setup', 'Wait', 'No setup', 'Check data', 'Avoid'];
 
 type Filter = 'all' | 'picks' | 'day' | 'good' | 'wait' | 'avoid' | 'uptrend' | 'downtrend' | 'recovering' | 'sideways' | 'breakout' | 'pullback' | 'stretched' | 'rising' | 'falling';
+/** today's change in %, from the price history or (before it has downloaded) from the live quote */
+function dayChange(d: { snapshot?: { changePct: number | null } | null; quote?: { ltp: number; prevClose: number | null } | null } | undefined): number {
+  const s = d?.snapshot?.changePct;
+  if (s !== undefined && s !== null) return s;
+  const q = d?.quote;
+  return q && q.prevClose ? (q.ltp / q.prevClose - 1) * 100 : 0;
+}
+
+/** the most useful filters, one tap each */
+const QUICK: Array<[Filter, string]> = [
+  ['all', 'All'],
+  ['picks', '⭐ Top picks'],
+  ['day', '⚡ Buy ideas today'],
+  ['good', 'Good to buy'],
+  ['rising', '▲ Rising today'],
+  ['falling', '▼ Falling today'],
+];
+
 const FILTERS: Array<[Filter, string]> = [
   ['all', 'All stocks'],
   ['picks', 'Buy picks (few days to weeks)'],
@@ -121,14 +139,14 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
           case 'stretched':
             return !!snap?.flags.includes('Stretched');
           case 'rising':
-            return (snap?.changePct ?? 0) > 0;
+            return dayChange(s.data) > 0;
           case 'falling':
-            return (snap?.changePct ?? 0) < 0;
+            return dayChange(s.data) < 0;
         }
       })
       .sort((a, b) => {
-        if (filter === 'rising') return (b.data?.snapshot?.changePct ?? 0) - (a.data?.snapshot?.changePct ?? 0);
-        if (filter === 'falling') return (a.data?.snapshot?.changePct ?? 0) - (b.data?.snapshot?.changePct ?? 0);
+        if (filter === 'rising') return dayChange(b.data) - dayChange(a.data);
+        if (filter === 'falling') return dayChange(a.data) - dayChange(b.data);
         if (filter === 'day') return (a.signal?.at ?? 0) - (b.signal?.at ?? 0);
         if (a.pick && b.pick) return a.pick.i - b.pick.i;
         if (a.pick || b.pick) return a.pick ? -1 : 1;
@@ -179,10 +197,17 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
             </select>
           </label>
         </div>
-        <div class="row">
-          <input type="search" placeholder="Find a company" value={q} onInput={(e) => setQ((e.currentTarget as HTMLInputElement).value)} aria-label="Find a company" style={{ flex: 1 }} />
+        <div class="filter-chips" data-testid="stock-chips">
+          {QUICK.map(([v, label]) => (
+            <button type="button" class={`filter-chip ${filter === v ? 'on' : ''}`} data-filter={v} onClick={() => (setFilter(v), setLimit(PAGE))}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div class="row search-row">
+          <input type="search" placeholder="🔍  Find a company" value={q} onInput={(e) => setQ((e.currentTarget as HTMLInputElement).value)} aria-label="Find a company" style={{ flex: 1 }} />
           <button class="btn small" type="button" disabled={busy} data-testid="refresh-stocks" onClick={() => void refresh()} title="Fetch the latest prices now">
-            {busy ? 'Refreshing…' : '⟳ Refresh'}
+            {busy ? 'Refreshing…' : '⟳'}
           </button>
         </div>
         <PriceRange />

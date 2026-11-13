@@ -3,6 +3,7 @@ import { formatNumberIN, formatPct, formatTimeIST } from '../../lib/format';
 import { useInstrumentMap, useQuotes } from '../data';
 import { useMarketState, useSessionValue } from '../hooks';
 import { openTrade } from './TradeSheet';
+import { BuyersBar } from './Motion';
 
 export const meterTone = (l: MeterLabel): string => (l === 'Buyers strong' || l === 'More buyers' ? 'good' : l === 'Sellers strong' || l === 'More sellers' ? 'bad' : 'neutral');
 
@@ -48,6 +49,7 @@ export function RisingNowCard() {
                   <span class="spacer" />
                   <span class="big-num">{ltp ? `₹${formatNumberIN(ltp)}` : ''}</span>
                 </div>
+                <BuyersBar share={r.meter.buyShare} />
                 <div class="row small muted">
                   <span>
                     {formatPct(r.fromOpenPct, 2)} since the open · {formatPct(r.changePct, 2)} today

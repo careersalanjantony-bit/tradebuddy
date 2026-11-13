@@ -44,7 +44,8 @@ function WalletHero({ go }: { go: Go }) {
   const history = [...(w?.equity ?? []).map((e) => e.total)];
   if (!history.length || history[history.length - 1] !== Math.round(s.total)) history.push(s.total);
   return (
-    <section class="hero-card" data-testid="wallet-mini" onClick={() => go('practice')}>
+    <section class="hero-card" data-tilt data-testid="wallet-mini" onClick={() => go('practice')}>
+      <span class="glare" aria-hidden="true" />
       <div class="row">
         <div>
           <div class="hero-label">Practice money</div>

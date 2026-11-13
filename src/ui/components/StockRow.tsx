@@ -4,6 +4,7 @@ import { SetupBadge, Flags } from './Badges';
 import { VerdictChip } from './Explain';
 import { PLAIN_VERDICT, explainSnapshot, plainLine } from '../../advisor/explain';
 import { useSettings } from '../hooks';
+import { Sparkline, useFlash } from './Motion';
 
 /** One compact stock line for the narrow side panel. */
 export function StockRow({
@@ -27,9 +28,11 @@ export function StockRow({
   const price = s?.price ?? q?.ltp ?? null;
   const ch = s?.changePct ?? (q && q.prevClose ? (q.ltp / q.prevClose - 1) * 100 : null);
   const simple = (useSettings()?.ui.mode ?? 'simple') === 'simple';
+  const flash = useFlash(price);
+  const closes = (data?.raw ?? []).slice(-30).map((c) => c.close);
   const verdict = s ? explainSnapshot(symbol, s).verdict : null;
   return (
-    <div class="stock-row" data-symbol={symbol} data-trend={s?.trend ?? ''} data-verdict={verdict ?? ''} data-flags={s?.flags.join(',') ?? ''}>
+    <div class="stock-row stock-card" data-symbol={symbol} data-trend={s?.trend ?? ''} data-verdict={verdict ?? ''} data-flags={s?.flags.join(',') ?? ''}>
       <button class="stock-main" type="button" onClick={onOpen}>
         <div class="line1">
           <b>{symbol}</b>
@@ -41,8 +44,9 @@ export function StockRow({
           )}
           {badge && <span class="chip pick">{badge}</span>}
           <span class="px">
-            <span class="price">{price !== null ? `₹${formatNumberIN(price)}` : '—'}</span>
-            <span class={ch === null ? 'muted' : ch >= 0 ? 'ok-text' : 'err-text'}>{formatPct(ch)}</span>
+            {closes.length > 5 && <Sparkline values={closes} width={64} height={24} />}
+            <span class={`price ${flash}`}>{price !== null ? `₹${formatNumberIN(price)}` : '—'}</span>
+            <span class={`ch-pill ${ch === null ? '' : ch >= 0 ? 'up' : 'down'}`}>{formatPct(ch)}</span>
           </span>
         </div>
         {s ? (

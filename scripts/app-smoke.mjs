@@ -109,7 +109,13 @@ await page.route('https://api.upstox.com/**', upstox);
 await page.route('https://assets.upstox.com/**', (route) =>
   route.fulfill({ status: 200, headers: { 'content-type': 'application/octet-stream', 'access-control-allow-origin': '*' }, body: gzipSync(Buffer.from(JSON.stringify(allRows))) }),
 );
-await page.route('https://nsearchives.nseindia.com/**', (route) => route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }));
+const nifty50Csv = ['Company Name,Industry,Symbol,Series,ISIN Code', ...eq.map((r) => `${r.name},X,${r.trading_symbol},EQ,${r.isin}`), ...allRows.slice(rows.length, rows.length + 40).map((r) => `${r.name},X,${r.trading_symbol},EQ,${r.isin}`)].join('\n');
+await page.route('https://nsearchives.nseindia.com/**', (route) =>
+  route.request().url().includes('ind_nifty50list.csv')
+    ? route.fulfill({ status: 200, headers: { 'content-type': 'text/csv', 'access-control-allow-origin': '*' }, body: nifty50Csv })
+    : route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }),
+);
+const revealAll = () => page.evaluate(() => document.querySelectorAll('[data-rv]').forEach((el) => el.classList.add('in'))).catch(() => undefined);
 const until = async (fn, ms = 15000) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
@@ -123,7 +129,7 @@ console.log('── First start: guide');
 await page.goto(base);
 await page.waitForSelector('[data-testid="guide"]', { timeout: 20000 });
 check('the first-start guide opens by itself', ((await page.textContent('[data-testid="guide-title"]')) ?? '').includes('Welcome'));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-guide.png') });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-guide.png') });
 let steps = 1;
 while (await page.$('[data-testid="guide-next"]')) {
   await page.click('[data-testid="guide-next"]');
@@ -134,7 +140,7 @@ check('the guide has 7 short steps and ends on "Start practising"', steps === 7 
 // set up: Analytics Token + the sample stocks as the list (no real Upstox account needed)
 await page.evaluate(async (keys) => {
   const s = (await chrome.storage.local.get('settings')).settings;
-  await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, watchlist: keys, settings: { ...s, scanner: { ...s.scanner, universe: 'watchlist' }, dayTrade: { ...s.dayTrade, enabled: true }, risk: { ...s.risk, capitalInr: 200000 } } });
+  await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, watchlist: keys, settings: { ...s, scanner: { ...s.scanner, universe: 'nifty50' }, dayTrade: { ...s.dayTrade, enabled: true }, risk: { ...s.risk, capitalInr: 200000 } } });
 }, eq.map((r) => r.instrument_key));
 await page.click('[data-testid="guide-done"]');
 await page.waitForSelector('[data-testid="wallet"]', { timeout: 10000 });
@@ -155,7 +161,7 @@ await page.click('details summary');
 await page.fill('[data-field="trade-stop"]', '1500');
 await page.fill('[data-field="trade-target"]', '1560');
 await page.check('[data-field="trade-sellbyclose"]');
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-buy-sheet.png') });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-buy-sheet.png') });
 await page.click('[data-testid="trade-submit"]');
 await page.waitForSelector('[data-testid="trade-msg"]', { timeout: 10000 });
 const buyMsg = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
@@ -175,7 +181,7 @@ check('the target sale happens by itself, with the result after intraday charges
 const notes = await page.evaluate(() => chrome.notifications.getAll());
 check('a notification tells about the sale', Object.keys(notes).some((k) => k.startsWith('alert:wallet-')));
 await page.waitForTimeout(800);
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-practice.png'), fullPage: true });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-practice.png'), fullPage: true });
 const histText = ((await page.textContent('[data-testid="wallet-history"]')) ?? '').replace(/\s+/g, ' ');
 check('history lists the buy and the sale with "take-profit"', histText.includes('Buy 100 RELIANCE') && histText.includes('Sell 100 RELIANCE') && histText.includes('take-profit'), histText.slice(0, 160));
 const toastText = ((await page.textContent('.toasts').catch(() => '')) ?? '') + ' ' + ((await page.evaluate(() => document.querySelectorAll('.confetti i').length).catch(() => 0)) > 0 ? 'confetti' : '');
@@ -216,9 +222,10 @@ const risingText = ((await page.textContent('[data-testid="rising-now"]').catch(
 check('"Rising now" lists stocks with the buyers meter', rising && /Buyers strong|More buyers/.test(risingText), risingText.slice(0, 200));
 check('"Rising now" says it is a list to watch, not a signal', risingText.includes('not a buy signal'));
 check('the self-learning line is on the Day trade tab', ((await page.textContent('[data-testid="learning-line"]').catch(() => '')) ?? '').includes('Self-learning'));
+check('page slides in from the side of the tab (Day trade is right of Home)', await page.evaluate(() => !!document.querySelector('main.page.from-right, main.page.from-left')));
 check("Day trade starts with today's plan, the current step highlighted (10:30 = buy ideas)", ((await page.textContent('[data-testid="day-plan"] .plan-step.now').catch(() => '')) ?? '').includes('Buy ideas'));
 check('the past test and how-it-works are folded away under one line', !!(await page.$('[data-testid="day-details"]')) && !(await page.$eval('[data-testid="day-details"]', (e) => e.hasAttribute('open'))));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
 await page.click('.bottom-nav [data-nav="more"]');
 await page.click('[data-go="learning"]');
 await page.waitForSelector('[data-testid="learning-card"]');
@@ -226,7 +233,7 @@ await page.click('[data-testid="learn-now"]');
 await page.waitForTimeout(1500);
 const learnText = ((await page.textContent('[data-testid="learning-card"]')) ?? '').replace(/\s+/g, ' ');
 check('Self-learning screen explains the unseen-days check and asks for history when there is none', learnText.includes('never seen') && learnText.includes('45 trading days'), learnText.slice(0, 120));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-learning.png'), fullPage: true });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-learning.png'), fullPage: true });
 
 console.log('── Home, news, layout');
 await page.click('.bottom-nav [data-nav="today"]');
@@ -238,13 +245,39 @@ await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'new
 const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
 const marks = await page.$$eval('[data-testid="news"] [data-mood]', (els) => els.map((e) => e.getAttribute('data-mood')));
 check('News box marks headlines that read clearly good 👍 or bad 👎 (keyword check)', moods && marks.every((m) => m === 'good' || m === 'bad'), marks.join(','));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-home.png'), fullPage: true });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-home.png'), fullPage: true });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
 check('no sideways scrolling on a phone screen', !overflow);
 await page.setViewportSize({ width: 1280, height: 800 });
 await page.waitForTimeout(300);
 check('wide screens get the side menu instead of the bottom bar', await page.evaluate(() => getComputedStyle(document.querySelector('.side-nav')).display !== 'none' && getComputedStyle(document.querySelector('.bottom-nav')).display === 'none'));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-wide.png') });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-wide.png') });
+
+console.log('── News tab');
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(300);
+check('bottom bar has 6 tabs including News', (await page.$$('.bottom-nav button')).length === 6 && !!(await page.$('.bottom-nav [data-nav="news"]')));
+await page.click('.bottom-nav [data-nav="news"]');
+await page.waitForSelector('[data-testid="news-screen"]', { timeout: 10000 });
+const newsOk = await until(async () => (await page.$$('[data-testid="news-screen"] .news-item')).length > 0, 15000);
+const reasons = await page.$$eval('[data-testid="news-screen"] .news-item', (els) => els.map((e) => e.getAttribute('data-reason')));
+const risingKeys = await page.evaluate(async () => ((await chrome.storage.session.get('flow')).flow?.rising ?? []).map((r) => r.key));
+const newsKeysUsed = await page.evaluate(async () => Object.keys((await chrome.storage.session.get('news')).news?.targets ?? {}));
+check('News only for stocks that matter today: rising now first, each with its reason', newsOk && reasons.length > 0 && reasons.every((r) => ['idea', 'rising', 'pick', 'holding', 'trade'].includes(r)) && risingKeys.every((k) => newsKeysUsed.includes(k)), `${reasons.join(',')} · ${newsKeysUsed.length} stocks asked`);
+await page.click('.filter-chip[data-filter="rising"]');
+const afterFilter = await page.$$eval('[data-testid="news-screen"] .news-item', (els) => els.map((e) => e.getAttribute('data-reason')));
+check('the "Rising now" chip shows only rising stocks', afterFilter.length > 0 && afterFilter.every((r) => r === 'rising'));
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-news.png') });
+
+console.log('── Stocks tab');
+await page.click('.bottom-nav [data-nav="watchlist"]');
+await page.waitForSelector('[data-testid="stock-chips"]', { timeout: 10000 });
+const allCards = (await page.$$('.stock-card')).length;
+await page.click('.filter-chip[data-filter="rising"]');
+await page.waitForTimeout(400);
+const risingCards = (await page.$$('.stock-card')).length;
+check('Stocks: cards with one-tap filter chips', allCards >= 10 && risingCards > 0 && risingCards <= allCards, `${allCards} → ${risingCards}`);
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-stocks.png') });
 
 console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
@@ -253,7 +286,7 @@ const switches = await page.$$eval('[data-testid="alert-settings"] input.switch'
 check('Alerts card: buy ideas, rising fast, closed-app checks and sounds — all on by default', switches.length === 4 && switches.every(Boolean), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });
 
 console.log('── Safety');
 check('no order / GTT request was ever made', !mock.calls.some((c) => c.startsWith('ORDER-LIKE')), `${mock.calls.length} fake Upstox calls`);

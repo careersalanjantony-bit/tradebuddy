@@ -22,6 +22,7 @@ import { LearningScreen } from './screens/Learning';
 import { HomeScreen } from './screens/Home';
 import { Icon, type IconName } from './components/Icon';
 import { MotionHost, buzz, celebrate, toast } from './components/Motion';
+import { NewsScreen } from './screens/News';
 
 /** Every screen. `main` ones are in the bottom bar on a phone; the rest are under "More". */
 const SCREENS = [
@@ -29,6 +30,7 @@ const SCREENS = [
   { id: 'daytrade', label: 'Day trade', icon: 'bolt', main: true },
   { id: 'practice', label: 'Practice', icon: 'wallet', main: true },
   { id: 'watchlist', label: 'Stocks', icon: 'list', main: true },
+  { id: 'news', label: 'News', icon: 'news', main: true },
   { id: 'more', label: 'More', icon: 'more', main: true },
   { id: 'swing', label: 'Hold a few days', icon: 'calendar', main: false },
   { id: 'alerts', label: 'Trades & alerts', icon: 'bell', main: false },
@@ -44,6 +46,7 @@ const SCREENS = [
 export type ScreenId = (typeof SCREENS)[number]['id'];
 export type Go = (screen: ScreenId, param?: string | null) => void;
 const IDS = SCREENS.map((s) => s.id) as readonly ScreenId[];
+const MAIN = SCREENS.filter((s) => s.main);
 const MORE_IDS: ScreenId[] = ['more', 'alerts', 'learning', 'guide', 'settings', 'diagnostics', 'shortlist', 'planner'];
 const HOME_IDS: ScreenId[] = ['today', 'swing'];
 
@@ -99,6 +102,9 @@ export function App() {
     case 'watchlist':
       content = <WatchlistScreen go={go} />;
       break;
+    case 'news':
+      content = <NewsScreen go={go} />;
+      break;
     case 'more':
       content = <MoreScreen go={go} unread={unread} simple={simple} />;
       break;
@@ -127,6 +133,14 @@ export function App() {
       content = <DiagnosticsScreen />;
   }
   const activeMain = MORE_IDS.includes(route) ? 'more' : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
+  // pages slide in from the side of the tab you came from
+  const tabIndex = MAIN.findIndex((s) => s.id === activeMain);
+  const lastTab = useRef(tabIndex);
+  const slide = tabIndex > lastTab.current ? 'from-right' : tabIndex < lastTab.current ? 'from-left' : '';
+  useEffect(() => {
+    lastTab.current = tabIndex;
+    void buzz('light');
+  }, [tabIndex]);
   const sideItems = SCREENS.filter((s) => s.id !== 'more' && s.icon && !(simple && (s.id === 'diagnostics') && route !== s.id));
 
   return (
@@ -148,13 +162,14 @@ export function App() {
       <div class="content">
         <StatusBar />
         {route !== 'settings' && route !== 'today' && route !== 'practice' && route !== 'guide' && route !== 'more' && route !== 'learning' && <LoginBanner onOpenSettings={() => go('settings')} />}
-        <main key={`${route}/${param ?? ''}`} class="page">
+        <main key={`${route}/${param ?? ''}`} class={`page ${slide}`}>
           {content}
         </main>
         <Disclaimer />
       </div>
-      <nav class="bottom-nav" aria-label="Main screens">
-        {SCREENS.filter((s) => s.main).map((s) => (
+      <nav class="bottom-nav" aria-label="Main screens" style={{ '--tabs': MAIN.length, '--tab': Math.max(0, MAIN.findIndex((s) => s.id === activeMain)) }}>
+        <span class="nav-pill" aria-hidden="true" />
+        {MAIN.map((s) => (
           <button type="button" data-nav={s.id} aria-current={activeMain === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
             <span class="ic">
               <Icon name={s.icon as IconName} size={22} />
