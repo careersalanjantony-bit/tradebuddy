@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+/**
+ * App smoke test: runs the built app (dist/) in a phone-sized Chromium with a simulated live market.
+ * Every Upstox / NSE request is answered by a fake inside this script (page.route), so nothing
+ * reaches the internet and no real account is needed. The page clock is set to a Monday at 10:30 IST.
+ *
+ *   npm run build && node scripts/app-smoke.mjs
+ */
+import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright');
+const root = fileURLToPath(new URL('..', import.meta.url));
+const dist = join(root, 'dist');
+const out = join(root, 'smoke-output');
+mkdirSync(out, { recursive: true });
+
+let passed = 0;
+let failed = 0;
+const check = (name, ok, detail = '') => {
+  if (ok) passed++;
+  else failed++;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
+};
+
+// ---------- static server for dist/
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.map': 'application/json', '.json': 'application/json' };
+const server = createServer((req, res) => {
+  const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const f = join(dist, p === '/' ? 'index.html' : p);
+  if (!f.startsWith(dist) || !existsSync(f)) return res.writeHead(404).end();
+  res.writeHead(200, { 'content-type': TYPES[extname(f)] ?? 'application/octet-stream' }).end(readFileSync(f));
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${server.address().port}/`;
+
+// ---------- fake market
+const rows = JSON.parse(readFileSync(join(root, 'tests/fixtures/instruments-sample.json'), 'utf8')).rows;
+const eq = rows.filter((r) => r.instrument_type === 'EQ');
+// the app refuses a list with fewer than 1,000 companies (a broken download): pad the sample with filler companies
+const allRows = [...rows, ...Array.from({ length: 1100 }, (_, i) => ({ ...eq[0], name: `FILLER ${i}`, trading_symbol: `FILL${i}`, isin: `INF${String(i).padStart(9, '0')}`, instrument_key: `NSE_EQ|INF${String(i).padStart(9, '0')}`, exchange_token: String(90000 + i) }))];
+const symOf = Object.fromEntries(eq.map((r) => [r.instrument_key, r.trading_symbol]));
+const BASE = { ICICIBANK: 1400, HDFCBANK: 800, SBIN: 1050, AXISBANK: 1300, BAJFINANCE: 1000, BSE: 3500, EICHERMOT: 7500, SUNPHARMA: 1850, ETERNAL: 290, TRENT: 4200, RELIANCE: 1500 };
+const mock = { calls: [], move: 0 };
+/** the page's clock: Monday 16 Nov 2026, 10:30 IST (market open) */
+const PAGE_START = Date.parse('2026-11-16T05:00:00Z');
+const priceOf = (key) => {
+  const b = BASE[symOf[key]] ?? 500;
+  return Math.round(b * (1.012 + mock.move) * 20) / 20;
+};
+const json = (body, status = 200) => ({ status, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+
+async function upstox(route) {
+  const req = route.request();
+  if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,DELETE' } });
+  const url = new URL(req.url());
+  mock.calls.push(`${req.method()} ${url.pathname}`);
+  const keys = (url.searchParams.get('instrument_key') ?? '').split(',').filter(Boolean);
+  if (url.pathname === '/v2/market/holidays') return route.fulfill(json({ status: 'success', data: [] }));
+  if (url.pathname === '/v3/market-quote/ltp') {
+    const data = {};
+    for (const k of keys) if (symOf[k]) data[`NSE_EQ:${symOf[k]}`] = { last_price: priceOf(k), instrument_token: k, ltq: 1, volume: 100000, cp: (BASE[symOf[k]] ?? 500) };
+    return route.fulfill(json({ status: 'success', data }));
+  }
+  if (url.pathname === '/v3/market-quote/ohlc') {
+    const data = {};
+    for (const k of keys) {
+      if (!symOf[k]) continue;
+      const b = BASE[symOf[k]] ?? 500;
+      data[`NSE_EQ:${symOf[k]}`] = { last_price: priceOf(k), instrument_token: k, prev_ohlc: { open: b, high: b, low: b, close: b, volume: 1, ts: 0 }, live_ohlc: { open: b * 1.002, high: priceOf(k) * 1.001, low: b * 0.999, close: priceOf(k), volume: 900000, ts: 0 } };
+    }
+    return route.fulfill(json({ status: 'success', data }));
+  }
+  if (url.pathname === '/v2/market-quote/quotes') {
+    const data = {};
+    keys.forEach((k, i) => {
+      if (!symOf[k]) return;
+      const b = BASE[symOf[k]] ?? 500;
+      const up = i % 2 === 0;
+      data[`NSE_EQ:${symOf[k]}`] = { instrument_token: k, symbol: symOf[k], last_price: priceOf(k), volume: 2_000_000, average_price: up ? b * 1.006 : b * 1.02, net_change: priceOf(k) - b, total_buy_quantity: up ? 70000 : 20000, total_sell_quantity: up ? 30000 : 80000, ohlc: { open: b * 1.002, high: b * 1.015, low: b * 0.998, close: priceOf(k) } };
+    });
+    return route.fulfill(json({ status: 'success', data }));
+  }
+  if (url.pathname === '/v2/news') {
+    const data = {};
+    (url.searchParams.get('instrument_keys') ?? '').split(',').filter((x) => symOf[x]).forEach((k, i) => {
+      data[k] = [{ heading: i % 2 === 0 ? `${symOf[k]} net profit rises 20%, beats estimates` : `${symOf[k]}: SEBI imposes penalty`, summary: '', article_link: 'https://upstox.com/news/x', published_time: PAGE_START - 3600_000 }];
+    });
+    return route.fulfill(json({ status: 'success', data }));
+  }
+  if (url.pathname.startsWith('/v3/historical-candle')) return route.fulfill(json({ status: 'success', data: { candles: [] } }));
+  if (url.pathname.startsWith('/v2/fundamentals')) return route.fulfill(json({ status: 'success', data: [] }));
+  if (/\/order|gtt/i.test(url.pathname)) mock.calls.push('ORDER-LIKE ' + url.pathname);
+  return route.fulfill(json({ status: 'error', errors: [{ error_code: 'X', message: 'not in the fake' }] }, 404));
+}
+
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+const errors = [];
+page.on('pageerror', (e) => errors.push(e.message));
+await page.clock.install({ time: new Date(PAGE_START) }); // Monday 10:30 IST
+await page.route('https://api.upstox.com/**', upstox);
+await page.route('https://assets.upstox.com/**', (route) =>
+  route.fulfill({ status: 200, headers: { 'content-type': 'application/octet-stream', 'access-control-allow-origin': '*' }, body: gzipSync(Buffer.from(JSON.stringify(allRows))) }),
+);
+await page.route('https://nsearchives.nseindia.com/**', (route) => route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }));
+const until = async (fn, ms = 15000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (await fn().catch(() => false)) return true;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+};
+
+console.log('── First start: guide');
+await page.goto(base);
+await page.waitForSelector('[data-testid="guide"]', { timeout: 20000 });
+check('the first-start guide opens by itself', ((await page.textContent('[data-testid="guide-title"]')) ?? '').includes('Welcome'));
+await page.screenshot({ path: join(out, 'app-guide.png') });
+let steps = 1;
+while (await page.$('[data-testid="guide-next"]')) {
+  await page.click('[data-testid="guide-next"]');
+  steps++;
+}
+check('the guide has 7 short steps and ends on "Start practising"', steps === 7 && !!(await page.$('[data-testid="guide-done"]')), `${steps} steps`);
+
+// set up: Analytics Token + the sample stocks as the list (no real Upstox account needed)
+await page.evaluate(async (keys) => {
+  const s = (await chrome.storage.local.get('settings')).settings;
+  await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, watchlist: keys, settings: { ...s, scanner: { ...s.scanner, universe: 'watchlist' }, dayTrade: { ...s.dayTrade, enabled: true }, risk: { ...s.risk, capitalInr: 200000 } } });
+}, eq.map((r) => r.instrument_key));
+await page.click('[data-testid="guide-done"]');
+await page.waitForSelector('[data-testid="wallet"]', { timeout: 10000 });
+check('after the guide: Practice tab with ₹10,00,000', ((await page.textContent('[data-testid="wallet-total"]')) ?? '').replace(/\s/g, '') === '₹10,00,000');
+check('the guide does not come back', await page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.ui.guideSeen === true));
+
+console.log('── Live prices');
+const priced = await until(async () => page.evaluate(async () => Object.keys((await chrome.storage.session.get('quotes')).quotes ?? {}).length >= 10), 25000);
+check('live prices arrive for the studied stocks (market open, Analytics Token)', priced);
+
+console.log('── Practice money: buy');
+await page.click('[data-testid="practice-buy"]');
+await page.waitForSelector('[data-testid="trade-sheet"]');
+await page.fill('[data-field="trade-search"]', 'RELI');
+await page.click('.results .result');
+await page.fill('[data-field="trade-qty"]', '100');
+await page.click('details summary');
+await page.fill('[data-field="trade-stop"]', '1500');
+await page.fill('[data-field="trade-target"]', '1560');
+await page.check('[data-field="trade-sellbyclose"]');
+await page.screenshot({ path: join(out, 'app-buy-sheet.png') });
+await page.click('[data-testid="trade-submit"]');
+await page.waitForSelector('[data-testid="trade-msg"]', { timeout: 10000 });
+const buyMsg = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
+check('Buy 100 RELIANCE fills at the live price ₹1,518 + 0.02% slippage, rounded up to 5 paise', buyMsg.includes('Bought 100 RELIANCE at ₹1,518.35'), buyMsg);
+await page.waitForSelector('.holding[data-symbol="RELIANCE"]', { timeout: 8000 }).catch(() => {});
+const holdText = ((await page.textContent('[data-testid="holdings"]')) ?? '').replace(/\s+/g, ' ');
+check('the holding shows shares, buy price, safety sell and target', holdText.includes('100 shares') && holdText.includes('Safety sell ₹1,500') && holdText.includes('target ₹1,560') && holdText.includes('day trade'), holdText.slice(0, 160));
+const cash = await page.evaluate(async () => (await chrome.storage.local.get('wallet')).wallet.cash);
+check('cash went down by exactly the cost', Math.abs(cash - (1_000_000 - 151_835)) < 0.01, String(cash));
+
+console.log('── Practice money: target reached → sold by itself');
+mock.move = 0.03; // price rises to 1545 → above the 1560 target? 1500*1.042 = 1563
+const sold = await until(async () => page.evaluate(async () => ((await chrome.storage.local.get('wallet')).wallet.fills ?? []).some((f) => f.side === 'sell' && f.reason === 'target')), 30000);
+const fills = await page.evaluate(async () => (await chrome.storage.local.get('wallet')).wallet.fills);
+const sale = fills.find((f) => f.side === 'sell');
+check('the target sale happens by itself, with the result after intraday charges', sold && sale?.pnl > 0 && sale.charges > 50 && sale.charges < 150, sale ? `sold @ ${sale.price}, P&L ${sale.pnl}, charges ${sale.charges}` : 'no sale');
+const notes = await page.evaluate(() => chrome.notifications.getAll());
+check('a notification tells about the sale', Object.keys(notes).some((k) => k.startsWith('alert:wallet-')));
+await page.waitForTimeout(800);
+await page.screenshot({ path: join(out, 'app-practice.png'), fullPage: true });
+const histText = ((await page.textContent('[data-testid="wallet-history"]')) ?? '').replace(/\s+/g, ' ');
+check('history lists the buy and the sale with "target"', histText.includes('Buy 100 RELIANCE') && histText.includes('Sell 100 RELIANCE') && histText.includes('target'), histText.slice(0, 160));
+const todayTxt = (await page.textContent('[data-testid="wallet-today"]')) ?? '';
+check("today's profit shown", todayTxt.includes('+'), todayTxt);
+
+console.log('── Selling by hand, limits');
+mock.move = 0;
+await page.click('[data-testid="practice-buy"]');
+await page.fill('[data-field="trade-search"]', 'SBIN');
+await page.click('.results .result');
+await page.fill('[data-field="trade-qty"]', '10');
+await page.click('[data-testid="trade-submit"]');
+await page.waitForSelector('[data-testid="trade-msg"]');
+await page.waitForSelector('.holding[data-symbol="SBIN"]', { timeout: 8000 }).catch(() => {});
+await page.click('.holding[data-symbol="SBIN"] [data-testid="holding-sell"]');
+await page.waitForSelector('[data-testid="trade-sheet"]');
+await page.click('[data-testid="trade-submit"]');
+await page.waitForSelector('[data-testid="trade-msg"]');
+const sellMsg = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
+check('Sell from a holding: all shares sold at the live price', sellMsg.startsWith('Sold 10 SBIN'), sellMsg);
+await page.waitForTimeout(1700);
+await page.click('[data-testid="practice-buy"]');
+await page.fill('[data-field="trade-search"]', 'EICHER');
+await page.click('.results .result');
+await page.fill('[data-field="trade-qty"]', '1000');
+await page.click('[data-testid="trade-submit"]');
+await page.waitForSelector('[data-testid="trade-msg"]');
+const tooBig = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
+check('a buy bigger than the practice money is refused, in plain words', tooBig.includes('Not enough practice money'), tooBig);
+await page.click('.sheet [aria-label="Close"]');
+
+console.log('── Day trade tab: rising now, buyers meter, learning');
+await page.click('.bottom-nav [data-nav="daytrade"]');
+const rising = await until(async () => (await page.$$('[data-testid="rising-now"] .holding')).length > 0, 30000);
+const risingText = ((await page.textContent('[data-testid="rising-now"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"Rising now" lists stocks with the buyers meter', rising && /Buyers strong|More buyers/.test(risingText), risingText.slice(0, 200));
+check('"Rising now" says it is a list to watch, not a signal', risingText.includes('not a buy signal'));
+check('the self-learning line is on the Day trade tab', ((await page.textContent('[data-testid="learning-line"]').catch(() => '')) ?? '').includes('Self-learning'));
+await page.screenshot({ path: join(out, 'app-daytrade.png'), fullPage: true });
+await page.click('.bottom-nav [data-nav="more"]');
+await page.click('[data-go="learning"]');
+await page.waitForSelector('[data-testid="learning-card"]');
+await page.click('[data-testid="learn-now"]');
+await page.waitForTimeout(1500);
+const learnText = ((await page.textContent('[data-testid="learning-card"]')) ?? '').replace(/\s+/g, ' ');
+check('Self-learning screen explains the unseen-days check and asks for history when there is none', learnText.includes('never seen') && learnText.includes('45 trading days'), learnText.slice(0, 120));
+await page.screenshot({ path: join(out, 'app-learning.png'), fullPage: true });
+
+console.log('── Home, news, layout');
+await page.click('.bottom-nav [data-nav="today"]');
+await page.waitForSelector('[data-testid="wallet-mini"]');
+check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
+const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
+const marks = await page.$$eval('[data-testid="news"] [data-mood]', (els) => els.map((e) => e.getAttribute('data-mood')));
+check('News box marks headlines that read clearly good 👍 or bad 👎 (keyword check)', moods && marks.every((m) => m === 'good' || m === 'bad'), marks.join(','));
+await page.screenshot({ path: join(out, 'app-home.png'), fullPage: true });
+const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+check('no sideways scrolling on a phone screen', !overflow);
+await page.setViewportSize({ width: 1280, height: 800 });
+await page.waitForTimeout(300);
+check('wide screens get the side menu instead of the bottom bar', await page.evaluate(() => getComputedStyle(document.querySelector('.side-nav')).display !== 'none' && getComputedStyle(document.querySelector('.bottom-nav')).display === 'none'));
+await page.screenshot({ path: join(out, 'app-wide.png') });
+
+console.log('── Safety');
+check('no order / GTT request was ever made', !mock.calls.some((c) => c.startsWith('ORDER-LIKE')), `${mock.calls.length} fake Upstox calls`);
+check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+await browser.close();
+server.close();
+console.log(`\n${passed}/${passed + failed} checks passed. Screenshots: ${out}`);
+process.exit(failed ? 1 : 0);

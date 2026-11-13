@@ -21,15 +21,19 @@ const MAX_ITEMS = 80;
 /** The stocks to fetch news for, most important first (at most 30). */
 export async function newsKeys(now = Date.now()): Promise<string[]> {
   const today = istDate(now);
-  const [plans, dayTrades, signals, picks] = await Promise.all([getLocal('plans'), getLocal('dayTrades'), getSession('daySignals'), getSession('announcedPicks')]);
+  const [plans, dayTrades, signals, picks, wallet, flow] = await Promise.all([getLocal('plans'), getLocal('dayTrades'), getSession('daySignals'), getSession('announcedPicks'), getLocal('wallet'), getSession('flow')]);
   const keys: string[] = [];
   for (const t of dayTrades ?? []) if (t.status === 'open' && !t.practice) keys.push(t.key);
   for (const p of plans ?? []) if (p.status === 'open' && !p.practice) keys.push(p.key);
   if (signals?.date === today) for (const s of signals.signals) keys.push(s.key);
   for (const p of plans ?? []) if (p.status === 'planned' && !p.practice) keys.push(p.key);
   if (picks?.day === today) keys.push(...picks.keys);
+  // app v1.0: practice-money holdings and waiting orders, then the "rising now" list
+  for (const h of wallet?.holdings ?? []) keys.push(h.key);
+  for (const o of wallet?.orders ?? []) if (o.status === 'open') keys.push(o.key);
   for (const t of dayTrades ?? []) if (t.status === 'open' && t.practice) keys.push(t.key);
   for (const p of plans ?? []) if (p.status === 'open' && p.practice) keys.push(p.key);
+  for (const r of flow?.rising ?? []) keys.push(r.key);
   return [...new Set(keys)].slice(0, 30);
 }
 

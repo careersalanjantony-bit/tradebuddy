@@ -10,9 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "node scripts/smoke-test.mjs",
+    "smoke": "node scripts/app-smoke.mjs",
     "cap:sync": "npm run build && npx cap sync android",
-    "apk": "node scripts/build-apk.mjs"
+    "apk": "node scripts/build-apk.mjs",
+    "smoke:extension": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",

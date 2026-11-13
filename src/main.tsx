@@ -20,6 +20,16 @@ async function boot(): Promise<void> {
   });
   const { startUi } = await import('./ui/main');
   startUi();
+  // During market hours keep running in the background (small notification), so alerts still arrive.
+  const { setMarketWatch } = await import('./platform/nativeBindings');
+  const { marketState } = await import('./data/calendar');
+  const { getCalendar } = await import('./data/calendarSync');
+  const watch = async () => {
+    const m = marketState(Date.now(), await getCalendar());
+    await setMarketWatch(m.phase === 'open' || m.phase === 'pre_open', 'Prices, signals and your practice trades are being watched until 3:30 pm.');
+  };
+  void watch();
+  setInterval(() => void watch().catch(() => undefined), 60_000);
 }
 
 boot().catch((err: unknown) => {

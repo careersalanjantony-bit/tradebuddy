@@ -145,3 +145,13 @@ Standard APIs: 50/s, 500/min, 2000/30 min, per API per user (unchanged from spec
 | No results calendar | the Fundamentals APIs have no "next results date" endpoint, so there is no "results today" warning; the only event flag is "in the news in the last 24 hours" (from the headlines) | — |
 | Tested how | unit tests (parse, reconcile, the full "bought in Upstox → found → watched → sold → result" flow, decoder against protobufjs) and the browser smoke test against a fake Upstox with a fake positions endpoint, news endpoint and WebSocket feed | `tests/portfolio.test.ts`, `tests/feed.test.ts`, `scripts/smoke-test.mjs` |
 | **Not verified on real data** | (1) whether Upstox lets this app read positions with the daily token (no static IP) — if not, the sync line shows Upstox's reason and trades are recorded by hand; (2) the real feed: how soon ticks start, whether index ticks arrive in ltpc mode, how long Chrome keeps the service worker's connection open (the 30-second check reconnects); (3) the real News API answers for these stocks; (4) how `day_buy_price` is reported after several partial fills (assumed: the average) | `UpstoxSyncLine`, Diagnostics → "Instant prices" |
+
+## TradeBuddy app (checked 14 Nov 2026, app v1.0.0)
+
+| Item | Finding | Code |
+|---|---|---|
+| Full market quote | `GET /v2/market-quote/quotes?instrument_key=…` — "up to 500 instruments in one go"; per stock `last_price`, `volume`, `average_price`, `net_change`, `total_buy_quantity` ("total number of bid quantity available for trading"), `total_sell_quantity`, `ohlc`, top-5 `depth` | `src/data/flow.ts` |
+| Upstox charges used by practice money | Intraday as before; Delivery: ₹20 per executed order, STT 0.1% both sides, stamp 0.015% buy side, DP ₹20 + GST per sell | `src/wallet/wallet.ts` |
+| MTF | Upstox: "Interest ₹20/day for every slab of ₹40,000 taken as MTF"; pledge/unpledge ₹20 + GST per scrip (owner question; the app does not model MTF) | — |
+| Android build | Capacitor 8.6.0 (compileSdk/targetSdk 36, minSdk 24), signed release APK verified with `apksigner` | `android/` |
+| **Not verified on a real phone** | in-app browser login redirect capture, local notifications, the special-use foreground service during market hours, WebSocket feed from the app's WebView | `src/platform/nativeBindings.ts` |
