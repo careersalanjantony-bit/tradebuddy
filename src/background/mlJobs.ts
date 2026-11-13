@@ -69,7 +69,7 @@ export async function learnIfDue(now = Date.now()): Promise<void> {
 
 const prevCache = new Map<string, { date: string; days: PrevDay[] }>();
 
-async function prevDays(key: string, date: string): Promise<PrevDay[]> {
+export async function prevDays(key: string, date: string): Promise<PrevDay[]> {
   const c = prevCache.get(key);
   if (c?.date === date) return c.days;
   const days = (await getIntradayDays(key))

@@ -12,7 +12,7 @@ import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '
 import { loginWithUpstox } from '../login';
 import { TodaySuggestions } from '../components/Suggestions';
 import { PastRecordCard } from '../components/PastRecord';
-import { PracticeCard } from '../components/Practice';
+import { WalletMini } from '../components/WalletMini';
 import { MoodLine, NewsCard } from '../components/Market';
 
 /**
@@ -119,7 +119,7 @@ export function TodayScreen({ go }: { go: Go }) {
       <MoodLine />
       <TodaySuggestions go={go} />
       <NewsCard />
-      <PracticeCard />
+      <WalletMini go={go} />
       <PastRecordCard />
 
       {open.length > 0 && (

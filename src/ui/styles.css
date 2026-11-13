@@ -495,3 +495,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .timeline li { margin: 6px 0; }
 .guide-dl dt { font-weight: 700; margin-top: 8px; }
 .guide-dl dd { margin: 2px 0 0; }
+.chip.meter.good { background: rgba(34, 197, 94, 0.16); color: var(--ok); border-color: transparent; }
+.chip.meter.bad { background: rgba(239, 68, 68, 0.14); color: var(--err); border-color: transparent; }
+.chip.meter.neutral { background: var(--surface-2); color: var(--muted); }
+.news-mood { margin-right: 4px; }

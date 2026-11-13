@@ -79,5 +79,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     dayTest: null,
     wallet: null,
     mlModel: null,
+    mlJournal: [],
   };
 }

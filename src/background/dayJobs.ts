@@ -23,6 +23,8 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { UpstoxError } from '../upstox/errors';
 import { scoreLive } from './mlJobs';
+import { buyersMeter } from '../data/flow';
+import { stockSentiment } from '../data/sentiment';
 
 /**
  * Day-trade mode in the service worker (v0.11.0): downloads the 5-minute history, raises BUY / SELL
@@ -136,10 +138,26 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   // background checks (no screen needed): is the company in the news, is the market nervous today?
   const recent = inTheNews(await newsFor(add.filter((s) => !s.late).map((s) => s.key), now), now);
   const mood = marketMood(await getQuotes(), await dayKeys());
+  const newsItems = await newsFor(add.map((s) => s.key), now).catch(() => []);
+  const flow = await getSession('flow');
   for (const s of add) {
     if (recent.has(s.key)) s.inNews = true;
     if (mood.caution) s.caution = mood.caution;
+    const f = flow?.stocks[s.key];
+    const q = (await getQuotes())[s.key];
+    if (f && q) {
+      const meter = buyersMeter({ ltp: q.ltp, vwap: f.vwap, buyQty: f.buyQty, sellQty: f.sellQty });
+      s.buyers = meter.label;
+      s.pace = f.pace;
+    }
+    const sent = stockSentiment(newsItems.filter((i) => i.key === s.key), now);
+    if (sent) {
+      s.newsMood = sent.label;
+      const against = (s.side === 'long' && sent.label === 'bad') || (s.side === 'short' && sent.label === 'good');
+      if (against) s.caution = `${s.caution ? `${s.caution} ` : ''}Today's news for this company points the OTHER way — skipping this one is safer.`;
+    }
   }
+  await recordJournal(add, now);
   // busiest stocks first when several fire at the same boundary (as in the past test)
   add.sort((a, b) => b.rvol - a.rvol);
   for (const s of add) {
@@ -157,6 +175,17 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   if (sounded) await playSound('info');
   await setSession('daySignals', { date, signals: [...have, ...add] });
   log.info(`Day-trade signal(s): ${add.map((s) => `${sideWord(s.side)} ${s.symbol}@${s.entry}${s.late ? ' (late)' : ''}`).join(', ')}`);
+}
+
+/**
+ * Every live signal is written down with what was known only live (buyers meter, volume pace, news
+ * mood), so the self-learning can use these clues once enough days are collected.
+ */
+async function recordJournal(sigs: DaySignal[], now: number): Promise<void> {
+  if (!sigs.length) return;
+  const prev = (await getLocal('mlJournal')) ?? [];
+  const rows = sigs.map((s) => ({ date: istDate(now), key: s.key, symbol: s.symbol, side: s.side, barT: s.barT, entry: s.entry, stop: s.stop, target: s.target, chance: s.chance ?? null, buyers: s.buyers ?? null, pace: s.pace ?? null, news: s.newsMood ?? null, late: !!s.late }));
+  await setLocal('mlJournal', [...prev, ...rows].slice(-3000));
 }
 
 /**

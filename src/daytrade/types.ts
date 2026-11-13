@@ -42,6 +42,12 @@ export interface DaySignal {
   chance?: number;
   /** the learning passed its unseen-days check and decided this signal */
   ml?: boolean;
+  /** buyers meter at the signal (app v1.0) */
+  buyers?: import('../data/flow').MeterLabel;
+  /** volume so far vs usual by this time */
+  pace?: number | null;
+  /** mood of today's headlines for this company */
+  newsMood?: 'good' | 'bad' | 'neutral';
   /** found while catching up: the breakout happened earlier than the latest 5-minute bar */
   late?: boolean;
   announced?: boolean;

@@ -1,5 +1,6 @@
 import { marketMood } from '../../advisor/mood';
 import { headlines } from '../../data/news';
+import { headlineSentiment } from '../../data/sentiment';
 import { formatPct, formatTimeIST } from '../../lib/format';
 import { istDate } from '../../lib/time';
 import { callBackground } from '../../shared/messages';
@@ -37,6 +38,17 @@ export function MoodLine() {
   );
 }
 
+/** 👍 / 👎 for a headline that reads clearly good or bad (keyword check, see data/sentiment.ts). */
+function NewsMood({ heading }: { heading: string }) {
+  const s = headlineSentiment(heading);
+  if (s.label === 'neutral') return null;
+  return (
+    <span class="news-mood" title={s.label === 'good' ? 'Reads like good news' : 'Reads like bad news'} data-mood={s.label}>
+      {s.label === 'good' ? '👍' : '👎'}
+    </span>
+  );
+}
+
 /** A few headlines for the stocks that matter today. No analysis — just the headline, time and link. */
 export function NewsCard({ limit = 6 }: { limit?: number }) {
   const news = useSessionValue('news');
@@ -61,7 +73,7 @@ export function NewsCard({ limit = 6 }: { limit?: number }) {
         <ul class="news-list small">
           {items.map((i) => (
             <li>
-              <span class="muted">{istDate(i.at) === today ? formatTimeIST(i.at).slice(0, 5) : istDate(i.at).slice(5)}</span> <b>{byKey.get(i.key)?.trading_symbol ?? ''}</b>{' '}
+              <span class="muted">{istDate(i.at) === today ? formatTimeIST(i.at).slice(0, 5) : istDate(i.at).slice(5)}</span> <b>{byKey.get(i.key)?.trading_symbol ?? ''}</b> <NewsMood heading={i.heading} />
               {i.link ? (
                 <a href={i.link} target="_blank" rel="noreferrer">
                   {i.heading}

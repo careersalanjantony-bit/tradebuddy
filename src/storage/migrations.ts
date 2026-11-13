@@ -70,6 +70,8 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (wallet === undefined) await kv.set({ wallet: null });
       const { mlModel } = await kv.get(['mlModel']);
       if (mlModel === undefined) await kv.set({ mlModel: null });
+      const { mlJournal } = await kv.get(['mlJournal']);
+      if (mlJournal === undefined) await kv.set({ mlJournal: [] });
     },
   },
 ];

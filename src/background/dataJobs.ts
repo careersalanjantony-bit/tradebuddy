@@ -27,6 +27,7 @@ import { refreshNews } from './newsJobs';
 import { syncPortfolio } from './portfolioJobs';
 import { INDEX_KEYS } from '../data/indices';
 import { checkWallet } from './walletJobs';
+import { refreshFlow } from './flowJobs';
 
 const log = createLogger('data');
 
@@ -153,6 +154,7 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
       await checkNewPicks(now).catch((err: unknown) => log.warn('Top-pick check failed', { error: err }));
     }
     if (m.phase === 'open' || m.phase === 'pre_open') void refreshNews(now).catch(() => undefined);
+    if (m.phase === 'open') void refreshFlow(now).catch(() => undefined);
   } finally {
     afterRunning = false;
   }

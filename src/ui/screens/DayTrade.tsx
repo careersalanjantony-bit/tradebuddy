@@ -17,6 +17,7 @@ import { useInstrumentMap, useQuotes, useStudyKeys } from '../data';
 import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '../hooks';
 import { openTrade } from '../components/TradeSheet';
 import { LearningCard } from '../components/Learning';
+import { RisingNowCard, meterTone } from '../components/RisingNow';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -102,6 +103,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
         <>
           <MoodLine />
           <LearningCard go={go} />
+          <RisingNowCard />
           <SignalsCard amount={amount} slots={slots} />
           <UpstoxSyncLine />
           <DayTradesCard />
@@ -231,6 +233,18 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
         <dd>
           Close it by <b>3:10 pm</b> whatever happens
         </dd>
+        {(s.buyers || s.newsMood) && (
+          <>
+            <dt>Right now</dt>
+            <dd class="small" data-testid="day-flow">
+              {s.buyers && (
+                <span class={`chip meter ${meterTone(s.buyers)}`}>{s.buyers}</span>
+              )}{' '}
+              {s.pace ? <>{formatNumberIN(s.pace, 1)}× the usual trading by this time · </> : null}
+              {s.newsMood && <>news {s.newsMood === 'good' ? '👍 good' : s.newsMood === 'bad' ? '👎 bad' : 'neutral'}</>}
+            </dd>
+          </>
+        )}
         {s.chance !== undefined && (
           <>
             <dt>Chance</dt>

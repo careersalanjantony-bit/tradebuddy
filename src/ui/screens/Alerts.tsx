@@ -11,7 +11,6 @@ import { adviceForPlan } from '../../advisor/forPlan';
 import type { Advice } from '../../advisor/holdAdvice';
 import type { StockData } from '../../data/stockData';
 import { useLocal, useSessionValue, useSettings } from '../hooks';
-import { PracticeCard } from '../components/Practice';
 import { UpstoxSyncLine } from '../components/Market';
 import { AddPurchaseCard, stopLimitFor } from '../components/Bought';
 
@@ -100,7 +99,6 @@ export function AlertsScreen({ go }: { go: Go }) {
             </div>
           ))}
       </section>
-      <PracticeCard />
 
       <section class="card">
         <h2>Price alerts</h2>

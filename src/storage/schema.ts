@@ -275,6 +275,8 @@ export interface LocalStore {
   dayTest: { key: string; report: DayTestReport } | null;
   /** self-learning: the latest learned model and its check (app v1.0) */
   mlModel: import('../ml/learn').MlReport | null;
+  /** live signals with the clues only known live (buyers meter, pace, news mood), for future learning */
+  mlJournal: Array<{ date: string; key: string; symbol: string; side: 'long' | 'short'; barT: number; entry: number; stop: number; target: number | null; chance: number | null; buyers: string | null; pace: number | null; news: string | null; late: boolean }>;
   /** practice money (app v1.0); null until first used */
   wallet: import('../wallet/wallet').WalletState | null;
 }
