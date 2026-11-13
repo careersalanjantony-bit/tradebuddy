@@ -11,6 +11,11 @@ import { getSession, setSession } from '../storage/session';
 import { upstoxRequest } from '../upstox/client';
 import { dayKeys } from './dayJobs';
 import { prevDays } from './mlJobs';
+import { getInstrument } from '../data/instruments';
+import { stockSentiment } from '../data/sentiment';
+import { notify } from '../notify/chrome';
+import { playSound } from '../notify/sound';
+import { getSettings } from '../storage/local';
 
 /**
  * Buyers meter + "rising now" (app v1.0): the full market quote of every studied stock about every
@@ -30,6 +35,37 @@ function usualVolumeBy(days: PrevDay[], t: number): number | null {
     if (v && v > 0) vals.push(v);
   }
   return vals.length >= 3 ? vals.reduce((a, x) => a + x, 0) / vals.length : null;
+}
+
+/**
+ * "Rising fast" alert (owner: "alert automatically to buy this stock from rising today"): the top
+ * stock of the list when buyers are clearly in control, trading is at least twice the usual and the
+ * news is not bad. At most 3 a day, each stock once, 9:30–14:30. Worded as an idea to check, because
+ * this list has no past test behind it (the day-trade signals do).
+ */
+async function alertRising(rows: RisingRow[], now: number, t: number): Promise<void> {
+  const settings = await getSettings();
+  if (!settings.notifications.rising || t < 9 * 60 + 30 || t > 14 * 60 + 30) return;
+  const date = istDate(now);
+  const prev = await getSession('risingAlerted');
+  const sent = prev?.date === date ? prev.keys : [];
+  if (sent.length >= 3) return;
+  const news = await getSession('news');
+  const top = rows.find((r) => {
+    if (sent.includes(r.key) || r.meter.label !== 'Buyers strong' || (r.pace !== null && r.pace < 2)) return false;
+    const mood = stockSentiment((news?.items ?? []).filter((i) => i.key === r.key), now);
+    return mood?.label !== 'bad';
+  });
+  if (!top) return;
+  const sym = (await getInstrument(top.key))?.trading_symbol ?? top.key;
+  await notify(`alert:rising-${top.key}-${date}`, {
+    title: `📈 Rising fast: ${sym} +${top.fromOpenPct.toFixed(1)}% since the open`,
+    message: `Buyers are in control${top.pace ? ` and it trades ${top.pace.toFixed(1)}× more than usual` : ''}. A possible buy idea — open TradeBuddy to check it and practise first. Quick rises often fall back.`,
+    priority: 2,
+  });
+  await playSound('info');
+  await setSession('risingAlerted', { date, keys: [...sent, top.key] });
+  log.info(`Rising-fast alert: ${sym}`);
 }
 
 export async function refreshFlow(now = Date.now(), force = false): Promise<{ stocks: number; rising: number } | null> {
@@ -57,6 +93,7 @@ export async function refreshFlow(now = Date.now(), force = false): Promise<{ st
     const lite: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }> = {};
     for (const f of Object.values(flows)) lite[f.key] = { buyQty: f.buyQty, sellQty: f.sellQty, vwap: f.vwap, pace: paces.get(f.key) ?? null };
     await setSession('flow', { at: now, stocks: lite, rising });
+    await alertRising(rising, now, t).catch((err: unknown) => log.warn('Rising alert failed', { error: errorMessage(err) }));
     return { stocks: Object.keys(flows).length, rising: rising.length };
   } catch (err) {
     log.info('Buyers meter not updated', { reason: errorMessage(err) });

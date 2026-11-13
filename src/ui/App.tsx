@@ -1,11 +1,11 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { callBackground } from '../shared/messages';
 import { Disclaimer } from './components/Disclaimer';
 import { LoginBanner } from './components/LoginBanner';
 import { StatusBar } from './components/StatusBar';
 import { TradeSheetHost } from './components/TradeSheet';
-import { useHashRoute, useSessionValue, useSettings } from './hooks';
+import { useHashRoute, useLocal, useSessionValue, useSettings } from './hooks';
 import { AlertsScreen } from './screens/Alerts';
 import { DiagnosticsScreen } from './screens/Diagnostics';
 import { PlannerScreen } from './screens/Planner';
@@ -19,19 +19,23 @@ import { PracticeScreen } from './screens/Practice';
 import { GuideOverlay, GuideScreen } from './screens/Guide';
 import { MoreScreen } from './screens/More';
 import { LearningScreen } from './screens/Learning';
+import { HomeScreen } from './screens/Home';
+import { Icon, type IconName } from './components/Icon';
+import { MotionHost, buzz, celebrate, toast } from './components/Motion';
 
 /** Every screen. `main` ones are in the bottom bar on a phone; the rest are under "More". */
 const SCREENS = [
-  { id: 'today', label: 'Home', icon: '⌂', main: true },
-  { id: 'daytrade', label: 'Day trade', icon: '⚡', main: true },
-  { id: 'practice', label: 'Practice', icon: '₹', main: true },
-  { id: 'watchlist', label: 'Stocks', icon: '☰', main: true },
-  { id: 'more', label: 'More', icon: '⋯', main: true },
-  { id: 'alerts', label: 'Trades & alerts', icon: '🔔', main: false },
-  { id: 'learning', label: 'Self-learning', icon: '🧠', main: false },
-  { id: 'guide', label: 'Guide', icon: '?', main: false },
-  { id: 'settings', label: 'Settings', icon: '⚙', main: false },
-  { id: 'diagnostics', label: 'Diagnostics', icon: '🛠', main: false },
+  { id: 'today', label: 'Home', icon: 'home', main: true },
+  { id: 'daytrade', label: 'Day trade', icon: 'bolt', main: true },
+  { id: 'practice', label: 'Practice', icon: 'wallet', main: true },
+  { id: 'watchlist', label: 'Stocks', icon: 'list', main: true },
+  { id: 'more', label: 'More', icon: 'more', main: true },
+  { id: 'swing', label: 'Hold a few days', icon: 'calendar', main: false },
+  { id: 'alerts', label: 'Trades & alerts', icon: 'bell', main: false },
+  { id: 'learning', label: 'Self-learning', icon: 'brain', main: false },
+  { id: 'guide', label: 'Guide', icon: 'help', main: false },
+  { id: 'settings', label: 'Settings', icon: 'gear', main: false },
+  { id: 'diagnostics', label: 'Diagnostics', icon: 'tool', main: false },
   { id: 'shortlist', label: 'Shortlist', icon: '', main: false },
   { id: 'stock', label: 'Stock', icon: '', main: false },
   { id: 'planner', label: 'Planner', icon: '', main: false },
@@ -41,6 +45,7 @@ export type ScreenId = (typeof SCREENS)[number]['id'];
 export type Go = (screen: ScreenId, param?: string | null) => void;
 const IDS = SCREENS.map((s) => s.id) as readonly ScreenId[];
 const MORE_IDS: ScreenId[] = ['more', 'alerts', 'learning', 'guide', 'settings', 'diagnostics', 'shortlist', 'planner'];
+const HOME_IDS: ScreenId[] = ['today', 'swing'];
 
 export function App() {
   const [route, param, go] = useHashRoute(IDS, 'today');
@@ -56,10 +61,33 @@ export function App() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [route, param]);
+  // a practice sale with a profit: a little celebration (and a toast for any sale)
+  const wallet = useLocal('wallet');
+  const seenFills = useRef<number | null>(null);
+  useEffect(() => {
+    const fills = wallet?.fills ?? [];
+    if (seenFills.current === null) {
+      seenFills.current = fills.length;
+      return;
+    }
+    const fresh = fills.slice(seenFills.current);
+    seenFills.current = fills.length;
+    for (const f of fresh) {
+      if (f.side !== 'sell' || f.pnl === undefined) continue;
+      if (f.pnl > 0) {
+        celebrate();
+        void buzz('success');
+        toast(`Profit +₹${Math.round(f.pnl).toLocaleString('en-IN')} on ${f.symbol}`);
+      } else toast(`Sold ${f.symbol}: −₹${Math.abs(Math.round(f.pnl)).toLocaleString('en-IN')}`, 'info');
+    }
+  }, [wallet?.fills.length]);
 
   let content: ComponentChildren;
   switch (route) {
     case 'today':
+      content = <HomeScreen go={go} />;
+      break;
+    case 'swing':
       content = <TodayScreen go={go} />;
       break;
     case 'daytrade':
@@ -98,38 +126,46 @@ export function App() {
     default:
       content = <DiagnosticsScreen />;
   }
-  const activeMain = MORE_IDS.includes(route) ? 'more' : route === 'stock' ? 'watchlist' : route;
+  const activeMain = MORE_IDS.includes(route) ? 'more' : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
   const sideItems = SCREENS.filter((s) => s.id !== 'more' && s.icon && !(simple && (s.id === 'diagnostics') && route !== s.id));
 
   return (
     <div class="app">
       <aside class="side-nav" aria-label="Screens">
         <div class="brand">
-          <span class="logo">▲</span> TradeBuddy
+          <span class="logo">
+            <Icon name="up" size={18} />
+          </span>{' '}
+          TradeBuddy
         </div>
         {sideItems.map((s) => (
           <button type="button" aria-current={route === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
-            <span class="ic">{s.icon}</span> {s.label}
+            <Icon name={s.icon as IconName} size={20} /> {s.label}
             {s.id === 'alerts' && unread > 0 && <span class="count">{unread}</span>}
           </button>
         ))}
       </aside>
       <div class="content">
         <StatusBar />
-        {route !== 'settings' && route !== 'today' && route !== 'practice' && route !== 'guide' && route !== 'more' && <LoginBanner onOpenSettings={() => go('settings')} />}
-        <main>{content}</main>
+        {route !== 'settings' && route !== 'today' && route !== 'practice' && route !== 'guide' && route !== 'more' && route !== 'learning' && <LoginBanner onOpenSettings={() => go('settings')} />}
+        <main key={`${route}/${param ?? ''}`} class="page">
+          {content}
+        </main>
         <Disclaimer />
       </div>
       <nav class="bottom-nav" aria-label="Main screens">
         {SCREENS.filter((s) => s.main).map((s) => (
           <button type="button" data-nav={s.id} aria-current={activeMain === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
-            <span class="ic">{s.icon}</span>
+            <span class="ic">
+              <Icon name={s.icon as IconName} size={22} />
+            </span>
             <span class="lbl">{s.label}</span>
             {s.id === 'more' && unread > 0 && <span class="count">{unread}</span>}
           </button>
         ))}
       </nav>
       <TradeSheetHost />
+      <MotionHost />
       {settings && !settings.ui.guideSeen && <GuideOverlay go={go} />}
     </div>
   );

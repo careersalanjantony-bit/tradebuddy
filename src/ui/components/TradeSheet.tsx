@@ -6,6 +6,7 @@ import { callBackground } from '../../shared/messages';
 import { availableCash, sellableQty, sharesFor, newWallet, type OrderSide, type OrderType } from '../../wallet/wallet';
 import { useInstruments, useQuotes } from '../data';
 import { useLocal, useMarketState } from '../hooks';
+import { buzz, toast } from './Motion';
 
 /**
  * The Buy / Sell panel for practice money. Opens from anywhere: the Practice tab, a day-trade
@@ -95,6 +96,9 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
               ? `Order placed: it ${side === 'buy' ? 'buys' : 'sells'} at the next opening price (market closed now).`
               : `Order placed: it ${side === 'buy' ? 'buys' : 'sells'} when the price reaches ₹${formatNumberIN(Number(limit))}.`,
       });
+      // sales are announced with their result by the app (one message per sale)
+      if (side === 'buy' || r.filledAt === undefined) toast(r.filledAt !== undefined ? `${verb} ${q} ${stock.symbol}` : 'Order placed');
+      void buzz('success');
       setTimeout(onClose, 1600);
     } catch (err) {
       setMsg({ ok: false, text: errorMessage(err) });
@@ -189,14 +193,14 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
         )}
         {side === 'buy' && (
           <details class="small" open={!!(prefill.stop || prefill.target)}>
-            <summary>Safety sell, target and day trade (recommended)</summary>
+            <summary>Safety net and take-profit (recommended)</summary>
             <div class="grid2">
               <label class="field">
-                <span>Safety sell price (stop-loss) ₹</span>
+                <span>Sell if it falls to ₹</span>
                 <input type="number" step="0.05" min="0" value={stop} data-field="trade-stop" onInput={(e) => setStop((e.currentTarget as HTMLInputElement).value)} />
               </label>
               <label class="field">
-                <span>Profit target ₹</span>
+                <span>Take profit at ₹</span>
                 <input type="number" step="0.05" min="0" value={target} data-field="trade-target" onInput={(e) => setTarget((e.currentTarget as HTMLInputElement).value)} />
               </label>
             </div>

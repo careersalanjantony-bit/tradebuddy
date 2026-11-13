@@ -135,6 +135,10 @@ export interface Settings {
   notifications: {
     sounds: boolean;
     quietHours: { enabled: boolean; start: string; end: string };
+    /** app v1.1: alert about stocks rising fast with strong buying (max 3 a day) */
+    rising: boolean;
+    /** app v1.1: keep checking about every 15 minutes when the app is closed */
+    background: boolean;
   };
   data: {
     candleHistoryYears: number;

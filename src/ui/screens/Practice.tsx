@@ -5,12 +5,13 @@ import { callBackground } from '../../shared/messages';
 import { newWallet, WALLET_START, walletSummary, type Fill } from '../../wallet/wallet';
 import type { Go } from '../App';
 import { openTrade } from '../components/TradeSheet';
+import { AnimatedNumber } from '../components/Motion';
 import { useQuotes } from '../data';
 import { useLocal, useNow } from '../hooks';
 
 const signed = (x: number, d = 0) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), d)}`;
 const tone = (x: number) => (x > 0 ? 'ok-text' : x < 0 ? 'err-text' : 'muted');
-const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety sell', target: 'target', 'day-end': '3:10 pm' };
+const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety net', target: 'take-profit', 'day-end': '3:10 pm' };
 
 /** Practice money: ₹10 lakh of pretend money, live prices, real charges, no orders to Upstox. */
 export function PracticeScreen({ go }: { go: Go }) {
@@ -29,7 +30,7 @@ export function PracticeScreen({ go }: { go: Go }) {
       <section class="card wallet-card" data-testid="wallet">
         <div class="tiny muted">Practice money · pretend ₹, live prices</div>
         <div class="wallet-total" data-testid="wallet-total">
-          {formatINR(s.total, 0)}
+          <AnimatedNumber value={s.total} format={(v) => formatINR(v, 0)} />
         </div>
         <div class="wallet-pnl">
           <span class={tone(s.todayPnl)} data-testid="wallet-today">
@@ -88,8 +89,8 @@ export function PracticeScreen({ go }: { go: Go }) {
                 </div>
                 {(h.stop !== null || h.target !== null) && (
                   <div class="tiny muted">
-                    {h.stop !== null && <>Safety sell ₹{formatNumberIN(h.stop)} </>}
-                    {h.target !== null && <>· target ₹{formatNumberIN(h.target)} </>}— sells by itself
+                    {h.target !== null && <>Take profit at ₹{formatNumberIN(h.target)} </>}
+                    {h.stop !== null && <>{h.target !== null ? '· ' : ''}sell if it falls to ₹{formatNumberIN(h.stop)} </>}— sells by itself
                   </div>
                 )}
                 <div class="row" style={{ gap: '6px', marginTop: '4px' }}>

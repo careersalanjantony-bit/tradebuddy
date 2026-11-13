@@ -8,7 +8,7 @@ import { notify } from '../notify/chrome';
 import { playSound } from '../notify/sound';
 import { getLocal, setLocal } from '../storage/local';
 import { createQueue } from '../lib/queue';
-import { cancelOrder, newWallet, placeOrder, processWallet, updateHolding, type Holding, type MarketCtx, type OrderRequest, type PaperOrder, type WalletState } from '../wallet/wallet';
+import { cancelOrder, newWallet, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type Holding, type MarketCtx, type OrderRequest, type PaperOrder, type WalletState } from '../wallet/wallet';
 
 /**
  * Practice money (v1.0): stores the wallet, places orders at live prices and runs the waiting
@@ -78,6 +78,39 @@ export async function checkWallet(now = Date.now()): Promise<number> {
     await playSound(f.reason === 'stop' ? 'stop' : f.reason === 'target' ? 'target' : 'info');
   }
   return events.length;
+}
+
+/** Sales the background checker saw while the app was closed (applied at their own price and time). */
+export function walletApplyBackground(hits: Array<{ key: string; price: number; at: number; reason: string }>): Promise<number> {
+  return mutate(async (w) => {
+    let wallet = w;
+    let n = 0;
+    for (const h of hits) {
+      const reason = h.reason === 'stop' || h.reason === 'target' || h.reason === 'day-end' ? h.reason : 'order';
+      const r = sellFromBackground(wallet, h.key, h.price, { now: h.at, today: istDate(h.at), t: minutesIST(h.at), open: true }, reason);
+      wallet = r.wallet;
+      if (r.fill) {
+        n++;
+        log.info(`Practice sale found by the background check: ${r.fill.qty} ${r.fill.symbol} @ ${r.fill.price} (${reason})`);
+      }
+    }
+    return { wallet, result: n };
+  });
+}
+
+/** Keeps today's wallet value for the small chart on Home (one point per day, last 120 days). */
+export async function recordEquity(now = Date.now()): Promise<void> {
+  const w0 = await getLocal('wallet');
+  if (!w0) return;
+  const quotes = await getQuotes();
+  const total = Math.round(walletSummary(w0, quotes, istDate(now)).total);
+  const today = istDate(now);
+  const last = w0.equity?.[w0.equity.length - 1];
+  if (last && last.date === today && last.total === total) return;
+  await mutate(async (w) => {
+    const eq = (w.equity ?? []).filter((e) => e.date !== today);
+    return { wallet: { ...w, equity: [...eq, { date: today, total }].slice(-120) }, result: undefined };
+  });
 }
 
 /** Stocks the wallet needs prices for. */

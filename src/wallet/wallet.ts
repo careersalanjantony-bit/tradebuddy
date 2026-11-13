@@ -97,6 +97,8 @@ export interface WalletState {
   holdings: Holding[];
   orders: PaperOrder[];
   fills: Fill[];
+  /** value of the wallet at the end of each day it was used (for the chart on Home) */
+  equity?: Array<{ date: string; total: number }>;
 }
 
 export interface WalletQuote {
@@ -286,6 +288,21 @@ function fillOrder(w: WalletState, o: PaperOrder, livePrice: number, ctx: Market
   const r = o.side === 'buy' ? applyBuy(w, o, price, ctx, reason) : applySell(w, o, price, ctx, reason);
   const orders = r.w.orders.map((x) => (x.id === o.id ? { ...x, status: 'filled' as const, filledAt: ctx.now, fillPrice: price } : x));
   return { w: { ...r.w, orders }, fill: r.fill };
+}
+
+/**
+ * A sale found by the background checker while the app was closed: sells the whole holding at the
+ * price and time it was seen (with the usual slippage). Ignored if the holding is gone already.
+ */
+export function sellFromBackground(w: WalletState, key: string, price: number, ctx: MarketCtx, reason: FillReason): { wallet: WalletState; fill: Fill | null } {
+  const h = w.holdings.find((x) => x.key === key);
+  if (!h || !(price > 0)) return { wallet: w, fill: null };
+  const open = w.orders.filter((o) => o.status === 'open' && o.side === 'sell' && o.key === key).map((o) => o.id);
+  let wallet = open.reduce((acc, id) => cancelOrder(acc, id), w);
+  const o: PaperOrder = { id: newId('O', ctx.now), key, symbol: h.symbol, side: 'sell', qty: h.qty, type: 'market', status: 'open', createdAt: ctx.now, date: ctx.today, source: 'background' };
+  const r = fillOrder({ ...wallet, orders: [...wallet.orders, o] }, o, price, ctx, reason);
+  wallet = r.w;
+  return { wallet, fill: r.fill };
 }
 
 export function cancelOrder(w: WalletState, id: string): WalletState {

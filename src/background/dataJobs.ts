@@ -26,7 +26,7 @@ import { ensureFeed, feedFresh, setFeedListener } from './feed';
 import { refreshNews } from './newsJobs';
 import { syncPortfolio } from './portfolioJobs';
 import { INDEX_KEYS } from '../data/indices';
-import { checkWallet } from './walletJobs';
+import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 
 const log = createLogger('data');
@@ -148,6 +148,7 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     await evaluateIntraday(await getQuotes(), cal, alerts.hysteresisPct, now);
     await checkPracticeTrades(now).catch((err: unknown) => log.warn('Practice check failed', { error: err }));
     await checkWallet(now).catch((err: unknown) => log.warn('Practice money check failed', { error: err }));
+    await recordEquity(now).catch(() => undefined);
     await syncPortfolio(now).catch((err: unknown) => log.warn('Upstox account check failed', { error: err }));
     await dayTick(now).catch((err: unknown) => log.warn('Day-trade check failed', { error: err }));
     if (m.phase === 'open' && m.session.openAt !== undefined && now >= m.session.openAt + 5 * 60_000) {

@@ -30,6 +30,27 @@ function variantWords(v: Variant): string {
 }
 
 /** Day-trade mode (v0.11.0): buy and sell — or sell short and buy back — on the same day. */
+/** Today's plan at a glance: wait → ideas → last idea → close. The current step pulses. */
+function DayPlan({ now }: { now: number }) {
+  const t = minutesIST(now);
+  const steps = [
+    { from: 9 * 60 + 15, to: 9 * 60 + 30, time: '9:15', text: 'Opens — wait' },
+    { from: 9 * 60 + 30, to: 11 * 60 + 30, time: '9:30', text: 'Buy ideas' },
+    { from: 11 * 60 + 30, to: 15 * 60 + 10, time: '11:30', text: 'Hold & watch' },
+    { from: 15 * 60 + 10, to: 15 * 60 + 30, time: '3:10', text: 'Close all' },
+  ];
+  return (
+    <section class="plan" data-testid="day-plan" aria-label="Today's plan">
+      {steps.map((s) => (
+        <div class={`plan-step ${t >= s.from && t < s.to ? 'now' : t >= s.to ? 'done' : ''}`}>
+          <b>{s.time}</b>
+          {s.text}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function DayTradeScreen({ go }: { go: Go }) {
   const settings = useSettings();
   const market = useMarketState();
@@ -55,11 +76,13 @@ export function DayTradeScreen({ go }: { go: Go }) {
     <>
       <section class="card" data-testid="day-intro">
         <div class="row">
-          <h2 style={{ margin: 0 }}>Day trading — in and out the same day</h2>
+          <h2 style={{ margin: 0 }}>Day trading — buy and sell the same day</h2>
           <span class="spacer" />
           <label class="row small">
             <input
               type="checkbox"
+              role="switch"
+              class="switch"
               checked={on}
               data-testid="day-enable"
               onChange={(e) => {
@@ -101,15 +124,21 @@ export function DayTradeScreen({ go }: { go: Go }) {
       </section>
       {on && amount ? (
         <>
+          <DayPlan now={now} />
           <MoodLine />
-          <LearningCard go={go} />
-          <RisingNowCard />
           <SignalsCard amount={amount} slots={slots} />
-          <UpstoxSyncLine />
+          <RisingNowCard />
+          <LearningCard go={go} />
           <DayTradesCard />
+          <UpstoxSyncLine />
           <NewsCard limit={4} />
-          <DayTestCard keys={keys} listLabel={listLabel} amount={amount} slots={slots} />
-          <HowItWorks slots={slots} maxLosses={settings.dayTrade.maxLossesPerDay} />
+          <details class="card details-card" data-testid="day-details">
+            <summary>
+              <b>How well did these rules do in the past?</b> <span class="small muted">— the past test and how it works</span>
+            </summary>
+            <DayTestCard keys={keys} listLabel={listLabel} amount={amount} slots={slots} />
+            <HowItWorks slots={slots} maxLosses={settings.dayTrade.maxLossesPerDay} />
+          </details>
         </>
       ) : null}
     </>
@@ -136,7 +165,7 @@ function SignalsCard({ amount, slots }: { amount: number; slots: number }) {
 
   return (
     <section class="card" data-testid="day-signals">
-      <h2>Today's day-trade signals</h2>
+      <h2>Today's buy ideas</h2>
       {!passed && (
         <div class="banner warn small" data-testid="day-untested">
           <b>Practice only for now.</b> {test?.report ? 'These rules did not pass the past test (see below).' : 'The rules have not been tested on your data yet (see below).'} Use the{' '}
@@ -215,21 +244,21 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
         <dd>
           <b>{qty} shares</b> at about <b>₹{formatNumberIN(price)}</b> = {formatINR(qty * price, 0)} <span class="muted">(signal price ₹{formatNumberIN(s.entry)})</span>
         </dd>
-        <dt>Stop (get out)</dt>
+        <dt>{long ? 'Sell if it falls to' : 'Buy back if it rises to'}</dt>
         <dd class="err-text">
-          {long ? 'Sell' : 'Buy back'} if it {long ? 'falls' : 'rises'} to <b>₹{formatNumberIN(s.stop)}</b> — you lose about <b>{formatINR(risk, 0)}</b>
+          <b>₹{formatNumberIN(s.stop)}</b> — your safety net; you would lose about <b>{formatINR(risk, 0)}</b>
         </dd>
-        <dt>Target</dt>
+        <dt>Take profit at</dt>
         <dd class="ok-text">
           {s.target !== null ? (
             <>
-              {long ? 'Sell' : 'Buy back'} at <b>₹{formatNumberIN(s.target)}</b> — you make about <b>{formatINR(gain, 0)}</b>
+              <b>₹{formatNumberIN(s.target)}</b> — you would make about <b>{formatINR(gain, 0)}</b>
             </>
           ) : (
             <>No fixed target: hold while it goes your way</>
           )}
         </dd>
-        <dt>Time limit</dt>
+        <dt>Close by</dt>
         <dd>
           Close it by <b>3:10 pm</b> whatever happens
         </dd>
@@ -254,7 +283,7 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
             </dd>
           </>
         )}
-        <dt>Why</dt>
+        <dt>Why this idea</dt>
         <dd class="small">
           {long ? 'Broke above' : 'Broke below'} its first-15-minutes range (₹{formatNumberIN(s.orLow)} – ₹{formatNumberIN(s.orHigh)}) with {formatNumberIN(s.rvol, 1)}× its usual opening volume, and the
           market is moving the same way.

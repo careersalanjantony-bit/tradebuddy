@@ -123,7 +123,7 @@ console.log('── First start: guide');
 await page.goto(base);
 await page.waitForSelector('[data-testid="guide"]', { timeout: 20000 });
 check('the first-start guide opens by itself', ((await page.textContent('[data-testid="guide-title"]')) ?? '').includes('Welcome'));
-await page.screenshot({ path: join(out, 'app-guide.png') });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-guide.png') });
 let steps = 1;
 while (await page.$('[data-testid="guide-next"]')) {
   await page.click('[data-testid="guide-next"]');
@@ -155,14 +155,14 @@ await page.click('details summary');
 await page.fill('[data-field="trade-stop"]', '1500');
 await page.fill('[data-field="trade-target"]', '1560');
 await page.check('[data-field="trade-sellbyclose"]');
-await page.screenshot({ path: join(out, 'app-buy-sheet.png') });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-buy-sheet.png') });
 await page.click('[data-testid="trade-submit"]');
 await page.waitForSelector('[data-testid="trade-msg"]', { timeout: 10000 });
 const buyMsg = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
 check('Buy 100 RELIANCE fills at the live price ₹1,518 + 0.02% slippage, rounded up to 5 paise', buyMsg.includes('Bought 100 RELIANCE at ₹1,518.35'), buyMsg);
 await page.waitForSelector('.holding[data-symbol="RELIANCE"]', { timeout: 8000 }).catch(() => {});
 const holdText = ((await page.textContent('[data-testid="holdings"]')) ?? '').replace(/\s+/g, ' ');
-check('the holding shows shares, buy price, safety sell and target', holdText.includes('100 shares') && holdText.includes('Safety sell ₹1,500') && holdText.includes('target ₹1,560') && holdText.includes('day trade'), holdText.slice(0, 160));
+check('the holding shows shares, buy price, take-profit and sell-if-falls prices in plain words', holdText.includes('100 shares') && holdText.includes('Take profit at ₹1,560') && holdText.includes('sell if it falls to ₹1,500') && holdText.includes('day trade'), holdText.slice(0, 160));
 const cash = await page.evaluate(async () => (await chrome.storage.local.get('wallet')).wallet.cash);
 check('cash went down by exactly the cost', Math.abs(cash - (1_000_000 - 151_835)) < 0.01, String(cash));
 
@@ -175,9 +175,11 @@ check('the target sale happens by itself, with the result after intraday charges
 const notes = await page.evaluate(() => chrome.notifications.getAll());
 check('a notification tells about the sale', Object.keys(notes).some((k) => k.startsWith('alert:wallet-')));
 await page.waitForTimeout(800);
-await page.screenshot({ path: join(out, 'app-practice.png'), fullPage: true });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-practice.png'), fullPage: true });
 const histText = ((await page.textContent('[data-testid="wallet-history"]')) ?? '').replace(/\s+/g, ' ');
-check('history lists the buy and the sale with "target"', histText.includes('Buy 100 RELIANCE') && histText.includes('Sell 100 RELIANCE') && histText.includes('target'), histText.slice(0, 160));
+check('history lists the buy and the sale with "take-profit"', histText.includes('Buy 100 RELIANCE') && histText.includes('Sell 100 RELIANCE') && histText.includes('take-profit'), histText.slice(0, 160));
+const toastText = ((await page.textContent('.toasts').catch(() => '')) ?? '') + ' ' + ((await page.evaluate(() => document.querySelectorAll('.confetti i').length).catch(() => 0)) > 0 ? 'confetti' : '');
+check('a profitable sale is celebrated (toast + confetti)', toastText.includes('Profit +₹') || toastText.includes('confetti'), toastText.trim().slice(0, 80));
 const todayTxt = (await page.textContent('[data-testid="wallet-today"]')) ?? '';
 check("today's profit shown", todayTxt.includes('+'), todayTxt);
 
@@ -214,7 +216,9 @@ const risingText = ((await page.textContent('[data-testid="rising-now"]').catch(
 check('"Rising now" lists stocks with the buyers meter', rising && /Buyers strong|More buyers/.test(risingText), risingText.slice(0, 200));
 check('"Rising now" says it is a list to watch, not a signal', risingText.includes('not a buy signal'));
 check('the self-learning line is on the Day trade tab', ((await page.textContent('[data-testid="learning-line"]').catch(() => '')) ?? '').includes('Self-learning'));
-await page.screenshot({ path: join(out, 'app-daytrade.png'), fullPage: true });
+check("Day trade starts with today's plan, the current step highlighted (10:30 = buy ideas)", ((await page.textContent('[data-testid="day-plan"] .plan-step.now').catch(() => '')) ?? '').includes('Buy ideas'));
+check('the past test and how-it-works are folded away under one line', !!(await page.$('[data-testid="day-details"]')) && !(await page.$eval('[data-testid="day-details"]', (e) => e.hasAttribute('open'))));
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
 await page.click('.bottom-nav [data-nav="more"]');
 await page.click('[data-go="learning"]');
 await page.waitForSelector('[data-testid="learning-card"]');
@@ -222,23 +226,34 @@ await page.click('[data-testid="learn-now"]');
 await page.waitForTimeout(1500);
 const learnText = ((await page.textContent('[data-testid="learning-card"]')) ?? '').replace(/\s+/g, ' ');
 check('Self-learning screen explains the unseen-days check and asks for history when there is none', learnText.includes('never seen') && learnText.includes('45 trading days'), learnText.slice(0, 120));
-await page.screenshot({ path: join(out, 'app-learning.png'), fullPage: true });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-learning.png'), fullPage: true });
 
 console.log('── Home, news, layout');
 await page.click('.bottom-nav [data-nav="today"]');
 await page.waitForSelector('[data-testid="wallet-mini"]');
 check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
+check('Home: greeting, market open pill, the best-idea card and the rising-now carousel', ((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
+check('dark theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(11, 15, 20)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
 const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
 const marks = await page.$$eval('[data-testid="news"] [data-mood]', (els) => els.map((e) => e.getAttribute('data-mood')));
 check('News box marks headlines that read clearly good 👍 or bad 👎 (keyword check)', moods && marks.every((m) => m === 'good' || m === 'bad'), marks.join(','));
-await page.screenshot({ path: join(out, 'app-home.png'), fullPage: true });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-home.png'), fullPage: true });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
 check('no sideways scrolling on a phone screen', !overflow);
 await page.setViewportSize({ width: 1280, height: 800 });
 await page.waitForTimeout(300);
 check('wide screens get the side menu instead of the bottom bar', await page.evaluate(() => getComputedStyle(document.querySelector('.side-nav')).display !== 'none' && getComputedStyle(document.querySelector('.bottom-nav')).display === 'none'));
-await page.screenshot({ path: join(out, 'app-wide.png') });
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-wide.png') });
+
+console.log('── Settings: alerts');
+await page.goto(`${base}#/settings`);
+await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
+const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
+check('Alerts card: buy ideas, rising fast, closed-app checks and sounds — all on by default', switches.length === 4 && switches.every(Boolean), JSON.stringify(switches));
+await page.click('[data-alert="rising"] input.switch');
+check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });
 
 console.log('── Safety');
 check('no order / GTT request was ever made', !mock.calls.some((c) => c.startsWith('ORDER-LIKE')), `${mock.calls.length} fake Upstox calls`);

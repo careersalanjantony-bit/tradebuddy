@@ -26,6 +26,27 @@ inside the app (see *How it is built*).
 **Updates:** install the newer APK over the old one; data is kept (every build is signed with the
 same key, `android/signing/`). Uninstalling deletes all app data, including practice trades.
 
+## New in 1.1
+
+- **New look:** dark, calm design with gradients, line icons, smooth page and card animations, numbers
+  that count up, prices that flash green/red, a bottom sheet for trades, toasts, a small celebration
+  on a profitable practice sale, phone vibration on buy/sell. Respects the phone's "reduce motion".
+- **Home in one glance:** greeting and market status, practice money with its chart, **one best idea**
+  (the strongest fresh buy idea, else the top stock rising now to watch), a rising-now carousel, quick
+  tiles, news. Details (tests, tables, learning) are one tap away.
+- **Plain words:** "take profit at" and "sell if it falls to" instead of target / stop-loss, "buy ideas"
+  instead of signals; the past test is folded away on the Day trade tab, which starts with today's plan
+  (9:15 wait → 9:30 ideas → 11:30 hold → 3:10 close).
+- **Alerts:** buy ideas (⭐ "strong idea" when self-learning passed its check and is ≥ 60% sure), stocks
+  rising fast with buyers in control (max 3 a day), practice take-profit / sell-if-falls hits, a morning
+  reminder. Switches in Settings → Alerts.
+- **With the app closed:** a background checker (Capacitor Background Runner, `public/runners/background.js`)
+  runs about every 15 minutes in market hours (Android's minimum for this). It checks practice shares
+  and fast risers and records any practice sale with its price and time; the app applies it when it
+  opens. For instant alerts keep the app in the background (not swiped away); some phone brands'
+  battery savers can delay or stop background checks — allow TradeBuddy to run in the background.
+- Day trading is on by default.
+
 ## What is in the app
 
 | Tab | What it does |
@@ -61,8 +82,9 @@ Phones get a bottom bar; tablets and laptop-size screens a side menu.
 - Keys and tokens stay **on the phone** (app storage). Android backup is switched off for the app,
   so nothing is copied to Google Drive or another phone. Never logged (redaction as in the extension).
 - The only network hosts: `api.upstox.com`, `assets.upstox.com`, `nsearchives.nseindia.com`.
-- Permissions: internet, notifications, a foreground service during market hours, vibration, wake lock.
-  (Camera, microphone and location, added by a library, are removed.)
+- Permissions: internet, notifications, a foreground service during market hours, vibration, wake lock,
+  exact alarms (scheduled checks). Camera, microphone and location, added by libraries, are removed.
+- The background checker keeps its own copy of the Analytics Token in the app's private storage on the phone.
 - No order, GTT, modify or cancel endpoint exists in the code; the app smoke test checks that none is called.
 
 ## Not yet verified on a real phone

@@ -2,7 +2,7 @@ import type { AuthState, LocalStore, Settings } from './schema';
 
 /** Defaults from the spec (§9, §11, §12, §13, §15.1). */
 export const DEFAULT_SETTINGS: Settings = {
-  ui: { theme: 'system', mode: 'simple', priceMin: 0, priceMax: null, guideSeen: false },
+  ui: { theme: 'dark', mode: 'simple', priceMin: 0, priceMax: null, guideSeen: false },
   risk: {
     capitalInr: null,
     riskPerTradePct: 1,
@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scanner: { eveningEnabled: true, morningEnabled: true, fundamentalFilter: false, universe: 'nifty100', newPickAlerts: true, rankBy: 'safety' },
   alerts: { cooldownMinutes: 15, hysteresisPct: 0.1, staleSeconds: 60 },
   portfolio: { autoSync: true },
-  dayTrade: { enabled: false, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
+  dayTrade: { enabled: true, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
   claude: {
     reportModel: 'claude-opus-5-5',
     extractModel: 'claude-haiku-5-5',
@@ -56,7 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
     includeTradeDetails: false,
   },
   telegram: { enabled: false },
-  notifications: { sounds: true, quietHours: { enabled: false, start: '22:00', end: '07:00' } },
+  notifications: { sounds: true, quietHours: { enabled: false, start: '22:00', end: '07:00' }, rising: true, background: true },
   data: { candleHistoryYears: 3, fetchFullHistory: false, liveFeed: true },
   logging: { level: 'info' },
 };

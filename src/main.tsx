@@ -14,9 +14,26 @@ async function boot(): Promise<void> {
   const { initNative } = await import('./platform/nativeBindings');
   await import('./background/index');
   await fireStartupEvents(__APP_VERSION__);
+  const { collectBackgroundSales, syncBackgroundChecker } = await import('./background/bgSync');
+  const catchUp = () => {
+    // practice sales the background checker saw while the app was closed, then hand it fresh data
+    void collectBackgroundSales()
+      .catch(() => 0)
+      .then(() => syncBackgroundChecker())
+      .catch(() => undefined);
+  };
   await initNative(() => {
     // back in front: catch up on prices, alerts and signals at once
     void chrome.runtime.sendMessage({ __swing: true, type: 'quotes:auto', payload: undefined });
+    catchUp();
+  });
+  catchUp();
+  setInterval(() => void syncBackgroundChecker().catch(() => undefined), 2 * 60_000);
+  let walletTimer: ReturnType<typeof setTimeout> | null = null;
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !('wallet' in changes)) return;
+    if (walletTimer) clearTimeout(walletTimer);
+    walletTimer = setTimeout(() => void syncBackgroundChecker().catch(() => undefined), 3_000);
   });
   const { startUi } = await import('./ui/main');
   startUi();

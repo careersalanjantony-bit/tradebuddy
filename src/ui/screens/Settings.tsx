@@ -11,6 +11,7 @@ import { useLocal, useNow, useSettings } from '../hooks';
 import { loginWithUpstox } from '../login';
 import { RiskSettings } from './RiskSettings';
 import { AmountCard } from './AmountCard';
+import { AlertSettings } from '../components/AlertSettings';
 
 const DEV_APPS_URL = 'https://account.upstox.com/developer/apps';
 
@@ -26,6 +27,7 @@ export function SettingsScreen() {
   return (
     <>
       <AmountCard risk={settings.risk} universe={settings.scanner.universe} newPickAlerts={settings.scanner.newPickAlerts} rankBy={settings.scanner.rankBy} />
+      <AlertSettings settings={settings} />
       {simple ? (
         <details class="card">
           <summary>

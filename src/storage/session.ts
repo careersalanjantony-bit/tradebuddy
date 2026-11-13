@@ -62,6 +62,8 @@ export interface SessionStore {
   intradayProgress: { done: number; total: number; running: boolean; at: number; error?: string };
   /** buyers meter + rising-now list (app v1.0) */
   flow: { at: number; stocks: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }>; rising: import('../data/flow').RisingRow[]; error?: string };
+  /** rising-fast alerts sent today (app v1.1) */
+  risingAlerted: { date: string; keys: string[] };
   /** self-learning in progress (app v1.0) */
   mlProgress: { done: number; total: number; running: boolean; at: number };
   /** last time the 5-minute history was checked for missing days */

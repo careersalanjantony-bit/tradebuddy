@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { intradayCharges } from '../src/daytrade/rules';
-import { cancelOrder, deliveryCharges, newWallet, placeOrder, processWallet, sellableQty, sharesFor, WALLET_START, walletSummary, type MarketCtx, type WalletQuote } from '../src/wallet/wallet';
+import { cancelOrder, deliveryCharges, newWallet, placeOrder, processWallet, sellableQty, sellFromBackground, sharesFor, WALLET_START, walletSummary, type MarketCtx, type WalletQuote } from '../src/wallet/wallet';
 
 const T0 = Date.parse('2026-11-16T04:00:00Z'); // 09:30 IST
 const ctx = (over: Partial<MarketCtx> = {}): MarketCtx => ({ now: T0, today: '2026-11-16', t: 570, open: true, ...over });
@@ -146,5 +146,17 @@ describe('practice wallet', () => {
   it('sharesFor turns an amount into a number of shares', () => {
     expect(sharesFor(100_000, 1000)).toBe(99);
     expect(sharesFor(100, 0)).toBe(0);
+  });
+
+  it('a sale seen by the background checker while the app was closed is applied at that price and time', () => {
+    const b = placeOrder(newWallet(T0), { key: K, symbol: 'ABC', side: 'buy', qty: 10, type: 'market', target: 1030 }, q(1000), ctx());
+    if (!b.ok) throw new Error('buy failed');
+    const later = T0 + 3_600_000;
+    const r = sellFromBackground(b.wallet, K, 1031, ctx({ now: later, t: 630 }), 'target');
+    expect(r.fill).toMatchObject({ side: 'sell', qty: 10, reason: 'target', at: later });
+    expect(r.fill!.price).toBe(1030.75);
+    expect(r.wallet.holdings).toHaveLength(0);
+    // already sold → nothing happens the second time
+    expect(sellFromBackground(r.wallet, K, 1031, ctx(), 'target').fill).toBeNull();
   });
 });

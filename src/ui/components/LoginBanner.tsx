@@ -12,6 +12,8 @@ export function LoginBanner({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [message, setMessage] = useState<string | null>(null);
 
   if (auth === undefined || hasLiveSession(auth, now)) return null;
+  // app: with an Analytics Token prices already work — the daily login is optional (Trades & alerts explains it)
+  if (secrets?.upstoxAnalyticsToken && auth.analytics?.status !== 'invalid') return null;
   const keysSaved = !!secrets?.upstoxApiKey && !!secrets?.upstoxApiSecret;
   const expired = auth.status === 'expired' || auth.status === 'logged_in';
   const dataViaAnalytics = auth.analytics?.status === 'valid';

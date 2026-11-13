@@ -12,6 +12,8 @@ const config: CapacitorConfig = {
     // Requests are made through appFetch (src/platform/http.ts), not a patched fetch.
     CapacitorHttp: { enabled: false },
     LocalNotifications: { smallIcon: 'ic_stat_tradebuddy', iconColor: '#22c55e' },
+    // checks practice shares and fast risers about every 15 minutes, also when the app is closed
+    BackgroundRunner: { label: 'in.tradebuddy.background', src: 'runners/background.js', event: 'checkMarket', repeat: true, interval: 15, autoStart: true },
   },
 };
 

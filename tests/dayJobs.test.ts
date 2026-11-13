@@ -186,7 +186,7 @@ describe('live day-trade engine (service worker)', () => {
     expect(h.stop).toBeGreaterThanOrEqual(806 * 0.99 - 0.05);
     expect(h.target).toBeGreaterThan(806);
     expect(titles().filter((t) => t.includes('▲ BUY'))).toHaveLength(2);
-    expect(titles().some((t) => t.includes('Practice signal'))).toBe(false);
+    expect(titles().some((t) => t.includes('Practice idea'))).toBe(false);
     // the same breakout is never announced twice
     await quotes([[HDFC, 808, 800], [AAA, 101.2, 100], [BBB, 505, 500]], at('09:40', 2));
     expect((await dayTick(at('09:40', 4))).signals).toBe(0);
@@ -203,7 +203,7 @@ describe('live day-trade engine (service worker)', () => {
     expect(sigs[0]).toMatchObject({ symbol: 'HDFCBANK', side: 'short', entry: 796 });
     expect(sigs[0]!.stop).toBeGreaterThan(796);
     expect(sigs[0]!.target).toBeLessThan(796);
-    expect(titles().some((t) => t.includes('▼ SELL (short) HDFCBANK'))).toBe(true);
+    expect(titles().some((t) => t.includes('▼ SELL first HDFCBANK'))).toBe(true);
   });
 
   it('rules that did not pass the test only give practice signals', async () => {
@@ -214,7 +214,7 @@ describe('live day-trade engine (service worker)', () => {
     await dayTick(at('09:35', 5));
     const sigs = ((await chrome.storage.session.get('daySignals')).daySignals as { signals: DaySignal[] }).signals;
     expect(sigs.every((s) => s.trusted === false)).toBe(true);
-    expect(titles().every((t) => !t.includes('BUY') || t.startsWith('Practice signal'))).toBe(true);
+    expect(titles().every((t) => !t.includes('BUY') || t.startsWith('Practice idea'))).toBe(true);
   });
 
   it('a late start marks earlier breakouts as "late"; a missed 5-minute mark reloads; nothing after 11:30', async () => {

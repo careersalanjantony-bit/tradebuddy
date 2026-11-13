@@ -74,6 +74,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (mlJournal === undefined) await kv.set({ mlJournal: [] });
     },
   },
+  {
+    to: 7,
+    description: 'app v1.1: day trading on (the owner focuses on day trades)',
+    async up(kv) {
+      const { settings } = (await kv.get(['settings'])) as { settings?: { dayTrade?: Record<string, unknown> } };
+      if (settings?.dayTrade) await kv.set({ settings: { ...settings, dayTrade: { ...settings.dayTrade, enabled: true } } });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);
