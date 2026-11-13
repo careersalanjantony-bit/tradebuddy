@@ -1,0 +1,22 @@
+/** Plain-language tooltips (spec §3). */
+export const GLOSSARY: Record<string, string> = {
+  LTP: 'Last traded price.',
+  SMA20: 'Average closing price of the last 20 trading days.',
+  SMA50: 'Average closing price of the last 50 trading days.',
+  SMA200: 'Average closing price of the last 200 trading days. Above it = long-term uptrend.',
+  EMA20: 'Exponential moving average — like the SMA but recent days count more.',
+  RSI: 'Momentum gauge 0–100. Above 70 = stretched/overbought, below 30 = oversold.',
+  ATR: "Average True Range — the stock's typical daily move in ₹. Used to set stops.",
+  Stretch: 'How many "normal days" (ATRs) the price is above its 20-day average.',
+  R: 'One unit of risk = entry − stop. A 2R target makes twice what you risk.',
+  'Swing low': 'A local trough on the chart; used for support and stops.',
+  Support: 'A price area where buyers stepped in before (recent swing lows).',
+  Resistance: 'A price area where sellers stepped in before (recent swing highs).',
+  Breakout: 'Price moving above the prior 20-day high.',
+  Pullback: 'A dip back towards the average inside an uptrend.',
+  CNC: 'Delivery product (held overnight / for days) — what swing trades use.',
+  GTT: 'Good Till Triggered order in Upstox — sits with the broker and fires even if your laptop is off. Use it for the stop-loss and target.',
+  'Volume ratio': 'Average volume of the last 5 days ÷ average of the last 50 days. Above 1.5 = unusually active.',
+  'Traded value': 'Average ₹ value traded per day (last 20 days). Under ₹10 crore = low liquidity.',
+  'Corporate action': 'Bonus, split, dividend, rights. Bonus and split change the price scale; the app adjusts for them.',
+};

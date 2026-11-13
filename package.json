@@ -1,0 +1,40 @@
+{
+  "name": "tradebuddy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TradeBuddy: personal Android app for NSE day and swing trading ideas, practice money and alerts. Read-only towards the broker.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke-test.mjs",
+    "cap:sync": "npm run build && npx cap sync android",
+    "apk": "node scripts/build-apk.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/local-notifications": "8.3.1",
+    "@capacitor/status-bar": "8.0.4",
+    "@capawesome-team/capacitor-android-foreground-service": "8.1.0",
+    "@capgo/capacitor-inappbrowser": "8.26.2",
+    "idb": "8.0.4",
+    "lightweight-charts": "5.2.1",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@types/chrome": "0.3.5",
+    "@types/node": "22.19.1",
+    "fake-indexeddb": "6.2.6",
+    "protobufjs": "8.8.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12",
+    "ws": "8.22.2"
+  }
+}

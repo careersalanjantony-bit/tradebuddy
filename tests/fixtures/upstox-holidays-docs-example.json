@@ -1,0 +1,40 @@
+{
+  "_source": "Example response copied from https://upstox.com/developer/api-documentation/get-market-holidays (checked 9 Nov 2026)",
+  "status": "success",
+  "data": [
+    {
+      "date": "2024-01-01",
+      "description": "New Year Day",
+      "holiday_type": "TRADING_HOLIDAY",
+      "closed_exchanges": [],
+      "open_exchanges": [
+        { "exchange": "MCX", "start_time": 1704079800000, "end_time": 1704108600000 },
+        { "exchange": "NSE", "start_time": 1704080700000, "end_time": 1704103200000 },
+        { "exchange": "NFO", "start_time": 1704080700000, "end_time": 1704103200000 },
+        { "exchange": "CDS", "start_time": 1704079800000, "end_time": 1704108600000 },
+        { "exchange": "BSE", "start_time": 1704080700000, "end_time": 1704103200000 },
+        { "exchange": "BCD", "start_time": 1704079800000, "end_time": 1704108600000 },
+        { "exchange": "BFO", "start_time": 1704080700000, "end_time": 1704103200000 }
+      ]
+    },
+    {
+      "date": "2024-01-20",
+      "description": "Special DR Trading",
+      "holiday_type": "TRADING_HOLIDAY",
+      "closed_exchanges": ["MCX", "CDS", "BCD"],
+      "open_exchanges": [
+        { "exchange": "NSE", "start_time": 1705722300000, "end_time": 1705734000000 },
+        { "exchange": "NFO", "start_time": 1705722300000, "end_time": 1705734000000 },
+        { "exchange": "BSE", "start_time": 1705722300000, "end_time": 1705734000000 },
+        { "exchange": "BFO", "start_time": 1705722300000, "end_time": 1705734000000 }
+      ]
+    },
+    {
+      "date": "2024-01-26",
+      "description": "Republic Day",
+      "holiday_type": "TRADING_HOLIDAY",
+      "closed_exchanges": ["NFO", "CDS", "BSE", "BCD", "MCX", "NSE", "BFO"],
+      "open_exchanges": []
+    }
+  ]
+}
