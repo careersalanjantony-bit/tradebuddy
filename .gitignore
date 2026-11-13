@@ -1,0 +1,13 @@
+node_modules/
+dist/
+keys/
+*.pem
+*.crx
+.env
+.env.*
+local-config.json
+tests/fixtures/private/
+smoke-output/
+*.log
+.DS_Store
+release/
