@@ -253,7 +253,8 @@ console.log('── Home, news, layout');
 await page.click('.bottom-nav [data-nav="today"]');
 await page.waitForSelector('[data-testid="wallet-mini"]');
 check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
-check('Home: greeting, market open pill, the best-idea card and the rising-now carousel', ((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
+await until(async () => !!(await page.$('[data-testid="rising-carousel"] .rise-tile')) && ((await page.textContent('[data-testid="market-pill"]').catch(() => '')) ?? '').includes('Market open'), 15000);
+check('Home: greeting, market open pill, the best-idea card and the rising-now carousel',((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
 check('dark theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(11, 15, 20)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
 const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
@@ -286,6 +287,7 @@ await page.screenshot({ animations: 'disabled', path: join(out, 'app-news.png') 
 console.log('── Stocks tab');
 await page.click('.bottom-nav [data-nav="watchlist"]');
 await page.waitForSelector('[data-testid="stock-chips"]', { timeout: 10000 });
+await until(async () => (await page.$$('.stock-card')).length >= 10, 10000);
 const allCards = (await page.$$('.stock-card')).length;
 await page.click('.filter-chip[data-filter="rising"]');
 await page.waitForTimeout(400);
