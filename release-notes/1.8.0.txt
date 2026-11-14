@@ -1,0 +1,6 @@
+Auto-trader without limits: it can put any amount into a trade and take as many trades as it finds good. Start it again with any amount you like.
+Practice: Sell is always on. Sell shares you hold, or sell any stock first and buy it back the same day.
+Buy and Sell now open with suggestions ranked by the app's analysis (studies, self-learning, live buyers and sellers, news).
+News checks every 2 minutes in market hours (15 minutes otherwise).
+The app looks for updates every 5 minutes.
+A real fingerprint on the lock screen, and a greeting with your name and a short daily line on Home.

@@ -1157,3 +1157,41 @@ body::before {
 
 /* smoother motion at 90–120 Hz: the turning glows get their own GPU layer */
 .hero-card::before, .bot-hero-bg { will-change: transform; }
+
+/* ===================== app v1.8: practice selling + suggestions, fingerprint, greeting ===================== */
+.btn .icon { display: inline-block; vertical-align: -3px; margin-right: 4px; }
+.seg button .icon { display: inline-block; vertical-align: -3px; margin-right: 2px; }
+.btn.primary.sell, .btn.sell.primary { background: linear-gradient(135deg, #b8434e 0%, #7f2731 100%); border: 0; color: #fff; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 380px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+.held-picks { margin: 6px 0 4px; }
+.sugs { margin: 8px 0 6px; display: flex; flex-direction: column; gap: 6px; }
+.sug { display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); cursor: pointer; animation: tradeIn 0.45s var(--ease) both; transition: transform 0.12s var(--ease), border-color 0.2s; }
+.sug:nth-child(3) { animation-delay: 0.04s; } .sug:nth-child(4) { animation-delay: 0.08s; } .sug:nth-child(5) { animation-delay: 0.12s; } .sug:nth-child(6) { animation-delay: 0.16s; }
+.sug:active { transform: scale(0.985); }
+.sug.buy { border-left: 3px solid var(--ok); }
+.sug.sell { border-left: 3px solid var(--red); }
+.sug-top { display: flex; align-items: center; gap: 8px; }
+.sug-chance { font-weight: 800; font-size: 13px; padding: 2px 8px; border-radius: 999px; background: rgba(34, 197, 94, 0.15); color: var(--ok); }
+.sug-chance.sell { background: rgba(169, 58, 69, 0.18); color: var(--red-text); }
+.sug-why { display: block; }
+.stock-pick .sug-chance { margin-left: 4px; }
+.live-dot.inline { display: inline-block; vertical-align: 1px; margin-right: 2px; }
+/* fingerprint key on the lock screen: ridges draw in, a light scans over them, a soft ring pulses */
+.key.bio { position: relative; display: grid; place-items: center; color: var(--red-text); }
+.key.bio::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; border: 2px solid rgba(169, 58, 69, 0.55); animation: radar 2.4s ease-out infinite; pointer-events: none; }
+.key.bio:active .fp { transform: scale(0.9); }
+.fp { overflow: visible; transition: transform 0.15s var(--ease); }
+.fp-ridges path { stroke-dasharray: 90; stroke-dashoffset: 90; animation: fpDraw 1.3s var(--ease) forwards; }
+.fp-ridges path:nth-child(2) { animation-delay: 0.08s; } .fp-ridges path:nth-child(3) { animation-delay: 0.16s; } .fp-ridges path:nth-child(4) { animation-delay: 0.24s; }
+.fp-ridges path:nth-child(5) { animation-delay: 0.32s; } .fp-ridges path:nth-child(6) { animation-delay: 0.4s; } .fp-ridges path:nth-child(7) { animation-delay: 0.48s; } .fp-ridges path:nth-child(8) { animation-delay: 0.56s; }
+@keyframes fpDraw { to { stroke-dashoffset: 0; } }
+.fp-scan { opacity: 0; animation: fpScan 2.2s ease-in-out 1.2s infinite; }
+@keyframes fpScan { 0% { transform: translateY(0); opacity: 0; } 12% { opacity: 0.6; } 88% { opacity: 0.6; } 100% { transform: translateY(36px); opacity: 0; } }
+/* Home: greeting with your name, today's short line */
+.home-head h1 { margin: 2px 0 0; }
+.home-head .wave { display: inline-block; transform-origin: 70% 80%; animation: wave 2.4s ease-in-out 0.6s 2; }
+@keyframes wave { 0%, 60%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(14deg); } 20%, 40% { transform: rotate(-8deg); } }
+.motto { margin: 4px 0 0; font-size: 13px; color: var(--red-text); font-weight: 600; letter-spacing: 0.01em; animation: mottoIn 0.8s var(--ease) 0.3s both; }
+@keyframes mottoIn { from { opacity: 0; transform: translateY(6px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .fp-ridges path { stroke-dashoffset: 0; } .fp-scan, .key.bio::after { animation: none; } }

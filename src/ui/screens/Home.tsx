@@ -15,6 +15,7 @@ import { signalState } from '../../daytrade/live';
 import { BreadthCard } from '../components/Shorts';
 import { AutoTraderMini } from '../components/AutoTrader';
 import { UpdateBanner } from '../components/Update';
+import { greetingLine, motto } from '../greeting';
 
 /**
  * Home (app v1.1): one glance — your practice money, the single best idea right now, what is rising,
@@ -23,10 +24,6 @@ import { UpdateBanner } from '../components/Update';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 
-function greeting(now: number): string {
-  const h = Number(formatTimeIST(now).slice(0, 2));
-  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-}
 
 export function MarketPill() {
   const m = useMarketState();
@@ -228,12 +225,18 @@ function SetupNudge({ go }: { go: Go }) {
 
 export function HomeScreen({ go }: { go: Go }) {
   const now = useNow(60_000);
+  const account = useLocal('account');
   return (
     <div class="screen home" data-testid="home">
       <header class="home-head">
         <div>
           <div class="muted small">{new Date(now).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' })}</div>
-          <h1>{greeting(now)} 👋</h1>
+          <h1 data-testid="home-greeting">
+            {greetingLine(now, account?.name)} <span class="wave">👋</span>
+          </h1>
+          <p class="motto" data-testid="motto">
+            {motto(now)}
+          </p>
         </div>
         <MarketPill />
       </header>

@@ -18,6 +18,9 @@ const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety net', 
 /** Practice tab (app v1.6): your own practice money, or the auto-trader's ₹50 lakh. */
 export function PracticeScreen({ go, view }: { go: Go; view?: string | null }) {
   const [tab, setTab] = useState<'me' | 'bot'>(view === 'bot' ? 'bot' : 'me');
+  const bot = useLocal('bot');
+  const botCash = bot?.wallet.startCash ?? 5_000_000;
+  const short = (x: number) => (x >= 1e7 ? `₹${+(x / 1e7).toFixed(2)} Cr` : `₹${+(x / 1e5).toFixed(1)} L`);
   return (
     <>
       <div class="segmented practice-tabs" role="tablist" data-testid="practice-tabs">
@@ -25,7 +28,7 @@ export function PracticeScreen({ go, view }: { go: Go; view?: string | null }) {
           My practice · ₹10 L
         </button>
         <button type="button" role="tab" aria-selected={tab === 'bot'} data-tab="bot" onClick={() => setTab('bot')}>
-          <Icon name="robot" size={16} /> Auto-trader · ₹50 L
+          <Icon name="robot" size={16} /> Auto-trader · {short(botCash)}
         </button>
       </div>
       {tab === 'bot' ? <AutoTraderView /> : <MyPractice go={go} />}
@@ -66,10 +69,10 @@ function MyPractice({ go }: { go: Go }) {
         </div>
         <div class="row" style={{ marginTop: '10px', gap: '8px' }}>
           <button class="btn primary buy grow" type="button" data-testid="practice-buy" onClick={() => openTrade({ side: 'buy' })}>
-            Buy
+            <Icon name="up" size={18} /> Buy
           </button>
-          <button class="btn sell grow" type="button" data-testid="practice-sell" onClick={() => openTrade({ side: 'sell' })} disabled={!s.holdings.length}>
-            Sell
+          <button class="btn primary sell grow" type="button" data-testid="practice-sell" onClick={() => openTrade({ side: 'sell' })}>
+            <Icon name="down" size={18} /> Sell
           </button>
         </div>
       </section>

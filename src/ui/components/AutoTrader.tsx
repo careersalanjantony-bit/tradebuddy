@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { STRATEGIES, STRATEGY_LABEL, strategyFocus, topLessons } from '../../bot/brain';
-import { BOT_START, DAILY_LOSS_LIMIT, MAX_NEW_PER_DAY, MAX_OPEN, SWING_MAX_DAYS } from '../../bot/policy';
+import { BOT_START, MAX_RISK, MIN_RISK, SWING_MAX_DAYS } from '../../bot/policy';
 import type { BotState, BotTrade } from '../../background/botJobs';
 import { formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
@@ -34,7 +34,6 @@ function useBotView() {
 function status(bot: BotState | null | undefined, marketOpen: boolean): { text: string; cls: string } {
   if (!bot) return { text: 'Starting — needs live prices', cls: 'idle' };
   if (!bot.enabled) return { text: 'Paused by you', cls: 'idle' };
-  if (marketOpen && bot.note?.startsWith('Stopped for today')) return { text: 'Stopped for today (loss limit)', cls: 'warn' };
   if (marketOpen) return { text: 'Trading by itself', cls: 'live' };
   return { text: 'Market closed — waits for 9:30', cls: 'idle' };
 }
@@ -77,6 +76,8 @@ export function AutoTraderView() {
   const market = useMarketState();
   const st = status(bot, market.phase === 'open');
   const [confirm, setConfirm] = useState<null | 'money' | 'all'>(null);
+  const [amount, setAmount] = useState(String(bot?.wallet.startCash ?? BOT_START));
+  const startCash = Math.round(Number(amount.replace(/[^0-9.]/g, '')) || 0);
   const trades = bot?.trades ?? [];
   const open = trades.filter((t) => t.status === 'open');
   const closed = trades.filter((t) => t.status === 'closed').reverse();
@@ -88,7 +89,7 @@ export function AutoTraderView() {
 
   const toggle = (enabled: boolean) => void callBackground('bot:enable', { enabled }).catch((e: unknown) => toast(errorMessage(e), 'err'));
   const reset = (forget: boolean) =>
-    void callBackground('bot:reset', { forget })
+    void callBackground('bot:reset', { forget, startCash })
       .then(() => toast(forget ? 'Auto-trader reset completely' : 'Money reset — it kept what it learned'))
       .catch((e: unknown) => toast(errorMessage(e), 'err'))
       .finally(() => setConfirm(null));
@@ -120,7 +121,7 @@ export function AutoTraderView() {
           <Sparkline values={curve.length > 1 ? curve : [s.total, s.total]} width={96} height={34} />
         </div>
         <div class="tiny bot-hero-foot">
-          Started with {formatINR(BOT_START, 0)} · free {formatINR(s.free, 0)} · {open.length} open · {winRate === null ? 'no finished trades yet' : `won ${brain!.wins} of ${brain!.n} (${Math.round(winRate * 100)}%)`}
+          Started with {formatINR(bot?.wallet.startCash ?? BOT_START, 0)} · free {formatINR(s.free, 0)} · {open.length} open · {winRate === null ? 'no finished trades yet' : `won ${brain!.wins} of ${brain!.n} (${Math.round(winRate * 100)}%)`}
         </div>
       </section>
 
@@ -239,9 +240,11 @@ export function AutoTraderView() {
           <ul>
             <li>Every minute from 9:30 am it looks at today's day-trade buy signals, "Rising today", the top picks and the "Falling now" sell-first ideas.</li>
             <li>For each idea it works out a chance of making money (the app's studies, adjusted by what it learned from its own trades) and the expected result after charges. It only takes ideas worth more than their risk.</li>
-            <li>Size: it risks about 0.5% of its money per trade (less when unsure, up to 0.75% when confident), never more than 20% of its money in one stock.</li>
             <li>
-              Limits: at most {MAX_OPEN} open trades and {MAX_NEW_PER_DAY} new trades a day; no new same-day trades after 2:30 pm; it stops for the day after losing {DAILY_LOSS_LIMIT * 100}% of its money.
+              Size — no fixed limit: it can put any amount into a trade, up to all its free cash (no borrowing). How much it risks comes from its own confidence (a quarter of the "Kelly" amount): {MIN_RISK * 100}% of its money when unsure, up to {MAX_RISK * 100}% when very sure. When several good ideas appear at once, its free cash is shared among them by how good each one is.
+            </li>
+            <li>
+              No limit on the number of trades or on a day's loss. The only time rules: no new same-day trades after 2:30 pm (they must be closed by 3:10), top picks until 3:15.
             </li>
             <li>Every trade has a safety net (sell if it falls to…) and a target. Once a trade is 1× its risk in profit, the safety net moves to the buy price. Same-day trades close by 3:10 pm; top picks after {SWING_MAX_DAYS} market days.</li>
             <li>About 1 decision in 8 is a small test trade on an idea it is unsure about — so it keeps learning.</li>
@@ -249,8 +252,8 @@ export function AutoTraderView() {
           </ul>
         </details>
         <div class="row" style={{ gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-          <button class="btn small" type="button" onClick={() => setConfirm('money')}>
-            Reset money (keep learning)
+          <button class="btn small" type="button" data-testid="bot-reset" onClick={() => setConfirm('money')}>
+            New amount (keep learning)
           </button>
           <button class="btn small danger" type="button" onClick={() => setConfirm('all')}>
             Forget everything
@@ -258,9 +261,13 @@ export function AutoTraderView() {
         </div>
         {confirm && (
           <div class="confirm-box small">
-            {confirm === 'money' ? `Start again with ${formatINR(BOT_START, 0)}? Open trades are dropped; what it learned is kept.` : 'Start again with new money and a fresh brain?'}
+            <label class="field" style={{ margin: '0 0 8px' }}>
+              <span>Start with (any amount, ₹)</span>
+              <input type="text" inputMode="numeric" value={amount} data-field="bot-amount" onInput={(e) => setAmount((e.currentTarget as HTMLInputElement).value)} />
+            </label>
+            {startCash < 10_000 ? 'Enter at least ₹10,000.' : confirm === 'money' ? `Start again with ${formatINR(startCash, 0)}? Open trades are dropped; what it learned is kept.` : `Start again with ${formatINR(startCash, 0)} and a fresh brain?`}
             <div class="row" style={{ gap: '8px', marginTop: '8px' }}>
-              <button class="btn small danger" type="button" onClick={() => reset(confirm === 'all')}>
+              <button class="btn small danger" type="button" disabled={startCash < 10_000} data-testid="bot-reset-yes" onClick={() => reset(confirm === 'all')}>
                 Yes
               </button>
               <button class="btn small" type="button" onClick={() => setConfirm(null)}>

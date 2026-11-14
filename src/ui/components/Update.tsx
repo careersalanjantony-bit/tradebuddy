@@ -165,7 +165,7 @@ export function UpdateCard() {
         <button class={`btn small ${busy ? 'busy' : ''}`} type="button" data-testid="update-check" disabled={busy} onClick={check}>
           <Icon name="refresh" size={16} /> Check now
         </button>
-        <span class="tiny muted">{st?.checkedAt ? `Checked ${formatTimeIST(st.checkedAt).slice(0, 5)}. ` : ''}Checks by itself every 6 hours.</span>
+        <span class="tiny muted">{st?.checkedAt ? `Checked ${formatTimeIST(st.checkedAt).slice(0, 5)}. ` : ''}Checks by itself every 5 minutes.</span>
       </div>
     </section>
   );

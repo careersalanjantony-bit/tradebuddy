@@ -92,9 +92,16 @@ export function NewsScreen({ go }: { go: Go }) {
         <div>
           <h1>News</h1>
           <p class="small muted" data-testid="news-sub">
-            {open ? 'Live: today\'s ideas, rising and falling stocks first, then the rest of your list.' : 'Market closed — the latest news from the past 7 days for your list.'}
-            {news?.at ? ` Updated ${istDate(news.at) === today ? formatTimeIST(news.at).slice(0, 5) : istDate(news.at)}.` : ''}
+            {open ? (
+              <>
+                <span class="live-dot inline" /> <b>Live</b> — today's ideas, rising and falling stocks are checked every 2 minutes, the rest of your list every 15.
+              </>
+            ) : (
+              'Market closed — the latest news from the past 7 days for your list, checked every 15 minutes.'
+            )}
+            {news?.at ? ` Updated ${istDate(news.at) === today ? formatTimeIST(news.at) : istDate(news.at)}.` : ''}
           </p>
+          {!open && <p class="tiny muted" data-testid="news-closed-note">Buy ideas, rising and falling stocks show 0 while the market is closed. They fill in by themselves on market days — buy ideas from 9:35 am, rising and falling stocks from the open.</p>}
           {news?.error && <p class="tiny err-text">Latest download failed: {news.error}</p>}
         </div>
         <button class={`icon-btn ${spinning ? 'spin' : ''}`} type="button" aria-label="Refresh" data-testid="news-refresh" onClick={refresh}>

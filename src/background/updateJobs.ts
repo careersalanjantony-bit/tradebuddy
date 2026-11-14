@@ -3,10 +3,10 @@ import { errorMessage } from '../lib/serialize';
 import { notify } from '../notify/chrome';
 import { appFetch } from '../platform/http';
 import { getLocal, setLocal } from '../storage/local';
-import { availableUpdate, checkDue, LATEST_JSON_URL, parseLatest, type UpdateState } from '../update/update';
+import { availableUpdate, CHECK_EVERY_MS, checkDue, LATEST_JSON_URL, parseLatest, type UpdateState } from '../update/update';
 
 /**
- * App v1.5: looks for a newer TradeBuddy on its GitHub updates branch (on start, then every 6 hours,
+ * App v1.5: looks for a newer TradeBuddy on its GitHub updates branch (on start, then every 5 minutes since v1.8,
  * and on "Check now"). Read-only: one small file download. Installing is done on the screen, only
  * when the owner taps Update, and Android asks before it installs anything.
  */
@@ -53,8 +53,8 @@ export async function checkForUpdate(now = Date.now(), force = false): Promise<U
   }
 }
 
-/** On start (a little after the screens) and then every hour it asks "is a check due?" (every 6 h). */
+/** On start (a little after the screens) and then every 5 minutes. */
 export function startUpdateChecks(): void {
   setTimeout(() => void checkForUpdate().catch(() => undefined), 8_000);
-  setInterval(() => void checkForUpdate().catch(() => undefined), 3600_000);
+  setInterval(() => void checkForUpdate().catch(() => undefined), CHECK_EVERY_MS);
 }

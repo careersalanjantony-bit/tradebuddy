@@ -1,27 +1,30 @@
 import { features, predict, strategyFocus, type Brain, type IdeaContext, type Strategy } from './brain';
 
 /**
- * The auto-trader's rules (app v1.6): which ideas to take and how much pretend money to put in.
- * Pure functions only.
+ * The auto-trader's rules: which ideas to take and how much pretend money to put in. Pure functions.
  *
+ * App v1.8 (owner: "no limit for auto trading, you can use any amount"): no cap on open trades, on
+ * new trades a day, on the day's loss or on the share of money in one stock. What is left:
  * - Expected result per trade, in R (1 R = the planned loss at the safety net):
  *     EV = chance × reward/risk − (1 − chance) × 1 − charges/risk
  *   Only ideas with EV > 0.05 R are taken, best first.
- * - Size: it risks 0.5 % of its money on a normal trade, from 0.15 % (unsure) to 0.75 % (confident),
- *   never more than 20 % of its money in one stock, at most 6 trades open and 10 new trades a day.
- * - It stops opening trades for the day after losing 1.5 % of its money that day.
+ * - Size from its own confidence (a quarter of the Kelly fraction): it risks between 0.25 % and 3 %
+ *   of its money on a trade, and may put in any amount up to all its free cash (no borrowing). When
+ *   several good ideas appear at once, the free cash is shared among them by how good each one is.
  * - About 1 in 8 decisions is a small "test trade" on an idea it is unsure about, so it keeps
  *   learning about kinds of trades it would otherwise never try.
+ * - Same-day trades are opened until 2:30 pm (they must be closed by 3:10); top picks until 3:15.
  */
 
 export const BOT_START = 5_000_000;
-export const MAX_OPEN = 6;
-export const MAX_NEW_PER_DAY = 10;
-export const DAILY_LOSS_LIMIT = 0.015;
-export const BASE_RISK = 0.005;
-export const MAX_POSITION = 0.2;
-export const MIN_POSITION = 20_000;
+/** smallest trade worth the charges */
+export const MIN_POSITION = 5_000;
 export const EXPLORE_RATE = 0.125;
+/** share of the Kelly fraction used (full Kelly assumes the chance is exactly right — it never is) */
+export const KELLY_SHARE = 0.25;
+export const MIN_RISK = 0.0025;
+export const MAX_RISK = 0.03;
+export const EXPLORE_RISK = 0.002;
 /** no new same-day trades after 2:30 pm; swing (few-day) entries until 3:15 pm */
 export const LAST_DAY_ENTRY_T = 14 * 60 + 30;
 export const LAST_SWING_ENTRY_T = 15 * 60 + 15;
@@ -69,6 +72,12 @@ export function scoreIdea(brain: Brain, idea: Idea): Scored | null {
   return { ...idea, x, chance, rewardR, chargesR, ev };
 }
 
+/** Share of its money to risk on one trade: a quarter of Kelly, between 0.25 % and 3 %. */
+export function riskFraction(chance: number, rewardR: number): number {
+  const kelly = chance - (1 - chance) / Math.max(0.1, rewardR);
+  return Math.min(MAX_RISK, Math.max(MIN_RISK, kelly * KELLY_SHARE));
+}
+
 export interface Book {
   /** money now (cash + open trades at live prices) */
   equity: number;
@@ -106,11 +115,10 @@ export function hash01(s: string): number {
   return ((h >>> 0) % 10_000) / 10_000;
 }
 
+const pctText = (x: number) => `${Math.round(x * 10000) / 100}%`;
+
 export function decide(brain: Brain, ideas: Idea[], book: Book, seed: string): Plan {
-  if (book.todayPnl <= -DAILY_LOSS_LIMIT * book.equity) return { decisions: [], note: `Stopped for today: it lost ${Math.round(DAILY_LOSS_LIMIT * 1000) / 10}% of its money today (its own safety rule).` };
   if (book.t < FIRST_ENTRY_T) return { decisions: [], note: 'Waits until 9:30 am — the first minutes are too jumpy.' };
-  let slots = Math.min(MAX_OPEN - book.openCount, MAX_NEW_PER_DAY - book.newToday);
-  if (slots <= 0) return { decisions: [], note: book.openCount >= MAX_OPEN ? `${MAX_OPEN} trades already open — waits for one to finish.` : `${MAX_NEW_PER_DAY} new trades today already — its daily limit.` };
   const seen = new Set(book.openKeys);
   const scored = ideas
     .filter((i) => !seen.has(i.key))
@@ -118,48 +126,47 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, seed: string): P
     .map((i) => scoreIdea(brain, i))
     .filter((s): s is Scored => !!s)
     .sort((a, b) => b.ev - a.ev);
-  if (!scored.length) return { decisions: [], note: book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm.' : 'No idea right now — waiting for one.' };
+  if (!scored.length) return { decisions: [], note: book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : 'No idea right now — waiting for one.' };
+  if (book.free < MIN_POSITION) return { decisions: [], note: 'All its money is in open trades — it waits for one to finish.' };
+
+  const good = scored.filter((s) => s.ev > 0.05 && strategyFocus(brain.by[s.strategy]) !== 'paused');
+  const explore = good.length === 0 || hash01(seed) < EXPLORE_RATE ? scored.find((s) => !good.includes(s) && s.ev > -0.4) : undefined;
+  // the free cash is shared among the good ideas by how good each one is
+  const weight = good.reduce((sum, s) => sum + s.ev, 0);
   const decisions: Decision[] = [];
   let free = book.free;
-  const used = new Set<string>();
-  const take = (idea: Scored, explore: boolean) => {
-    if (used.has(idea.key)) return;
-    const focus = strategyFocus(brain.by[idea.strategy]);
-    const confidence = explore ? 0.3 : Math.min(1.5, Math.max(0.3, (idea.chance - 0.4) / 0.15)) * (focus === 'less' ? 0.6 : 1);
-    const riskBudget = book.equity * BASE_RISK * confidence;
+  const take = (idea: Scored, isExplore: boolean, cashShare: number) => {
     const perShare = Math.abs(idea.price - idea.stop);
-    let qty = Math.floor(riskBudget / perShare);
-    const cap = Math.min(book.equity * MAX_POSITION, free * 0.98);
+    const focus = strategyFocus(brain.by[idea.strategy]);
+    const fraction = isExplore ? EXPLORE_RISK : riskFraction(idea.chance, idea.rewardR) * (focus === 'less' ? 0.6 : 1);
+    let qty = Math.floor((book.equity * fraction) / perShare);
     // the fill can be a little worse than the live price (slippage, 5-paise ticks): keep a margin
     const fillPrice = idea.price * 1.002;
-    if (qty * fillPrice > cap) qty = Math.floor(cap / fillPrice);
+    const cash = Math.min(cashShare, free * 0.995);
+    if (qty * fillPrice > cash) qty = Math.floor(cash / fillPrice);
     if (qty < 1 || qty * idea.price < MIN_POSITION) return;
-    free -= qty * idea.price;
-    used.add(idea.key);
-    const pct = Math.round(((qty * perShare) / book.equity) * 10000) / 100;
+    free -= qty * fillPrice;
+    const riskRupees = Math.round(qty * perShare);
+    const atRisk = riskRupees / book.equity;
     decisions.push({
       idea,
       qty,
-      riskRupees: Math.round(qty * perShare),
-      explore,
-      sizeWhy: explore
-        ? `Test trade: small (${pct}% of its money at risk) — it is unsure and wants to learn.`
-        : `${Math.round(idea.chance * 100)}% chance → risks ${pct}% of its money (${focus === 'less' ? 'smaller: this kind of trade has been losing' : idea.chance >= 0.6 ? 'confident' : 'normal'}).`,
+      riskRupees,
+      explore: isExplore,
+      sizeWhy: isExplore
+        ? `Test trade: small (${pctText(atRisk)} of its money at risk) — it is unsure and wants to learn.`
+        : `${Math.round(idea.chance * 100)}% chance, ${idea.rewardR.toFixed(1)}× reward → ${formatRs(qty * idea.price)} in (${pctText((qty * idea.price) / book.equity)} of its money), ${pctText(atRisk)} at risk${focus === 'less' ? ' (smaller: this kind of trade has been losing)' : ''}.`,
     });
   };
-  for (const s of scored) {
-    if (decisions.length >= slots) break;
-    const paused = strategyFocus(brain.by[s.strategy]) === 'paused';
-    if (s.ev > 0.05 && !paused) take(s, false);
-  }
-  // now and then, a small test trade on the best idea it would otherwise skip
-  if (decisions.length < slots && hash01(seed) < EXPLORE_RATE) {
-    const rest = scored.find((s) => !used.has(s.key) && s.ev > -0.4);
-    if (rest) take(rest, true);
-  }
-  slots -= decisions.length;
-  return { decisions, note: decisions.length ? null : `Looked at ${scored.length} idea${scored.length === 1 ? '' : 's'}; none good enough after charges (best: ${Math.round(scored[0]!.chance * 100)}% chance).` };
+  for (const s of good) take(s, false, weight > 0 ? book.free * (s.ev / weight) : book.free);
+  if (explore) take(explore, true, free);
+  return {
+    decisions,
+    note: decisions.length ? null : `Looked at ${scored.length} idea${scored.length === 1 ? '' : 's'}; none good enough after charges (best: ${Math.round(scored[0]!.chance * 100)}% chance).`,
+  };
 }
+
+const formatRs = (x: number) => `₹${Math.round(x).toLocaleString('en-IN')}`;
 
 /** Moves the safety net to the buy price once a trade is 1 R in profit (it can no longer lose). */
 export function trailStop(side: 'long' | 'short', entry: number, stop: number, price: number): number {

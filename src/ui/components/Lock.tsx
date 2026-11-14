@@ -3,6 +3,7 @@ import { AVATAR_COLORS, checkPin, hashPin, initials, newAccount, PIN_LENGTH, wai
 import { biometricAvailable, biometricUnlock } from '../../platform/biometric';
 import { setLocal } from '../../storage/local';
 import { buzz } from './Motion';
+import { greetingLine } from '../greeting';
 
 /** Round avatar with initials. */
 export function Avatar({ name, color, size = 72 }: { name: string; color: string; size?: number }) {
@@ -96,7 +97,7 @@ export function LockScreen({ account, onUnlock }: { account: AccountState; onUnl
     <div class="lock-screen" data-testid="lock-screen">
       <div class="lock-glow" aria-hidden="true" />
       <Avatar name={account.name} color={account.color} size={84} />
-      <h2>Welcome back, {account.name.split(' ')[0]}</h2>
+      <h2 data-testid="lock-greeting">{greetingLine(now, account.name)}</h2>
       <p class="small muted">{waiting ? `Too many wrong tries — wait ${Math.ceil((waitUntil - now) / 1000)} s` : 'Enter your PIN'}</p>
       <PinPad
         onDone={(p) => void enter(p)}
@@ -104,8 +105,8 @@ export function LockScreen({ account, onUnlock }: { account: AccountState; onUnl
         error={error}
         extra={
           bio ? (
-            <button type="button" class="key ghost" aria-label="Use fingerprint" data-testid="bio-btn" onClick={() => void tryBio()}>
-              ☝
+            <button type="button" class="key ghost bio" aria-label="Use fingerprint" data-testid="bio-btn" onClick={() => void tryBio()}>
+              <Fingerprint size={38} />
             </button>
           ) : null
         }
@@ -128,6 +129,32 @@ export function LockScreen({ account, onUnlock }: { account: AccountState; onUnl
         </div>
       )}
     </div>
+  );
+}
+
+/** A fingerprint drawn ridge by ridge, with a light scanning over it (app v1.8). */
+export function Fingerprint({ size = 40 }: { size?: number }) {
+  return (
+    <svg class="fp" viewBox="0 0 48 48" width={size} height={size} aria-hidden="true" data-testid="fingerprint">
+      <defs>
+        <linearGradient id="fpScanGrad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stop-color="currentColor" stop-opacity="0" />
+          <stop offset="0.5" stop-color="currentColor" stop-opacity="0.95" />
+          <stop offset="1" stop-color="currentColor" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      <g class="fp-ridges" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+        <path d="M11 17.5C13.8 12 18.6 9 24 9s10.2 3 13 8.5" />
+        <path d="M8.5 26c0-4.2 1.4-8 4-11" />
+        <path d="M14 39c-2.2-3.8-3.4-8.3-3.4-13 0-7.5 6-13.6 13.4-13.6S37.4 18.5 37.4 26c0 1.5-.1 3-.4 4.4" />
+        <path d="M19 41.5c-2.4-4.3-3.8-9.7-3.8-15.5 0-4.9 3.9-8.9 8.8-8.9s8.8 4 8.8 8.9c0 4.4-.6 8.6-1.8 12.4" />
+        <path d="M24 25.8c0 6.2-1.2 11.5-3.6 16.2" />
+        <path d="M28.6 27.5c0 5.4-1 10.3-2.9 14.5" />
+        <path d="M38.5 35.5c.9-2.4 1.6-5 1.9-7.7" />
+        <path d="M20.6 31c-.3-1.6-.4-3.2-.4-4.9 0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />
+      </g>
+      <rect class="fp-scan" x="6" y="2" width="36" height="7" rx="3.5" fill="url(#fpScanGrad)" />
+    </svg>
   );
 }
 

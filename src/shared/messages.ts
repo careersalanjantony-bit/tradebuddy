@@ -75,10 +75,11 @@ export interface ApiMap {
   'shorts:scan': { req: undefined; res: { ideas: number } };
   'update:check': { req: undefined; res: import('../update/update').UpdateState };
   'bot:run': { req: undefined; res: { ok: boolean } };
+  'ideas:suggest': { req: { side: 'buy' | 'sell' }; res: { at: number; marketOpen: boolean; items: import('../background/botJobs').Suggestion[] } };
   'shorts:analyze': { req: { key: string }; res: import('../background/shortJobs').LiveShortAnalysis | null };
   'shorts:model': { req: undefined; res: { trained: boolean } };
   'bot:enable': { req: { enabled: boolean }; res: { ok: boolean } };
-  'bot:reset': { req: { forget: boolean }; res: { ok: boolean } };
+  'bot:reset': { req: { forget: boolean; startCash?: number }; res: { ok: boolean } };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>> }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };

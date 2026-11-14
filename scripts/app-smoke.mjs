@@ -388,8 +388,8 @@ const heroText = ((await page.textContent('[data-testid="bot-hero"]').catch(() =
 check('Auto-trader: ₹50 lakh of pretend money, trading by itself in market hours', botState?.wallet?.startCash === 5000000 && heroText.includes('Trading by itself'), heroText.slice(0, 120));
 const openBot = (botState?.trades ?? []).filter((t) => t.status === 'open');
 check(
-  'it opened trades by itself — each with a safety net, a target, reasons, and a size within its limits (≤0.75% of its money at risk, ≤20% in one stock)',
-  botTraded && openBot.length > 0 && openBot.every((t) => t.riskRupees <= 0.0075 * 5e6 + 100 && t.qty * t.entry <= 0.2 * 5e6 + 1 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy),
+  'it opened trades by itself — each with a safety net, a target, reasons; no fixed limits: any amount up to all its cash (no borrowing), at most 3% of its money at risk per trade',
+  botTraded && openBot.length > 0 && openBot.reduce((sum, t) => sum + t.qty * t.entry, 0) <= 5e6 + 1 && openBot.every((t) => t.riskRupees <= 0.03 * 5e6 + 100 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy),
   openBot.map((t) => `${t.side} ${t.qty} ${t.symbol} @${t.entry} (${t.strategy}, ${Math.round(t.chance * 100)}%, risk ₹${t.riskRupees})`).join('; '),
 );
 check('each open trade moves live on a bar: safety net ← price → target', !!(await page.$('[data-testid="bot-trade"] .trade-track .mark.now')));
@@ -415,6 +415,51 @@ await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot.png'), fullPage: true });
 mock.move = 0;
 mock.fallPrice = undefined;
+
+console.log('── Practice: Sell is always on, with suggestions');
+mock.move = 0;
+mock.fallPrice = undefined;
+await page.click('.bottom-nav [data-nav="today"]');
+await page.waitForSelector('[data-testid="home-greeting"]', { timeout: 8000 }).catch(() => {});
+const greet = ((await page.textContent('[data-testid="home-greeting"]').catch(() => '')) ?? '').trim();
+const motto = ((await page.textContent('[data-testid="motto"]').catch(() => '')) ?? '').trim();
+check('Home: "Good morning Alan!" and a short motivation line under it', greet.startsWith('Good morning Alan!') && motto.length > 5 && motto.length <= 40, `${greet} / ${motto}`);
+await page.click('.bottom-nav [data-nav="practice"]');
+await page.click('[data-tab="me"]').catch(() => {});
+await page.waitForSelector('[data-testid="practice-sell"]', { timeout: 8000 });
+check('the Sell button is on even without shares', !(await page.$eval('[data-testid="practice-sell"]', (b) => b.disabled)));
+// a fresh "Falling now" scan at the falling stock's own price (earlier steps moved it around)
+mock.fallPrice = mock.fallLast ?? BASE[FALL] * 0.988;
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'shorts:scan', payload: undefined }));
+await page.click('[data-testid="practice-sell"]');
+await until(async () => (await page.$$('[data-testid="suggestion"].sell')).length > 0, 20000);
+const sellSugs = await page.$$eval('[data-testid="suggestion"].sell', (els) => els.map((e) => e.getAttribute('data-symbol')));
+check('Sell shows sell-first suggestions from the analysis (chance, plan, reasons)', sellSugs.length > 0, sellSugs.join(', '));
+const pick = sellSugs.includes(FALL) ? FALL : sellSugs[0];
+await page.click(`[data-testid="suggestion"][data-symbol="${pick}"]`);
+await page.waitForSelector('[data-testid="sell-first-note"]', { timeout: 5000 }).catch(() => {});
+const sfNote = !!(await page.$('[data-testid="sell-first-note"]'));
+const sfFields = await page.evaluate(() => ['short-stop', 'short-t1', 'short-t2', 'trade-qty'].map((f) => document.querySelector(`[data-field="${f}"]`)?.value ?? ''));
+await page.click('[data-testid="trade-submit"]');
+const soldFirst = await until(() => page.evaluate(async (sym) => ((await chrome.storage.local.get("wallet")).wallet.shorts ?? []).some((x) => x.symbol === sym), pick), 8000);
+check('choosing a suggestion fills a sell-first plan (buy-back price, targets, quantity) and selling first works', sfNote && sfFields.every((v) => Number(v) > 0) && soldFirst, `${pick}: ${sfFields.join(' / ')}`);
+await page.evaluate(async (sym) => {
+  const w = (await chrome.storage.local.get('wallet')).wallet;
+  const x = (w.shorts ?? []).find((p) => p.symbol === sym);
+  if (x) await chrome.runtime.sendMessage({ __swing: true, type: 'wallet:cover', payload: { key: x.key } });
+}, pick);
+await page.waitForTimeout(800);
+await page.keyboard.press('Escape').catch(() => {});
+await page.evaluate(() => document.querySelector('.sheet-backdrop')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+await page.waitForTimeout(400);
+await page.click('[data-testid="practice-buy"]').catch(() => {});
+await until(async () => (await page.$$('[data-testid="suggestion"].buy')).length > 0, 20000);
+const buySugs = await page.$$eval('[data-testid="suggestion"].buy', (els) => els.map((e) => e.getAttribute('data-symbol')));
+check('Buy shows suggested buys ranked by the analysis', buySugs.length > 0, buySugs.join(', '));
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-suggestions.png') });
+await page.evaluate(() => document.querySelector('.sheet-backdrop')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
 console.log('── Stocks: for short selling');
 await page.click('.bottom-nav [data-nav="watchlist"]');
@@ -504,7 +549,7 @@ await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-account.png'), fullPage: true });
 await page.click('[data-testid="lock-now"]');
 await page.waitForSelector('[data-testid="lock-screen"]', { timeout: 5000 });
-check('"Lock now" shows the lock screen and hides the app', ((await page.textContent('[data-testid="lock-screen"]')) ?? '').includes('Welcome back, Alan') && (await page.evaluate(() => getComputedStyle(document.querySelector('.content')).visibility)) === 'hidden');
+check('"Lock now" shows the lock screen with "Good morning Alan!" and hides the app', ((await page.textContent('[data-testid="lock-screen"]')) ?? '').includes('Good morning Alan!') && (await page.evaluate(() => getComputedStyle(document.querySelector('.content')).visibility)) === 'hidden');
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-lock.png') });
 for (const d of '1111') await page.click(`.lock-screen [data-key="${d}"]`);
 await page.waitForTimeout(600);

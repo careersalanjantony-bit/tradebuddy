@@ -16,13 +16,17 @@ import { dayKeys } from './dayJobs';
  * asks for the stocks that matter most first and fills up with the rest of the list:
  *   today's buy ideas → rising now → falling now (sell first) → top picks → what you hold →
  *   today's biggest movers in the list → the rest of the list.
- * Every 15 minutes in market hours, every 45 minutes otherwise (weekends and evenings too). The list
+ * App v1.8 ("make it real-time"): Upstox has no live news stream, so the app asks often — the most
+ * important stocks (ideas, rising, falling, your shares; one request) every 2 minutes in market
+ * hours, the whole list every 15 minutes, and every 15 minutes when the market is closed. The list
  * is kept on the phone, so the News tab is not empty after a restart or on a closed day.
  */
 
 const log = createLogger('news');
+/** the important stocks, in market hours */
+export const NEWS_PRIORITY_EVERY_MS = 2 * 60_000;
+/** the whole list (also when the market is closed) */
 export const NEWS_EVERY_MS = 15 * 60_000;
-export const NEWS_EVERY_CLOSED_MS = 45 * 60_000;
 const KEEP_MS = 7 * 24 * 3600_000;
 const MAX_ITEMS = 600;
 /** three requests of 30 stocks */
@@ -132,23 +136,31 @@ export async function newsFor(keys: string[], now = Date.now()): Promise<NewsIte
 }
 
 let running: Promise<number> | null = null;
-/** when the last download was tried (also failed ones), so a closed market is not asked every minute */
-let lastTry = 0;
+/** when each kind of download last ran (also failed ones, so Upstox is not asked every few seconds) */
+let lastFull = 0;
+let lastPriority = 0;
 
-/** Refreshes the stored headlines (every 15 min in market hours, 45 min otherwise, or now with `force`). */
+const PRIORITY: NewsReason[] = ['idea', 'rising', 'falling', 'pick', 'holding', 'trade'];
+
+/**
+ * Keeps the headlines fresh: the important stocks every 2 minutes in market hours, the whole list
+ * every 15 minutes (or everything now with `force`). Returns the number of stored headlines.
+ */
 export function refreshNews(now = Date.now(), force = false): Promise<number> {
   running ??= (async () => {
     const prev = await current();
     const open = marketState(now, await getCalendar()).phase === 'open';
-    const every = open ? NEWS_EVERY_MS : NEWS_EVERY_CLOSED_MS;
-    const fetchedRecently = prev && prev.items.length && now - prev.at < every;
-    if (!force && (fetchedRecently || now - lastTry < Math.min(every, 5 * 60_000))) return prev?.items.length ?? 0;
-    lastTry = now;
+    const fullDue = force || now - lastFull >= NEWS_EVERY_MS;
+    const priorityDue = open && now - lastPriority >= NEWS_PRIORITY_EVERY_MS;
+    if (!fullDue && !priorityDue) return prev?.items.length ?? 0;
     const targets = await newsTargets(now);
-    const keys = targets.map((t) => t.key);
+    const chosen = fullDue ? targets : targets.filter((t) => PRIORITY.includes(t.reason)).slice(0, 30);
+    lastPriority = now;
+    if (fullDue) lastFull = now;
+    const keys = chosen.map((t) => t.key);
     const reasons = Object.fromEntries(targets.map((t) => [t.key, t.reason]));
     if (!keys.length) {
-      await store({ at: now, items: mergeNews(prev?.items ?? [], [], now), targets: prev?.targets ?? {} });
+      await store({ at: prev?.at ?? now, items: mergeNews(prev?.items ?? [], [], now), targets: { ...(prev?.targets ?? {}), ...reasons } });
       return prev?.items.length ?? 0;
     }
     try {
@@ -167,9 +179,15 @@ export function refreshNews(now = Date.now(), force = false): Promise<number> {
   return running;
 }
 
-/** On start and then every 15 minutes, whether the market is open or not (the call itself paces it). */
+/** For tests: forget when the last downloads ran. */
+export function resetNewsTimers(): void {
+  lastFull = 0;
+  lastPriority = 0;
+}
+
+/** On start, then a check every 30 seconds (the call itself decides whether a download is due). */
 export function startNewsChecks(): void {
   void restoreNews().catch(() => undefined);
   setTimeout(() => void refreshNews().catch(() => undefined), 6_000);
-  setInterval(() => void refreshNews().catch(() => undefined), NEWS_EVERY_MS);
+  setInterval(() => void refreshNews().catch(() => undefined), 30_000);
 }

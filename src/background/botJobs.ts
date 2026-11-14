@@ -1,8 +1,9 @@
-import { calibrate, historyPairs, indicatorsOf, shortSellList, type Calibration, type Pair } from '../advisor/shortSell';
+import { calibrate, historyPairs, indicatorsOf, shortSellList, shortSetupAt, type Calibration, type Pair } from '../advisor/shortSell';
 import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
 import { stockChance } from '../advisor/shortModel';
+import { dailyShortPlan, type DailyShortPlan } from '../advisor/shortPlan';
 import { newBrain, learnFrom, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
-import { BOT_START, decide, SWING_MAX_DAYS, trailStop, type Idea } from '../bot/policy';
+import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, trailStop, type Idea } from '../bot/policy';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { buyersMeter } from '../data/flow';
@@ -93,8 +94,8 @@ export interface BotState {
   equity: Array<{ date: string; total: number }>;
 }
 
-export function newBot(now: number, brain: Brain = newBrain()): BotState {
-  return { v: 1, enabled: true, createdAt: now, wallet: newWallet(now, BOT_START), brain, trades: [], log: [{ at: now, kind: 'info', text: `Started with ${rupees(BOT_START)} of pretend money.` }], day: { date: '', opened: 0 }, lastRun: 0, lastDecideAt: 0, note: null, looked: 0, equity: [] };
+export function newBot(now: number, brain: Brain = newBrain(), startCash = BOT_START): BotState {
+  return { v: 1, enabled: true, createdAt: now, wallet: newWallet(now, startCash), brain, trades: [], log: [{ at: now, kind: 'info', text: `Started with ${rupees(startCash)} of pretend money.` }], day: { date: '', opened: 0 }, lastRun: 0, lastDecideAt: 0, note: null, looked: 0, equity: [] };
 }
 
 const rupees = (x: number) => `₹${Math.round(x).toLocaleString('en-IN')}`;
@@ -222,11 +223,32 @@ async function catchUp(bot: BotState, ctx: MarketCtx): Promise<BotState> {
 
 // ---------------------------------------------------------------- studies (top picks, sell-first chances)
 
-let studies: { at: number; picks: BuySuggestion[]; calDate: string; calLive: Calibration | null; shortChance: Map<string, number> } = { at: 0, picks: [], calDate: '', calLive: null, shortChance: new Map() };
+/** The best sell-first stocks by the per-stock model, with a plan from daily data (app v1.8). */
+interface ShortTop {
+  key: string;
+  symbol: string;
+  chance: number;
+  live: boolean;
+  price: number;
+  plan: DailyShortPlan;
+  reasons: string[];
+}
 
-/** Every 15 minutes: the top picks (sized as if for the auto-trader's money) and the sell-first chances. */
-async function refreshStudies(now: number, equity: number): Promise<void> {
-  if (now - studies.at < 15 * 60_000) return;
+let studies: { at: number; picks: BuySuggestion[]; calDate: string; calLive: Calibration | null; shortChance: Map<string, number>; shortTop: ShortTop[] } = { at: 0, picks: [], calDate: '', calLive: null, shortChance: new Map(), shortTop: [] };
+
+let studiesRun: Promise<void> | null = null;
+
+/** Every 15 minutes: the top picks (sized as if for the auto-trader's money) and the sell-first chances. A second caller waits for a run in progress. */
+function refreshStudies(now: number, equity: number): Promise<void> {
+  if (studiesRun) return studiesRun;
+  if (now - studies.at < 15 * 60_000) return Promise.resolve();
+  studiesRun = doRefreshStudies(now, equity).finally(() => {
+    studiesRun = null;
+  });
+  return studiesRun;
+}
+
+async function doRefreshStudies(now: number, equity: number): Promise<void> {
   studies.at = now;
   try {
     const [settings, cal, quotes, keys] = await Promise.all([getSettings(), getCalendar(), getQuotes(), trackedKeys()]);
@@ -250,11 +272,28 @@ async function refreshStudies(now: number, equity: number): Promise<void> {
     if (model) {
       // app v1.7: each stock's own chance from the per-stock model
       const m = new Map<string, number>();
+      const top: Array<{ st: (typeof stocks)[number]; chance: number; live: boolean; price: number }> = [];
       for (const st of stocks) {
         const c = stockChance(model, st.key, st.data.candles);
-        if (c) m.set(st.key, c.chance);
+        if (!c) continue;
+        m.set(st.key, c.chance);
+        const last = st.data.candles[st.data.candles.length - 1]!;
+        const price = quotes[st.key]?.ltp ?? last.close;
+        // while the market is open: only stocks trading below today's opening price
+        if (c.live && !(price < last.open)) continue;
+        if (c.chance > model.baseRate) top.push({ st, chance: c.chance, live: c.live, price });
       }
       studies.shortChance = m;
+      studies.shortTop = top
+        .sort((a, b) => b.chance - a.chance)
+        .slice(0, 10)
+        .flatMap(({ st, chance, live, price }) => {
+          const plan = dailyShortPlan(st.data.candles, price, 10_000, st.data.instrument?.tick ?? 0.05);
+          if (!plan) return [];
+          const c = st.data.candles;
+          const setup = live ? shortSetupAt(c, c.length - 1, indicatorsOf(c), true) : shortSetupAt(c, c.length, indicatorsOf(c), false);
+          return [{ key: st.key, symbol: st.symbol, chance, live, price, plan, reasons: (setup?.reasons ?? []).slice(0, 3) }];
+        });
     } else if (studies.calLive) {
       const rows = shortSellList(
         stocks.map((s) => ({ key: s.key, symbol: s.symbol, candles: s.data.candles, ltp: quotes[s.key]?.ltp ?? null, news: 0 })),
@@ -270,7 +309,7 @@ async function refreshStudies(now: number, equity: number): Promise<void> {
 
 /** For tests: forget the cached studies. */
 export function resetBotStudies(): void {
-  studies = { at: 0, picks: [], calDate: '', calLive: null, shortChance: new Map() };
+  studies = { at: 0, picks: [], calDate: '', calLive: null, shortChance: new Map(), shortTop: [] };
 }
 
 // ---------------------------------------------------------------- ideas
@@ -345,6 +384,81 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     ideas.push({ key: s.key, symbol: s.symbol, strategy: 'short', side: 'short', price: q.ltp, stop: s.plan.stop, target: s.plan.t2, t1: s.plan.t1, ctx: ctxOf(s.key, q, 'short', prior, s.plan.stop, -1), reasons: [`falling now (score ${s.score})`, ...s.reasons.slice(0, 2).map((x) => x.text), ...(measured !== undefined ? [`similar days fell ${Math.round(measured * 100)}% of the time`] : [])] });
   }
   return ideas;
+}
+
+// ---------------------------------------------------------------- suggestions for your own practice trades (app v1.8)
+
+export interface Suggestion {
+  key: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  kind: Strategy;
+  /** price used for the plan (live, or the last close when the market is closed) */
+  price: number;
+  stop: number;
+  target: number;
+  /** sell first: the first target (half is bought back there) */
+  t1?: number;
+  /** 0–1: the brain's chance (studies + its own learning + live signs + news), or the model's */
+  chance: number;
+  /** expected result in R after charges (live ideas) */
+  ev: number | null;
+  news: 'good' | 'bad' | null;
+  reasons: string[];
+  /** a same-day trade (sold / bought back by 3:10 pm) */
+  sameDay: boolean;
+  when: 'now' | 'next-session';
+}
+
+/**
+ * The best practice trades right now for one side, ranked by the same analysis the auto-trader uses:
+ * the app's studies (day-trade model, top picks' record, the per-stock fall model, the 5-minute scan),
+ * corrected by what the auto-trader learned from its own results, live buyers vs sellers, the whole
+ * market's mood and today's news. With the market closed: top picks and the next session's
+ * sell-first candidates.
+ */
+export async function suggestIdeas(side: 'buy' | 'sell', now = Date.now()): Promise<{ at: number; marketOpen: boolean; items: Suggestion[] }> {
+  const bot = await getBot(now);
+  const ctx = await marketCtx(now);
+  const quotes = await getQuotes();
+  const equity = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx.today).total;
+  await refreshStudies(now, equity);
+  const news = await getSession('news');
+  const moodOf = (key: string): 'good' | 'bad' | null => {
+    const m = stockSentiment((news?.items ?? []).filter((i) => i.key === key), now);
+    return m && m.label !== 'neutral' ? m.label : null;
+  };
+  const items: Suggestion[] = [];
+  const seen = new Set<string>();
+  if (ctx.open) {
+    for (const i of await gatherIdeas(now, quotes)) {
+      if ((side === 'buy') !== (i.side === 'long')) continue;
+      const sc = scoreIdea(bot.brain, i);
+      if (!sc || seen.has(i.key)) continue;
+      seen.add(i.key);
+      items.push({ key: i.key, symbol: i.symbol, side, kind: i.strategy, price: i.price, stop: i.stop, target: i.target, ...(i.t1 !== undefined ? { t1: i.t1 } : {}), chance: sc.chance, ev: sc.ev, news: moodOf(i.key), reasons: i.reasons, sameDay: i.strategy !== 'swing', when: 'now' });
+    }
+  }
+  if (side === 'buy') {
+    for (const p of studies.picks) {
+      if (seen.has(p.key)) continue;
+      const q = quotes[p.key];
+      const price = q?.ltp ?? p.plan.entry;
+      if (price <= p.plan.stop || price >= p.plan.target) continue;
+      seen.add(p.key);
+      items.push({ key: p.key, symbol: p.symbol, side, kind: 'swing', price, stop: p.plan.stop, target: p.plan.target, chance: p.safeChance ?? p.safetyScore, ev: null, news: moodOf(p.key), reasons: [`top pick: ${p.summary}`, `made money ${p.record.profitable} of ${p.record.samples} times in the past`], sameDay: false, when: ctx.open ? 'now' : 'next-session' });
+    }
+  } else {
+    for (const t of studies.shortTop) {
+      if (seen.has(t.key)) continue;
+      seen.add(t.key);
+      items.push({ key: t.key, symbol: t.symbol, side, kind: 'short', price: t.price, stop: t.plan.stop, target: t.plan.t2, t1: t.plan.t1, chance: t.chance, ev: null, news: moodOf(t.key), reasons: [...t.reasons, `its own chance from a year of prices: ${Math.round(t.chance * 100)}%`], sameDay: true, when: ctx.open ? 'now' : 'next-session' });
+    }
+  }
+  // good news helps a buy and hurts a sell-first (and the other way round) — shown, and used as a tie-break
+  const newsScore = (x: Suggestion) => (x.news === null ? 0 : (x.news === 'good') === (side === 'buy') ? 0.03 : -0.03);
+  items.sort((a, b) => (b.ev ?? -1) - (a.ev ?? -1) || b.chance + newsScore(b) - (a.chance + newsScore(a)));
+  return { at: now, marketOpen: ctx.open, items: items.slice(0, 8) };
 }
 
 // ---------------------------------------------------------------- the loop
@@ -438,11 +552,12 @@ export function botSetEnabled(enabled: boolean, now = Date.now()): Promise<void>
   });
 }
 
-/** Start again with ₹50 lakh; keep what it learned unless `forget`. */
-export function botReset(forget: boolean, now = Date.now()): Promise<void> {
+/** Start again with any amount (₹50 lakh by default); keep what it learned unless `forget`. */
+export function botReset(forget: boolean, startCash = BOT_START, now = Date.now()): Promise<void> {
   return queue(async () => {
     const old = await getLocal('bot');
-    const fresh = newBot(now, forget || !old ? newBrain() : old.brain);
-    await setLocal('bot', addLog(fresh, now, 'info', forget ? 'Reset: new money and a fresh brain.' : `Reset the money; kept what it learned from ${old?.brain.n ?? 0} trades.`));
+    const cash = Number.isFinite(startCash) && startCash >= 10_000 ? Math.round(startCash) : BOT_START;
+    const fresh = newBot(now, forget || !old ? newBrain() : old.brain, cash);
+    await setLocal('bot', addLog(fresh, now, 'info', forget ? `Reset: ${rupees(cash)} and a fresh brain.` : `Reset to ${rupees(cash)}; kept what it learned from ${old?.brain.n ?? 0} trades.`));
   });
 }

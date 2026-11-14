@@ -43,7 +43,7 @@ import { learnIfDue, learnNow } from './mlJobs';
 import { walletCover, walletShort } from './walletJobs';
 import { scanShorts } from './shortJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
-import { botReset, botSetEnabled, runBot } from './botJobs';
+import { botReset, botSetEnabled, runBot, suggestIdeas } from './botJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -292,10 +292,11 @@ const handlers: Handlers = {
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'update:check': async () => checkForUpdate(Date.now(), true),
   'bot:run': async () => ({ ok: !!(await runBot(Date.now(), true)) }),
+  'ideas:suggest': async ({ side }) => suggestIdeas(side),
   'shorts:analyze': async ({ key }) => analyzeShort(key),
   'shorts:model': async () => ({ trained: await trainShortModelIfDue(Date.now(), true) }),
   'bot:enable': async ({ enabled }) => (await botSetEnabled(enabled), { ok: true }),
-  'bot:reset': async ({ forget }) => (await botReset(forget), { ok: true }),
+  'bot:reset': async ({ forget, startCash }) => (await botReset(forget, startCash), { ok: true }),
   'wallet:cancel': async ({ id }) => {
     await walletCancel(id);
     return { done: true };

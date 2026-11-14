@@ -38,6 +38,33 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.8
+
+- **Auto-trader without limits:** no cap on open trades, on new trades a day, on a day's loss or on
+  the share of money in one stock. Each trade risks a quarter of the Kelly fraction of its money
+  (0.25 %–3 %, from its own chance and the reward), and it may put any amount in — up to all its free
+  cash (no borrowing); when several good ideas appear at once, the free cash is shared by how good
+  each one is. The time rules stay (same-day trades until 2:30 pm because they must close by 3:10).
+  "New amount" starts it again with any amount you type (at least ₹10,000), keeping or forgetting
+  what it learned.
+- **Practice: Sell is always on.** It sells shares you hold, or — for any other stock — sells first
+  and buys back the same day (buy-back-if-it-rises price, target 1 for half, target 2 for the rest,
+  3:10 pm at the latest; market hours only). Both Buy and Sell open with **suggestions** ranked by the
+  same analysis the auto-trader uses: the app's studies (day-trade model, top picks' record, the
+  per-stock fall model, the 5-minute "Falling now" scan) corrected by what the auto-trader learned
+  from its own results, live buyers vs sellers, the market's mood and today's news. Each shows its
+  chance, plan, reasons and news mood; tapping one fills the form (sized so the loss at the safety
+  net is about 1 % of the practice money, within the free cash).
+- **News closer to real time:** Upstox has no live news stream, so the app asks often — today's
+  ideas, rising and falling stocks and your shares every 2 minutes in market hours, the whole list
+  every 15 minutes (also when the market is closed). The News tab shows a live dot and the time of
+  the last update, and says why buy ideas / rising stocks show 0 while the market is closed (they
+  fill in by themselves from the open).
+- **Updates:** the app looks for a new version every 5 minutes (was 6 hours).
+- **Lock screen and Home:** a drawn fingerprint (ridges draw in, a light scans over them, a soft ring
+  pulses) instead of the ☝ sign; "Good evening Alan!" with your first name on Home and on the lock
+  screen, and one short line under it that changes daily ("Plan the trade. Trade the plan.").
+
 ## New in 1.7
 
 - **An instant alert for every new idea:** every day-trade BUY / SELL-first signal that is not late

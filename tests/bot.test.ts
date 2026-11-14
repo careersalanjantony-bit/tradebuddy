@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { calibrate, chanceFor, emaSeries, historyPairs, indicatorsOf, rsiSeries, shortSellList, shortSetupAt } from '../src/advisor/shortSell';
 import { features, learnFrom, newBrain, predict, strategyFocus, topLessons, type IdeaContext } from '../src/bot/brain';
-import { BOT_START, decide, hash01, MAX_OPEN, scoreIdea, trailStop, type Book, type Idea } from '../src/bot/policy';
+import { BOT_START, decide, hash01, MAX_RISK, MIN_RISK, riskFraction, scoreIdea, trailStop, type Book, type Idea } from '../src/bot/policy';
 import { newBot, settleClosed, weekdaysBetween, type BotTrade } from '../src/background/botJobs';
 import { placeOrder, processWallet, type MarketCtx } from '../src/wallet/wallet';
 import type { Candle } from '../src/indicators/types';
@@ -43,40 +43,52 @@ describe('auto-trader brain', () => {
   });
 });
 
-describe('auto-trader decisions and size', () => {
+describe('auto-trader decisions and size (no limits, app v1.8)', () => {
   const book = (over: Partial<Book> = {}): Book => ({ equity: BOT_START, free: BOT_START, openKeys: [], openCount: 0, newToday: 0, todayPnl: 0, t: 630, ...over });
   const idea = (key: string, prior: number, over: Partial<Idea> = {}): Idea => ({ key, symbol: key, strategy: 'day-buy', side: 'long', price: 1000, stop: 990, target: 1020, ctx: ctx({ strategy: 'day-buy', prior, riskPct: 1 }), reasons: ['test'], ...over });
 
-  it('takes good ideas, best first, and sizes by confidence (0.5 % of the money at normal confidence)', () => {
-    // safety net 3 % away, so the 20 % cap does not decide the size
+  it('risks a quarter of Kelly, between 0.25 % and 3 % of its money', () => {
+    expect(riskFraction(0.4, 1)).toBe(MIN_RISK);
+    expect(riskFraction(0.55, 2)).toBeCloseTo(0.03, 5); // quarter Kelly would be 8 %: capped at 3 %
+    expect(riskFraction(0.45, 1.5)).toBeCloseTo((0.45 - 0.55 / 1.5) * 0.25, 5); // ≈ 2.1 %
+  });
+
+  it('takes good ideas, best first, shares its free cash by how good each is, never more than it has', () => {
     const wide = (k: string, p: number) => idea(k, p, { stop: 970, target: 1060 });
     const plan = decide(newBrain(), [wide('A', 0.55), wide('B', 0.68), wide('C', 0.3)], book(), 'no-explore-seed-1');
     const keys = plan.decisions.map((d) => d.idea.key);
     expect(keys[0]).toBe('B');
     expect(keys).toContain('A');
-    expect(keys).not.toContain('C');
-    const b = plan.decisions[0]!;
-    expect(b.riskRupees).toBeGreaterThan(BOT_START * 0.005);
-    expect(b.riskRupees).toBeLessThanOrEqual(BOT_START * 0.0075 + 10);
-    expect(b.qty * 1000).toBeLessThanOrEqual(BOT_START * 0.2);
+    const total = plan.decisions.reduce((s, d) => s + d.qty * d.idea.price, 0);
+    expect(total).toBeLessThanOrEqual(BOT_START);
+    expect(total).toBeGreaterThan(BOT_START * 0.5); // it really uses its money
     const a = plan.decisions.find((d) => d.idea.key === 'A')!;
-    expect(a.riskRupees).toBeLessThan(b.riskRupees);
+    const b = plan.decisions.find((d) => d.idea.key === 'B')!;
+    expect(a.qty).toBeLessThan(b.qty);
+    for (const d of plan.decisions) expect(d.riskRupees).toBeLessThanOrEqual(BOT_START * MAX_RISK + 1000);
   });
 
-  it('never puts more than 20 % of its money in one stock', () => {
-    const plan = decide(newBrain(), [idea('A', 0.7, { stop: 999.5, target: 1003 })], book(), 'x');
-    expect(plan.decisions[0]!.qty * 1000).toBeLessThanOrEqual(BOT_START * 0.2);
+  it('any amount: one strong idea may use (almost) all of its free cash', () => {
+    const plan = decide(newBrain(), [idea('A', 0.7)], book(), 'no-explore-seed-1');
+    const d = plan.decisions[0]!;
+    expect(d.qty * 1000).toBeGreaterThan(BOT_START * 0.9);
+    expect(d.qty * 1000 * 1.002).toBeLessThanOrEqual(BOT_START);
+    expect(d.sizeWhy).toMatch(/of its money/);
   });
 
-  it('respects its limits: open trades, daily loss, time of day, no doubles', () => {
-    expect(decide(newBrain(), [idea('A', 0.7)], book({ openCount: MAX_OPEN }), 'x').decisions).toHaveLength(0);
-    const lost = decide(newBrain(), [idea('A', 0.7)], book({ todayPnl: -BOT_START * 0.02 }), 'x');
-    expect(lost.decisions).toHaveLength(0);
-    expect(lost.note).toMatch(/Stopped for today/);
+  it('no limit on open trades, trades a day or a losing day', () => {
+    const plan = decide(newBrain(), [idea('A', 0.7)], book({ openCount: 40, newToday: 60, todayPnl: -BOT_START * 0.1, free: 2_000_000 }), 'x');
+    expect(plan.decisions).toHaveLength(1);
+  });
+
+  it('keeps the time rules, one trade per stock, and waits when all money is in trades', () => {
     expect(decide(newBrain(), [idea('A', 0.7)], book({ t: 9 * 60 + 20 }), 'x').decisions).toHaveLength(0);
     expect(decide(newBrain(), [idea('A', 0.7)], book({ t: 14 * 60 + 45 }), 'x').decisions).toHaveLength(0);
     expect(decide(newBrain(), [idea('A', 0.7, { strategy: 'swing', ctx: ctx({ strategy: 'swing', prior: 0.7 }) })], book({ t: 14 * 60 + 45 }), 'x').decisions).toHaveLength(1);
     expect(decide(newBrain(), [idea('A', 0.7)], book({ openKeys: ['A'], openCount: 1 }), 'x').decisions).toHaveLength(0);
+    const broke = decide(newBrain(), [idea('A', 0.7)], book({ free: 1000 }), 'x');
+    expect(broke.decisions).toHaveLength(0);
+    expect(broke.note).toMatch(/All its money is in open trades/);
   });
 
   it('counts charges: a tiny target is not worth it', () => {
@@ -84,13 +96,13 @@ describe('auto-trader decisions and size', () => {
     expect(s.ev).toBeLessThan(0.05);
   });
 
-  it('now and then makes a small test trade to keep learning', () => {
+  it('when nothing is good it makes a small test trade to keep learning', () => {
     const seeds = Array.from({ length: 400 }, (_, i) => `s${i}`).filter((s) => hash01(s) < 0.125);
     expect(seeds.length).toBeGreaterThan(20);
     const plan = decide(newBrain(), [idea('A', 0.3)], book(), seeds[0]!);
     expect(plan.decisions).toHaveLength(1);
     expect(plan.decisions[0]!.explore).toBe(true);
-    expect(plan.decisions[0]!.riskRupees).toBeLessThan(BOT_START * 0.002);
+    expect(plan.decisions[0]!.riskRupees).toBeLessThanOrEqual(BOT_START * 0.002 + 10);
   });
 
   it('moves the safety net to the buy price once 1 R up', () => {

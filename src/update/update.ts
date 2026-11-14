@@ -14,8 +14,8 @@ export const DOWNLOAD_PREFIX = `https://raw.githubusercontent.com/${UPDATE_REPO}
 export const LATEST_JSON_URL = `${DOWNLOAD_PREFIX}latest.json`;
 /** where a person (not the app) finds the newest file */
 export const RELEASES_PAGE = `https://github.com/${UPDATE_REPO}/tree/${UPDATE_BRANCH}`;
-/** how often the app looks for a new version (also on every start, at most this often) */
-export const CHECK_EVERY_MS = 6 * 3600_000;
+/** how often the app looks for a new version (app v1.8: every 5 minutes; also on every start) */
+export const CHECK_EVERY_MS = 5 * 60_000;
 const MAX_APK_BYTES = 200 * 1024 * 1024;
 
 export interface UpdateInfo {
