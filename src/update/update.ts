@@ -1,17 +1,19 @@
 /**
- * In-app updates (app v1.5). Each new version is published on TradeBuddy's GitHub releases page with
- * two files: the app (`TradeBuddy-x.y.z.apk`) and `latest.json` describing it. The app reads
- * `latest.json` of the newest release (a plain file download: no GitHub API, so no hourly limit),
- * and when it is newer than the installed version, offers "Update now".
+ * In-app updates (app v1.5). Each new version is published on the repository's `updates` branch,
+ * which holds only two files: the app (`TradeBuddy-x.y.z.apk`) and `latest.json` describing it.
+ * The app reads `latest.json` (a plain file download from raw.githubusercontent.com: no GitHub API,
+ * so no hourly limit), and when it is newer than the installed version, offers "Update now".
  *
  * Pure functions only; the network and the Android installer live in background/updateJobs.ts and
  * platform/updater.ts.
  */
 
 export const UPDATE_REPO = 'careersalanjantony-bit/tradebuddy';
-export const LATEST_JSON_URL = `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.json`;
-export const RELEASES_PAGE = `https://github.com/${UPDATE_REPO}/releases/latest`;
-export const DOWNLOAD_PREFIX = `https://github.com/${UPDATE_REPO}/releases/download/`;
+export const UPDATE_BRANCH = 'updates';
+export const DOWNLOAD_PREFIX = `https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}/`;
+export const LATEST_JSON_URL = `${DOWNLOAD_PREFIX}latest.json`;
+/** where a person (not the app) finds the newest file */
+export const RELEASES_PAGE = `https://github.com/${UPDATE_REPO}/tree/${UPDATE_BRANCH}`;
 /** how often the app looks for a new version (also on every start, at most this often) */
 export const CHECK_EVERY_MS = 6 * 3600_000;
 const MAX_APK_BYTES = 200 * 1024 * 1024;
@@ -59,8 +61,8 @@ export function parseLatest(raw: unknown): UpdateInfo | null {
   const version = typeof o.version === 'string' ? o.version.trim() : '';
   if (!VERSION_RE.test(version)) return null;
   const apkUrl = typeof o.apk === 'string' ? o.apk : '';
-  // only this app's own releases page, the file for exactly this version
-  if (apkUrl !== `${DOWNLOAD_PREFIX}v${version}/TradeBuddy-${version}.apk`) return null;
+  // only this app's own updates branch, the file for exactly this version
+  if (apkUrl !== `${DOWNLOAD_PREFIX}TradeBuddy-${version}.apk`) return null;
   const size = typeof o.size === 'number' && Number.isInteger(o.size) ? o.size : 0;
   if (size <= 0 || size > MAX_APK_BYTES) return null;
   const sha256 = typeof o.sha256 === 'string' ? o.sha256.toLowerCase() : '';

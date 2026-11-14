@@ -6,7 +6,7 @@ import { getLocal, setLocal } from '../storage/local';
 import { availableUpdate, checkDue, LATEST_JSON_URL, parseLatest, type UpdateState } from '../update/update';
 
 /**
- * App v1.5: looks for a newer TradeBuddy on its GitHub releases page (on start, then every 6 hours,
+ * App v1.5: looks for a newer TradeBuddy on its GitHub updates branch (on start, then every 6 hours,
  * and on "Check now"). Read-only: one small file download. Installing is done on the screen, only
  * when the owner taps Update, and Android asks before it installs anything.
  */

@@ -30,16 +30,16 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * In-app updates (app v1.5): downloads a newer TradeBuddy APK from this app's own GitHub releases page,
+ * In-app updates (app v1.5): downloads a newer TradeBuddy APK from this app's own GitHub updates branch,
  * checks it (size, SHA-256, same app, newer version, same signing key) and hands it to Android's
  * installer. Android shows its own "Update" screen and refuses any file not signed with this app's key.
  *
- * Only https://github.com/careersalanjantony-bit/tradebuddy/releases/download/... is accepted.
+ * Only https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/updates/... is accepted.
  */
 @CapacitorPlugin(name = "AppUpdater")
 public class AppUpdaterPlugin extends Plugin {
 
-    private static final String ALLOWED_PREFIX = "https://github.com/careersalanjantony-bit/tradebuddy/releases/download/";
+    private static final String ALLOWED_PREFIX = "https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/updates/";
     private static final String FILE_NAME = "TradeBuddy-update.apk";
     private static final long MAX_BYTES = 200L * 1024 * 1024;
 
@@ -55,7 +55,7 @@ public class AppUpdaterPlugin extends Plugin {
         final long expectedSize = call.getLong("size", 0L);
         final String expectedSha = call.getString("sha256", "");
         if (url == null || !url.startsWith(ALLOWED_PREFIX) || !url.endsWith(".apk")) {
-            call.reject("Only TradeBuddy's own releases page can be used for updates.");
+            call.reject("Only TradeBuddy's own updates page can be used for updates.");
             return;
         }
         new Thread(() -> {

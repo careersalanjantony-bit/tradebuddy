@@ -9,7 +9,7 @@ const SHA = 'a'.repeat(64);
 const good = (version: string) => ({
   version,
   date: '2026-11-14',
-  apk: `${DOWNLOAD_PREFIX}v${version}/TradeBuddy-${version}.apk`,
+  apk: `${DOWNLOAD_PREFIX}TradeBuddy-${version}.apk`,
   size: 14_000_000,
   sha256: SHA,
   notes: ['Update the app from inside the app', '  ', 42, 'Safer signing key'],
@@ -30,14 +30,15 @@ describe('latest.json', () => {
   it('reads a correct description and drops empty or odd notes', () => {
     const u = parseLatest(good('1.5.0'))!;
     expect(u.version).toBe('1.5.0');
-    expect(u.apkUrl).toBe('https://github.com/careersalanjantony-bit/tradebuddy/releases/download/v1.5.0/TradeBuddy-1.5.0.apk');
+    expect(u.apkUrl).toBe('https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/updates/TradeBuddy-1.5.0.apk');
     expect(u.notes).toEqual(['Update the app from inside the app', 'Safer signing key']);
   });
 
   it('refuses a file from anywhere else, for another version, or without a check number', () => {
     expect(parseLatest({ ...good('1.5.0'), apk: 'https://evil.example/TradeBuddy-1.5.0.apk' })).toBeNull();
-    expect(parseLatest({ ...good('1.5.0'), apk: `${DOWNLOAD_PREFIX}v1.4.0/TradeBuddy-1.4.0.apk` })).toBeNull();
-    expect(parseLatest({ ...good('1.5.0'), apk: 'https://github.com/someone-else/tradebuddy/releases/download/v1.5.0/TradeBuddy-1.5.0.apk' })).toBeNull();
+    expect(parseLatest({ ...good('1.5.0'), apk: `${DOWNLOAD_PREFIX}TradeBuddy-1.4.0.apk` })).toBeNull();
+    expect(parseLatest({ ...good('1.5.0'), apk: 'https://raw.githubusercontent.com/someone-else/tradebuddy/updates/TradeBuddy-1.5.0.apk' })).toBeNull();
+    expect(parseLatest({ ...good('1.5.0'), apk: 'https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/main/TradeBuddy-1.5.0.apk' })).toBeNull();
     expect(parseLatest({ ...good('1.5.0'), sha256: 'abc' })).toBeNull();
     expect(parseLatest({ ...good('1.5.0'), size: 0 })).toBeNull();
     expect(parseLatest({ ...good('1.5.0'), size: 500 * 1024 * 1024 })).toBeNull();

@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 /**
- * Publishes the built app on TradeBuddy's GitHub releases page, so phones see "Update now".
+ * Publishes the built app so phones see "Update now".
  *
  *   npm run build && npx cap sync android && (cd android && ./gradlew assembleRelease)
  *   cp android/app/build/outputs/apk/release/app-release.apk release/TradeBuddy-<version>.apk
  *   node scripts/release.mjs            # version from package.json, notes from release-notes/<version>.txt
  *
- * Uploads two files to the release "v<version>": TradeBuddy-<version>.apk and latest.json
- * (version, download link, size, SHA-256, plain-words notes). The app reads latest.json of the newest
- * release. The commit must already be pushed. Uses the GitHub REST API through `gh api`.
+ * The repository's `updates` branch holds only the newest version: TradeBuddy-<version>.apk,
+ * latest.json (version, download link, size, SHA-256, plain-words notes) and a short README. It is
+ * replaced on every release (one commit, force-pushed), so it never grows. The app reads
+ * https://raw.githubusercontent.com/<repo>/updates/latest.json.
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = 'careersalanjantony-bit/tradebuddy';
+const BRANCH = 'updates';
+const PREFIX = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/`;
 const root = fileURLToPath(new URL('..', import.meta.url));
 const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const apkName = `TradeBuddy-${version}.apk`;
@@ -37,6 +41,13 @@ if (existsSync(aapt)) {
   if (!badge.includes(`versionName='${version}'`)) die(`the APK is not version ${version}: ${badge}`);
 }
 
+const git = (args, cwd = root) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+// the code for this version must be on GitHub first
+const head = git(['rev-parse', 'HEAD']);
+const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+const remoteHead = git(['ls-remote', 'origin', `refs/heads/${branch}`]).split('\t')[0];
+if (remoteHead !== head) die(`push ${branch} first (GitHub has ${remoteHead?.slice(0, 7)}, here ${head.slice(0, 7)})`);
+
 const bytes = readFileSync(apk);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const notes = readFileSync(notesFile, 'utf8')
@@ -44,44 +55,46 @@ const notes = readFileSync(notesFile, 'utf8')
   .map((l) => l.replace(/^[-*•]\s*/, '').trim())
   .filter(Boolean);
 const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-const latest = { version, date, apk: `https://github.com/${REPO}/releases/download/v${version}/${apkName}`, size: bytes.length, sha256, notes };
-const latestPath = join(root, 'release', 'latest.json');
-writeFileSync(latestPath, JSON.stringify(latest, null, 2) + '\n');
+const latest = { version, date, apk: `${PREFIX}${apkName}`, size: bytes.length, sha256, notes, commit: head };
 
-const gh = (args, input) => JSON.parse(execFileSync('gh', ['api', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(input ? { input } : {}) }) || 'null');
-const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const remote = execFileSync('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: root, encoding: 'utf8' }).split('\t')[0];
-if (remote !== head) die(`push ${branch} first (remote ${remote?.slice(0, 7)} ≠ local ${head.slice(0, 7)})`);
-
-let rel = null;
+const dir = mkdtempSync(join(tmpdir(), 'tb-updates-'));
 try {
-  rel = gh([`repos/${REPO}/releases/tags/v${version}`]);
-} catch {
-  /* not there yet */
+  copyFileSync(apk, join(dir, apkName));
+  writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n');
+  writeFileSync(
+    join(dir, 'README.md'),
+    [
+      `# TradeBuddy ${version} (${date})`,
+      '',
+      'This branch only holds the newest TradeBuddy app file, for updates from inside the app.',
+      '',
+      "## What's new",
+      '',
+      ...notes.map((n) => `- ${n}`),
+      '',
+      '## How to update',
+      '',
+      '- **In TradeBuddy:** tap **Update now** on Home (or Me → App updates → Check now). Your practice money, settings and login stay.',
+      `- **Without the app:** open [${apkName}](${apkName}) on the phone → **View raw** to download → open the file → Install.`,
+      '',
+      `SHA-256 of the app file: \`${sha256}\` · built from commit \`${head.slice(0, 7)}\` on branch \`${branch}\`.`,
+      '',
+    ].join('\n'),
+  );
+  git(['init', '-q', '-b', BRANCH], dir);
+  git(['add', '-A'], dir);
+  execFileSync(
+    'git',
+    [
+      '-c', 'user.name=Claude', '-c', 'user.email=noreply@anthropic.com', 'commit', '-q', '-m',
+      `TradeBuddy ${version}: app file for in-app updates\n\nBuilt from ${head} (${branch}).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_014xkUegGpnukAXVUjWy6cQb`,
+    ],
+    { cwd: dir },
+  );
+  const origin = git(['remote', 'get-url', 'origin']);
+  git(['push', '-q', '--force', origin, `${BRANCH}:${BRANCH}`], dir);
+  console.log(`published ${apkName} (${bytes.length} bytes, sha256 ${sha256.slice(0, 12)}…) on branch ${BRANCH}`);
+  console.log(`phones offer ${version} at their next check (every 6 hours, or Me → App updates → Check now)`);
+} finally {
+  rmSync(dir, { recursive: true, force: true });
 }
-if (!rel) {
-  const body = [
-    `## What's new in ${version}`,
-    '',
-    ...notes.map((n) => `- ${n}`),
-    '',
-    '**How to update:** in TradeBuddy, tap **Update now** on Home (or Me → App updates). Your practice money, settings and login stay.',
-    `First time only, or without the app: download \`${apkName}\` below on the phone and open it.`,
-    '',
-    `SHA-256 of the app file: \`${sha256}\``,
-  ].join('\n');
-  rel = gh([`repos/${REPO}/releases`, '--method', 'POST', '--input', '-'], JSON.stringify({ tag_name: `v${version}`, target_commitish: head, name: `TradeBuddy ${version}`, body, make_latest: 'true' }));
-  console.log(`created release v${version} (${rel.html_url})`);
-}
-
-for (const [name, file, type] of [
-  [apkName, apk, 'application/vnd.android.package-archive'],
-  ['latest.json', latestPath, 'application/json'],
-]) {
-  const old = (rel.assets ?? []).find((a) => a.name === name);
-  if (old) gh([`repos/${REPO}/releases/assets/${old.id}`, '--method', 'DELETE']);
-  const up = gh([`https://uploads.github.com/repos/${REPO}/releases/${rel.id}/assets?name=${encodeURIComponent(name)}`, '--method', 'POST', '-H', `Content-Type: ${type}`, '--input', file]);
-  console.log(`uploaded ${name} (${up.size} bytes)`);
-}
-console.log(`done: phones will offer ${version} at their next check (every 6 hours, or Me → App updates → Check now)`);

@@ -138,10 +138,10 @@ await page.route('https://nsearchives.nseindia.com/**', (route) =>
     : route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }),
 );
 // in-app updates: no release yet until the test publishes a pretend 9.9.9
-await page.route('https://github.com/careersalanjantony-bit/tradebuddy/releases/**', (route) => {
+await page.route('https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/**', (route) => {
   const v = mock.updateVersion;
-  if (!v || !route.request().url().includes('/latest/download/latest.json')) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'Not Found' });
-  return route.fulfill(json({ version: v, date: '2026-11-16', apk: `https://github.com/careersalanjantony-bit/tradebuddy/releases/download/v${v}/TradeBuddy-${v}.apk`, size: 14680064, sha256: 'b'.repeat(64), notes: ['Update the app from inside the app', 'Sell-first ideas look clearer', 'Safer signing key'] }));
+  if (!v || !route.request().url().includes('/updates/latest.json')) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'Not Found' });
+  return route.fulfill(json({ version: v, date: '2026-11-16', apk: `https://raw.githubusercontent.com/careersalanjantony-bit/tradebuddy/updates/TradeBuddy-${v}.apk`, size: 14680064, sha256: 'b'.repeat(64), notes: ['Update the app from inside the app', 'Sell-first ideas look clearer', 'Safer signing key'] }));
 });
 const revealAll = () => page.evaluate(() => document.querySelectorAll('[data-rv]').forEach((el) => el.classList.add('in'))).catch(() => undefined);
 const until = async (fn, ms = 15000) => {

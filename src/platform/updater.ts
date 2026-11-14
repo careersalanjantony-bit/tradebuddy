@@ -4,7 +4,7 @@ import { RELEASES_PAGE, type UpdateInfo } from '../update/update';
 
 /**
  * The app's own Android plugin (android/app/src/main/java/in/tradebuddy/app/AppUpdaterPlugin.java):
- * download a newer TradeBuddy from its releases page, check it, and open Android's installer.
+ * download a newer TradeBuddy from its updates page, check it, and open Android's installer.
  * A small shared store keeps the progress so the Home banner and the Me tab show the same thing.
  */
 
@@ -47,7 +47,7 @@ const plain = (e: unknown): string => {
 export async function startUpdate(info: UpdateInfo): Promise<void> {
   if (state.step === 'downloading' || state.step === 'installing') return;
   if (!isNative()) {
-    // in a desktop browser there is nothing to install: show the releases page
+    // in a desktop browser there is nothing to install: show the updates page
     window.open(RELEASES_PAGE, '_blank', 'noopener');
     return;
   }

@@ -27,30 +27,32 @@ inside the app (see *How it is built*).
 ready, Home shows **Update now** (also Me → App updates → Check now). The first time, Android asks once
 to "Allow from this source" for TradeBuddy; after that it is Update now → Android's **Update** button.
 Practice money, settings and login stay. Without the app, download the newest `TradeBuddy-x.y.z.apk`
-from the [releases page](https://github.com/careersalanjantony-bit/tradebuddy/releases/latest) and
+from the [updates branch](https://github.com/careersalanjantony-bit/tradebuddy/tree/updates) and
 open it — it installs over the old one. Uninstalling deletes all app data, including practice trades.
 
 **Signing key — to be replaced.** This repository was made public on 14 Nov 2026, so the signing key
 in `android/signing/` (and its password) can now be read by anyone. Android only accepts an update
 signed with the same key; with this key someone could build a fake "TradeBuddy" that installs over
-the real one *if you open their file*. Until the key is replaced: install TradeBuddy only from this
-releases page or through **Update now**. The plan is a new private key with Android's key rotation
+the real one *if you open their file*. Until the key is replaced: install TradeBuddy only from the
+updates branch or through **Update now**. The plan is a new private key with Android's key rotation
 (`apksigner --lineage`), which keeps your data and makes phones refuse files signed with the old key.
 It needs a private place to keep the new key (a private repository), never this public one.
 
 ## New in 1.5
 
-- **Updates inside the app.** Each version is published on this repository's releases page with
-  two files: `TradeBuddy-x.y.z.apk` and `latest.json` (version, link, size, SHA-256, plain-words notes).
-  The app downloads `latest.json` of the newest release (a plain file, not the rate-limited GitHub
-  API), and if it is newer shows **Update now** on Home and in Me → App updates, plus one notification.
+- **Updates inside the app.** Each version is published on this repository's `updates` branch, which
+  holds only the newest `TradeBuddy-x.y.z.apk`, `latest.json` (version, link, size, SHA-256,
+  plain-words notes) and a README. The app downloads `latest.json` from raw.githubusercontent.com (a
+  plain file, not the rate-limited GitHub API), and if it is newer shows **Update now** on Home and
+  in Me → App updates, plus one notification.
 - **Checks before installing** (the app's own Android plugin, `AppUpdaterPlugin.java`): only this
-  repository's download links are accepted; the file size and SHA-256 must match `latest.json`; the
+  repository's `updates` branch is accepted; the file size and SHA-256 must match `latest.json`; the
   file must be TradeBuddy, a newer version, and signed with the app's key. Then Android's own installer
   asks "Do you want to update this app?" — nothing installs without that tap. Android also refuses
   any file not signed with the same key.
 - **Publishing a version:** build the APK, copy it to `release/TradeBuddy-<version>.apk`, write
-  `release-notes/<version>.txt` (one plain-words line per change), push, then `npm run release`.
+  `release-notes/<version>.txt` (one plain-words line per change), push, then `npm run release`
+  (replaces the `updates` branch with the new files, one commit, so it never grows).
 
 ## New in 1.4
 
