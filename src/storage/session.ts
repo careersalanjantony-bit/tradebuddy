@@ -62,6 +62,11 @@ export interface SessionStore {
   intradayProgress: { done: number; total: number; running: boolean; at: number; error?: string };
   /** buyers meter + rising-now list (app v1.0) */
   flow: { at: number; stocks: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }>; rising: import('../data/flow').RisingRow[]; error?: string };
+  /** market breadth: Nifty 500 up vs down (app v1.4) */
+  breadth: { at: number; list: string; advanced: number; declined: number; unchanged: number; total: number };
+  /** "Falling now" sell-first ideas (app v1.4) */
+  shortIdeas: { at: number; ideas: import('../background/shortJobs').ShortIdea[]; risk: number };
+  shortAlerted: { date: string; keys: string[] };
   /** rising-fast alerts sent today (app v1.1) */
   risingAlerted: { date: string; keys: string[] };
   /** self-learning in progress (app v1.0) */

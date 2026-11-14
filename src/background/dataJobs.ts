@@ -28,6 +28,7 @@ import { syncPortfolio } from './portfolioJobs';
 import { INDEX_KEYS } from '../data/indices';
 import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
+import { refreshBreadth, scanShorts } from './shortJobs';
 
 const log = createLogger('data');
 
@@ -156,6 +157,8 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     }
     if (m.phase === 'open' || m.phase === 'pre_open') void refreshNews(now).catch(() => undefined);
     if (m.phase === 'open') void refreshFlow(now).catch(() => undefined);
+    void refreshBreadth(now).catch(() => undefined);
+    if (m.phase === 'open') void scanShorts(now).catch(() => undefined);
   } finally {
     afterRunning = false;
   }

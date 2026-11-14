@@ -49,7 +49,26 @@ const BASE = { ICICIBANK: 1400, HDFCBANK: 800, SBIN: 1050, AXISBANK: 1300, BAJFI
 const mock = { calls: [], move: 0 };
 /** the page's clock: Monday 16 Nov 2026, 10:30 IST (market open) */
 const PAGE_START = Date.parse('2026-11-16T05:00:00Z');
+const FALL = 'SUNPHARMA';
+const fallKey = () => eq.find((r) => r.trading_symbol === FALL).instrument_key;
+/** SUNPHARMA's falling morning: down 0.30%, up 0.15% in turns, heavier volume on the falling candles */
+function fallCandles() {
+  const b = BASE[FALL];
+  const out = [];
+  let c = b * 1.002;
+  for (let i = 0; i < 15; i++) {
+    const o = c;
+    c = i === 0 ? o : o * (i % 2 ? 1.0015 : 0.997);
+    const hh = String(9 + Math.floor((15 + i * 5) / 60)).padStart(2, '0');
+    const mm = String((15 + i * 5) % 60).padStart(2, '0');
+    out.push([`2026-11-16T${hh}:${mm}:00+05:30`, o, Math.max(o, c) * 1.0005, Math.min(o, c) * 0.9995, c, i % 2 || i === 0 ? 10000 : 30000, 0]);
+  }
+  mock.fallLast = c;
+  return out.reverse();
+}
+const hashPct = (k) => ([...k].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 1000) / 1000;
 const priceOf = (key) => {
+  if (symOf[key] === FALL) return Math.round((mock.fallPrice ?? BASE[FALL] * 0.988) * 20) / 20;
   const b = BASE[symOf[key]] ?? 500;
   return Math.round(b * (1.012 + mock.move) * 20) / 20;
 };
@@ -64,6 +83,8 @@ async function upstox(route) {
   if (url.pathname === '/v2/market/holidays') return route.fulfill(json({ status: 'success', data: [] }));
   if (url.pathname === '/v3/market-quote/ltp') {
     const data = {};
+    // other NSE companies (the Nifty 500 breadth): about one in three up
+    for (const k of keys) if (!symOf[k] && k.startsWith('NSE_EQ|INE')) data[`NSE_EQ:${k.slice(7)}`] = { last_price: hashPct(k) < 0.32 ? 101 : 99, instrument_token: k, ltq: 1, volume: 1000, cp: 100 };
     for (const k of keys) if (symOf[k]) data[`NSE_EQ:${symOf[k]}`] = { last_price: priceOf(k), instrument_token: k, ltq: 1, volume: 100000, cp: (BASE[symOf[k]] ?? 500) };
     return route.fulfill(json({ status: 'success', data }));
   }
@@ -93,6 +114,7 @@ async function upstox(route) {
     });
     return route.fulfill(json({ status: 'success', data }));
   }
+  if (url.pathname.startsWith('/v3/historical-candle/intraday/') && decodeURIComponent(url.pathname).includes(fallKey())) return route.fulfill(json({ status: 'success', data: { candles: fallCandles() } }));
   if (url.pathname.startsWith('/v3/historical-candle')) return route.fulfill(json({ status: 'success', data: { candles: [] } }));
   if (url.pathname.startsWith('/v2/fundamentals')) return route.fulfill(json({ status: 'success', data: [] }));
   if (/\/order|gtt/i.test(url.pathname)) mock.calls.push('ORDER-LIKE ' + url.pathname);
@@ -295,6 +317,41 @@ const risingCards = (await page.$$('.stock-card')).length;
 check('Stocks: cards with one-tap filter chips', allCards >= 10 && risingCards > 0 && risingCards <= allCards, `${allCards} → ${risingCards}`);
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-stocks.png') });
 
+console.log('── Breadth + sell-first');
+await page.click('.bottom-nav [data-nav="daytrade"]');
+await page.waitForSelector('[data-testid="breadth"]', { timeout: 20000 }).catch(() => {});
+const brText = ((await page.textContent('[data-testid="breadth"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('breadth card: Nifty 500 up vs down with what it means for today', brText.includes('Are more stocks rising or falling?') && /\d+ Nifty 500 up/.test(brText) && brText.includes('Day trade:'), brText.slice(0, 160));
+mock.fallPrice = mock.fallLast ?? BASE[FALL] * 0.988;
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+await page.waitForTimeout(800);
+await page.click('[data-testid="shorts-refresh"]');
+const idea = await until(async () => !!(await page.$(`[data-testid="falling-now"] .short-idea[data-symbol="${FALL}"]`)), 20000);
+const ideaText = ((await page.textContent(`[data-testid="falling-now"] .short-idea[data-symbol="${FALL}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const si = await page.evaluate(async () => (await chrome.storage.session.get('shortIdeas')).shortIdeas?.ideas?.[0]);
+check('Falling now: the falling stock appears with a score, sell price, buy-back price, two targets and quantity for ₹50 risk', idea && si?.plan?.risk <= 50 && si.plan.stop > si.plan.entry && si.plan.t2 < si.plan.t1 && ideaText.includes('Target 2') && ideaText.includes('after charges'), si ? `score ${si.score}, ${si.plan.qty} @ ${si.plan.entry} stop ${si.plan.stop} t1 ${si.plan.t1} t2 ${si.plan.t2}, risk ${si.plan.risk}` : 'none');
+check('each idea says why in plain words', (await page.$$(`.short-idea[data-symbol="${FALL}"] .reason-pill`)).length >= 2);
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-shorts.png'), fullPage: true });
+await page.click(`.short-idea[data-symbol="${FALL}"] [data-testid="short-practice"]`);
+const opened = await until(() => page.evaluate(async () => ((await chrome.storage.local.get('wallet')).wallet.shorts ?? []).length === 1), 8000);
+check('practice sell-first opens a short in the wallet (pretend money)', opened);
+// between target 1 and target 2 of the trade actually opened (the list may have been re-scanned since)
+const held = await page.evaluate(async () => (await chrome.storage.local.get('wallet')).wallet.shorts?.[0]);
+mock.fallPrice = (held.t1 + held.t2) / 2;
+const t1 = await until(() => page.evaluate(async () => ((await chrome.storage.local.get('wallet')).wallet.fills ?? []).some((f) => f.short && f.reason === 't1')), 30000);
+const sh = await page.evaluate(async () => (await chrome.storage.local.get('wallet')).wallet.shorts?.[0]);
+const shFills = await page.evaluate(async () => ((await chrome.storage.local.get('wallet')).wallet.fills ?? []).filter((f) => f.short).map((f) => `${f.side}:${f.qty}@${f.price}:${f.reason}`).join(' '));
+check('target 1: half bought back by itself, the rest can no longer lose', t1 && sh?.t1Done && sh.stop === sh.entry, sh ? `${sh.qty} left, stop ${sh.stop}` : `closed — ${shFills}`);
+await page.click('.bottom-nav [data-nav="practice"]');
+await page.waitForSelector('[data-testid="shorts-held"]', { timeout: 10000 }).catch(() => {});
+const heldText = ((await page.textContent('[data-testid="shorts-held"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Practice tab lists the sell-first trade still open', heldText.includes(FALL), heldText.slice(0, 120));
+await page.click('[data-testid="short-cover"]').catch(() => {});
+const covered = await until(() => page.evaluate(async () => ((await chrome.storage.local.get('wallet')).wallet.shorts ?? []).length === 0), 8000);
+check('"Buy back now" closes the rest of the sell-first trade', covered);
+mock.fallPrice = undefined;
+
 console.log('── Me: account, lock');
 await page.click('.bottom-nav [data-nav="account"]');
 await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
@@ -333,7 +390,7 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: buy ideas, rising fast, closed-app checks and sounds — all on by default', switches.length === 4 && switches.every(Boolean), JSON.stringify(switches));
+check('Alerts card: buy ideas, rising fast, sell-first ideas, closed-app checks and sounds — all on by default', switches.length === 5 && switches.every(Boolean), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });

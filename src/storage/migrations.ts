@@ -90,6 +90,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (account === undefined) await kv.set({ account: null });
     },
   },
+  {
+    to: 9,
+    description: 'app v1.4: sell-first past test',
+    async up(kv) {
+      const { shortTest } = await kv.get(['shortTest']);
+      if (shortTest === undefined) await kv.set({ shortTest: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

@@ -8,7 +8,7 @@ import { notify } from '../notify/chrome';
 import { playSound } from '../notify/sound';
 import { getLocal, setLocal } from '../storage/local';
 import { createQueue } from '../lib/queue';
-import { cancelOrder, newWallet, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type Holding, type MarketCtx, type OrderRequest, type PaperOrder, type WalletState } from '../wallet/wallet';
+import { cancelOrder, coverShort, newWallet, openShort, placeOrder, type ShortRequest, processWallet, sellFromBackground, updateHolding, walletSummary, type Holding, type MarketCtx, type OrderRequest, type PaperOrder, type WalletState } from '../wallet/wallet';
 
 /**
  * Practice money (v1.0): stores the wallet, places orders at live prices and runs the waiting
@@ -65,7 +65,7 @@ export function walletReset(startCash: number, now = Date.now()): Promise<void> 
 /** On every price update. */
 export async function checkWallet(now = Date.now()): Promise<number> {
   const w0 = await getLocal('wallet');
-  if (!w0 || (!w0.holdings.length && !w0.orders.some((o) => o.status === 'open'))) return 0;
+  if (!w0 || (!w0.holdings.length && !w0.orders.some((o) => o.status === 'open') && !(w0.shorts ?? []).length)) return 0;
   const events = await mutate(async (w) => {
     const quotes = await getQuotes();
     const r = processWallet(w, quotes, await marketCtx(now));
@@ -95,6 +95,28 @@ export function walletApplyBackground(hits: Array<{ key: string; price: number; 
       }
     }
     return { wallet, result: n };
+  });
+}
+
+/** Practice sell-first: sell now at the live price (app v1.4). */
+export function walletShort(req: ShortRequest, now = Date.now()): Promise<{ price: number }> {
+  return mutate(async (w) => {
+    const quote = (await getQuotes())[req.key];
+    const r = openShort(w, req, quote ? { ltp: quote.ltp, prevClose: quote.prevClose, fetchedAt: quote.fetchedAt } : undefined, await marketCtx(now));
+    if (!r.ok) throw new Error(r.error);
+    log.info(`Practice sell-first ${req.qty} ${req.symbol} @ ${r.fill!.price}`);
+    return { wallet: r.wallet, result: { price: r.fill!.price } };
+  });
+}
+
+/** Practice: buy back a sell-first trade now. */
+export function walletCover(key: string, now = Date.now()): Promise<{ pnl: number }> {
+  return mutate(async (w) => {
+    const q = (await getQuotes())[key];
+    const ctx = await marketCtx(now);
+    const r = coverShort(w, key, q?.ltp ?? 0, ctx, 'order');
+    if (!r.fill) throw new Error('No price for this stock yet — wait a few seconds.');
+    return { wallet: r.wallet, result: { pnl: r.fill.pnl ?? 0 } };
   });
 }
 

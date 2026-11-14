@@ -119,6 +119,8 @@ export interface Settings {
     slippagePct: number;
     /** stop for the day after this many losing day trades */
     maxLossesPerDay: number;
+    /** most you want to lose on one sell-first trade, ₹ (app v1.4) */
+    shortRiskInr?: number;
     /** notification + sound for new signals */
     alerts: boolean;
   };
@@ -139,6 +141,8 @@ export interface Settings {
     rising: boolean;
     /** app v1.1: keep checking about every 15 minutes when the app is closed */
     background: boolean;
+    /** app v1.4: alert about strong sell-first (short) ideas, max 3 a day */
+    shorts?: boolean;
   };
   data: {
     candleHistoryYears: number;
@@ -281,6 +285,8 @@ export interface LocalStore {
   mlModel: import('../ml/learn').MlReport | null;
   /** live signals with the clues only known live (buyers meter, pace, news mood), for future learning */
   mlJournal: Array<{ date: string; key: string; symbol: string; side: 'long' | 'short'; barT: number; entry: number; stop: number; target: number | null; chance: number | null; buyers: string | null; pace: number | null; news: string | null; late: boolean }>;
+  /** past test of the sell-first (short) rules (app v1.4) */
+  shortTest: (import('../daytrade/shortScan').ShortTestReport & { at: number }) | null;
   /** the app's own profile and lock (app v1.3); null until set up */
   account: import('../account/account').AccountState | null;
   /** practice money (app v1.0); null until first used */

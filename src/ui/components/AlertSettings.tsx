@@ -20,6 +20,13 @@ export function AlertSettings({ settings }: { settings: Settings }) {
       set: (v) => updateSettings({ notifications: { rising: v } }),
     },
     {
+      id: 'shorts',
+      on: settings.notifications.shorts ?? true,
+      title: 'Sell-first ideas',
+      about: 'A stock falling clearly (score 75+) with an entry, buy-back price and two targets. At most 3 a day.',
+      set: (v) => updateSettings({ notifications: { shorts: v } }),
+    },
+    {
       id: 'background',
       on: settings.notifications.background,
       title: 'Keep checking when the app is closed',

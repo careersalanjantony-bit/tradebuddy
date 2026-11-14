@@ -11,7 +11,7 @@ import { useLocal, useNow } from '../hooks';
 
 const signed = (x: number, d = 0) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), d)}`;
 const tone = (x: number) => (x > 0 ? 'ok-text' : x < 0 ? 'err-text' : 'muted');
-const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety net', target: 'take-profit', 'day-end': '3:10 pm' };
+const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety net', target: 'take-profit', 'day-end': '3:10 pm', t1: 'target 1' };
 
 /** Practice money: ₹10 lakh of pretend money, live prices, real charges, no orders to Upstox. */
 export function PracticeScreen({ go }: { go: Go }) {
@@ -116,6 +116,37 @@ export function PracticeScreen({ go }: { go: Go }) {
         )}
       </section>
 
+      {s.shorts.length > 0 && (
+        <section class="card" data-testid="shorts-held">
+          <h2>Sold first — buy back today</h2>
+          {s.shorts.map((p) => (
+            <div class="holding" data-symbol={p.symbol}>
+              <div class="row">
+                <b>{p.symbol}</b>
+                <span class="chip day sell">▼ sold first</span>
+                <span class="spacer" />
+                <span class="big-num">{p.ltp ? `₹${formatNumberIN(p.ltp)}` : '—'}</span>
+              </div>
+              <div class="row small">
+                <span class="muted">
+                  {p.qty} shares sold at ₹{formatNumberIN(p.entry)}
+                </span>
+                <span class="spacer" />
+                <span class={tone(p.pnl)}>
+                  {signed(p.pnl)} ({formatPct(p.pnlPct, 2)})
+                </span>
+              </div>
+              <div class="tiny muted">
+                Buy back if it rises to ₹{formatNumberIN(p.stop)}
+                {p.t1Done ? ' (target 1 done — the rest can no longer lose)' : ` · target 1 ₹${formatNumberIN(p.t1)} (half)`} · target 2 ₹{formatNumberIN(p.t2)} · by 3:10 pm — automatic
+              </div>
+              <button class="btn small buy" type="button" data-testid="short-cover" style={{ marginTop: '4px' }} onClick={() => void callBackground('wallet:cover', { key: p.key }).catch(() => undefined)}>
+                Buy back now
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
       {openOrders.length > 0 && (
         <section class="card" data-testid="open-orders">
           <h2>Waiting orders</h2>

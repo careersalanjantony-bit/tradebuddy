@@ -19,6 +19,7 @@ import { openTrade } from '../components/TradeSheet';
 import { ChanceRing } from '../components/Motion';
 import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
+import { BreadthCard, FallingNowCard } from '../components/Shorts';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -127,7 +128,9 @@ export function DayTradeScreen({ go }: { go: Go }) {
         <>
           <DayPlan now={now} />
           <MoodLine />
+          <BreadthCard />
           <SignalsCard amount={amount} slots={slots} />
+          <FallingNowCard />
           <RisingNowCard />
           <LearningCard go={go} />
           <DayTradesCard />

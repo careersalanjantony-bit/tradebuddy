@@ -20,6 +20,7 @@ export async function trackedKeys(): Promise<string[]> {
   const wallet = await getLocal('wallet');
   for (const h of wallet?.holdings ?? []) keys.add(h.key);
   for (const o of wallet?.orders ?? []) if (o.status === 'open') keys.add(o.key);
+  for (const p of wallet?.shorts ?? []) keys.add(p.key);
   return [...keys];
 }
 

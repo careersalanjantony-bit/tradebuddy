@@ -69,6 +69,10 @@ export interface ApiMap {
   /** practice money (app v1.0) */
   'wallet:order': { req: import('../wallet/wallet').OrderRequest; res: { order: import('../wallet/wallet').PaperOrder; filledAt?: number } };
   'wallet:cancel': { req: { id: string }; res: { done: true } };
+  /** practice sell-first (app v1.4) */
+  'wallet:short': { req: import('../wallet/wallet').ShortRequest; res: { price: number } };
+  'wallet:cover': { req: { key: string }; res: { pnl: number } };
+  'shorts:scan': { req: undefined; res: { ideas: number } };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>> }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };

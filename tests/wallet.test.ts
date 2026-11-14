@@ -160,3 +160,32 @@ describe('practice wallet', () => {
     expect(sellFromBackground(r.wallet, K, 1031, ctx(), 'target').fill).toBeNull();
   });
 });
+
+describe('practice sell-first (short) trades', () => {
+  it('sell first, half bought back at target 1 (rest can no longer lose), rest at target 2; result after charges', async () => {
+    const { openShort, processWallet: pw, walletSummary: ws } = await import('../src/wallet/wallet');
+    const r = openShort(newWallet(T0), { key: K, symbol: 'ABC', qty: 50, stop: 1010, t1: 990, t2: 980 }, q(1000), ctx());
+    if (!r.ok) throw new Error(r.error);
+    expect(r.fill).toMatchObject({ side: 'sell', short: true, qty: 50 });
+    expect(r.wallet.cash).toBeCloseTo(WALLET_START - r.fill!.price * 50, 2);
+    const a = pw(r.wallet, { [K]: q(989.9) }, ctx());
+    expect(a.events[0]!.fill).toMatchObject({ side: 'buy', reason: 't1', qty: 25 });
+    expect(a.wallet.shorts![0]).toMatchObject({ qty: 25, t1Done: true, stop: r.fill!.price });
+    const b = pw(a.wallet, { [K]: q(979) }, ctx());
+    expect(b.events[0]!.fill).toMatchObject({ reason: 'target', qty: 25 });
+    expect(b.wallet.shorts).toHaveLength(0);
+    const s = ws(b.wallet, {}, '2026-11-16');
+    expect(s.trades).toBe(2);
+    expect(s.totalPnl).toBeGreaterThan(25 * 9 + 25 * 19 - 120);
+  });
+
+  it('stop: bought back when the price rises to it; 3:10 pm closes it; needs the market open', async () => {
+    const { openShort, processWallet: pw } = await import('../src/wallet/wallet');
+    const r = openShort(newWallet(T0), { key: K, symbol: 'ABC', qty: 10, stop: 1010, t1: 990, t2: 980 }, q(1000), ctx());
+    if (!r.ok) throw new Error(r.error);
+    expect(pw(r.wallet, { [K]: q(1011) }, ctx()).events[0]!.fill).toMatchObject({ reason: 'stop', qty: 10 });
+    expect(pw(r.wallet, { [K]: q(1001) }, ctx({ t: 15 * 60 + 10 })).events[0]!.fill.reason).toBe('day-end');
+    expect(openShort(newWallet(T0), { key: K, symbol: 'ABC', qty: 10, stop: 1010, t1: 990, t2: 980 }, q(1000), ctx({ open: false })).ok).toBe(false);
+    expect(openShort(newWallet(T0), { key: K, symbol: 'ABC', qty: 10, stop: 990, t1: 980, t2: 970 }, q(1000), ctx()).ok).toBe(false);
+  });
+});

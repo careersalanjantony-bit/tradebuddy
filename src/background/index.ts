@@ -40,6 +40,8 @@ import { getSession, setSession } from '../storage/session';
 import { walletCancel, walletOrder, walletReset, walletUpdate } from './walletJobs';
 import { WALLET_START } from '../wallet/wallet';
 import { learnIfDue, learnNow } from './mlJobs';
+import { walletCover, walletShort } from './walletJobs';
+import { scanShorts } from './shortJobs';
 
 initLogging('background');
 const log = createLogger('bg');
@@ -266,6 +268,13 @@ const handlers: Handlers = {
     const r = await learnNow();
     return r ? { samples: r.samples, passed: r.passed } : { samples: 0, passed: false };
   },
+  'wallet:short': async (req) => {
+    const r = await walletShort(req);
+    void pollAndEvaluate(true).catch(() => undefined);
+    return r;
+  },
+  'wallet:cover': async ({ key }) => walletCover(key),
+  'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'wallet:cancel': async ({ id }) => {
     await walletCancel(id);
     return { done: true };

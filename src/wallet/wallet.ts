@@ -25,7 +25,7 @@ export const DAY_EXIT_T = 15 * 60 + 10;
 export type OrderSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit';
 export type OrderStatus = 'open' | 'filled' | 'cancelled' | 'rejected';
-export type FillReason = 'order' | 'stop' | 'target' | 'day-end';
+export type FillReason = 'order' | 'stop' | 'target' | 'day-end' | 't1';
 
 export interface PaperOrder {
   id: string;
@@ -87,6 +87,8 @@ export interface Fill {
   charges?: number;
   /** sells only: the average buy price of the sold shares */
   buyPrice?: number;
+  /** part of a sell-first (short) trade: 'sell' opens it, 'buy' buys back */
+  short?: boolean;
 }
 
 export interface WalletState {
@@ -99,6 +101,28 @@ export interface WalletState {
   fills: Fill[];
   /** value of the wallet at the end of each day it was used (for the chart on Home) */
   equity?: Array<{ date: string; total: number }>;
+  /** sell-first (short) positions, same day only (app v1.4) */
+  shorts?: ShortPos[];
+}
+
+/**
+ * A practice short: shares sold first at `entry`, to be bought back the same day. The value at the
+ * entry price is set aside from the cash (no borrowing in practice), returned with the result.
+ */
+export interface ShortPos {
+  key: string;
+  symbol: string;
+  qty: number;
+  /** shares when opened (half are bought back at target 1) */
+  origQty: number;
+  entry: number;
+  openedAt: number;
+  date: string;
+  stop: number;
+  t1: number;
+  t2: number;
+  t1Done: boolean;
+  source?: string;
 }
 
 export interface WalletQuote {
@@ -313,6 +337,51 @@ export function updateHolding(w: WalletState, key: string, patch: Partial<Pick<H
   return { ...w, holdings: w.holdings.map((h) => (h.key === key ? { ...h, ...patch } : h)) };
 }
 
+export interface ShortRequest {
+  key: string;
+  symbol: string;
+  qty: number;
+  stop: number;
+  t1: number;
+  t2: number;
+  source?: string;
+}
+
+/** Sell first at the live price (market hours only, before 3:10 pm). */
+export function openShort(w: WalletState, req: ShortRequest, quote: WalletQuote | undefined, ctx: MarketCtx): PlaceResult {
+  const qty = Math.floor(req.qty);
+  if (!ctx.open || ctx.t >= DAY_EXIT_T) return { ok: false, error: 'Sell-first trades are only possible while the market is open, before 3:10 pm.' };
+  if (!(qty >= 1)) return { ok: false, error: 'Enter how many shares (1 or more).' };
+  if ((w.shorts ?? []).some((x) => x.key === req.key)) return { ok: false, error: `You already sold ${req.symbol} first today — buy it back before selling it again.` };
+  if (!fresh(quote, ctx.now)) return { ok: false, error: `The price of ${req.symbol} is not up to date — wait a few seconds and try again.` };
+  const price = tickDown(quote.ltp * (1 - SLIPPAGE));
+  if (!(req.stop > price)) return { ok: false, error: 'The buy-back-if-it-rises price must be above the current price.' };
+  if (!(req.t1 < price && req.t2 < req.t1)) return { ok: false, error: 'The targets must be below the current price.' };
+  const margin = price * qty;
+  if (margin > availableCash(w, { [req.key]: quote })) return { ok: false, error: `Not enough practice money: this needs about ₹${Math.round(margin).toLocaleString('en-IN')} set aside.` };
+  const order: PaperOrder = { id: newId('O', ctx.now), key: req.key, symbol: req.symbol, side: 'sell', qty, type: 'market', status: 'filled', createdAt: ctx.now, date: ctx.today, filledAt: ctx.now, fillPrice: price, ...(req.source ? { source: req.source } : {}) };
+  const fill: Fill = { id: newId('F', ctx.now), orderId: order.id, key: req.key, symbol: req.symbol, side: 'sell', qty, price, at: ctx.now, date: ctx.today, reason: 'order', short: true };
+  const pos: ShortPos = { key: req.key, symbol: req.symbol, qty, origQty: qty, entry: price, openedAt: ctx.now, date: ctx.today, stop: req.stop, t1: req.t1, t2: req.t2, t1Done: false, ...(req.source ? { source: req.source } : {}) };
+  return { ok: true, wallet: { ...w, cash: round2(w.cash - margin), orders: [...w.orders, order], fills: [...w.fills, fill], shorts: [...(w.shorts ?? []), pos] }, order, fill };
+}
+
+/** Buys back `qty` shares of a short (all when omitted) at the live price. */
+export function coverShort(w: WalletState, key: string, livePrice: number, ctx: MarketCtx, reason: FillReason, qty?: number): { wallet: WalletState; fill: Fill | null } {
+  const shorts = [...(w.shorts ?? [])];
+  const i = shorts.findIndex((x) => x.key === key);
+  if (i < 0 || !(livePrice > 0)) return { wallet: w, fill: null };
+  const p = shorts[i]!;
+  const n = Math.min(p.qty, Math.max(1, Math.floor(qty ?? p.qty)));
+  const price = tickUp(livePrice * (1 + SLIPPAGE));
+  const charges = round2(intradayCharges(price * n, p.entry * n));
+  const pnl = round2((p.entry - price) * n - charges);
+  const left = p.qty - n;
+  if (left > 0) shorts[i] = { ...p, qty: left, ...(reason === 't1' ? { t1Done: true, stop: p.entry } : {}) };
+  else shorts.splice(i, 1);
+  const fill: Fill = { id: newId('F', ctx.now), orderId: newId('O', ctx.now), key, symbol: p.symbol, side: 'buy', qty: n, price, at: ctx.now, date: ctx.today, reason, pnl, charges, buyPrice: p.entry, short: true };
+  return { wallet: { ...w, cash: round2(w.cash + p.entry * n + (p.entry - price) * n - charges), shorts, fills: [...w.fills, fill] }, fill };
+}
+
 export interface WalletEvent {
   fill: Fill;
   /** plain-words reason for the notification */
@@ -336,7 +405,46 @@ export function processWallet(w: WalletState, quotes: Record<string, WalletQuote
       return expired ? { ...o, status: 'cancelled' as const, note: 'Not filled before the market closed.' } : o;
     }),
   };
-  if (!ctx.open) return { wallet, events };
+  // a sell-first trade left open after the close is bought back at its last price (it cannot be kept overnight)
+  if (!ctx.open) {
+    for (const p of [...(wallet.shorts ?? [])]) {
+      if (p.date < ctx.today || ctx.t >= 15 * 60 + 30) {
+        const q = quotes[p.key];
+        const r = coverShort(wallet, p.key, q?.ltp ?? p.entry, ctx, 'day-end');
+        wallet = r.wallet;
+        if (r.fill) events.push({ fill: r.fill, why: 'a sell-first trade must be closed the same day' });
+      }
+    }
+    return { wallet, events };
+  }
+  for (const p of [...(wallet.shorts ?? [])]) {
+    const q = quotes[p.key];
+    if (!fresh(q, ctx.now)) continue;
+    if (q.ltp >= p.stop) {
+      const r = coverShort(wallet, p.key, q.ltp, ctx, 'stop');
+      wallet = r.wallet;
+      if (r.fill) events.push({ fill: r.fill, why: p.t1Done ? 'the price came back to where you sold — the rest bought back at no loss' : 'the buy-back-if-it-rises price was reached' });
+      continue;
+    }
+    if (ctx.t >= DAY_EXIT_T) {
+      const r = coverShort(wallet, p.key, q.ltp, ctx, 'day-end');
+      wallet = r.wallet;
+      if (r.fill) events.push({ fill: r.fill, why: 'sell-first trade closed at 3:10 pm' });
+      continue;
+    }
+    if (q.ltp <= p.t2) {
+      const r = coverShort(wallet, p.key, q.ltp, ctx, 'target');
+      wallet = r.wallet;
+      if (r.fill) events.push({ fill: r.fill, why: 'target 2 reached' });
+      continue;
+    }
+    if (!p.t1Done && q.ltp <= p.t1) {
+      const half = Math.floor(p.origQty / 2);
+      const r = half >= 1 && half < p.qty ? coverShort(wallet, p.key, q.ltp, ctx, 't1', half) : coverShort(wallet, p.key, q.ltp, ctx, 'target');
+      wallet = r.wallet;
+      if (r.fill) events.push({ fill: r.fill, why: half >= 1 && half < p.qty ? 'target 1 reached — half bought back, the rest can no longer lose' : 'target reached' });
+    }
+  }
 
   for (const o of wallet.orders) {
     if (o.status !== 'open') continue;
@@ -399,6 +507,8 @@ export interface WalletSummary {
   trades: number;
   wins: number;
   holdings: HoldingView[];
+  /** open sell-first trades at live prices */
+  shorts: Array<ShortPos & { ltp: number | null; pnl: number; pnlPct: number }>;
 }
 
 export function walletSummary(w: WalletState, quotes: Record<string, WalletQuote | undefined>, today: string): WalletSummary {
@@ -415,9 +525,16 @@ export function walletSummary(w: WalletState, quotes: Record<string, WalletQuote
     }
     return { ...h, ltp, value: round2(value), pnl: round2(pnl), pnlPct: h.avgPrice > 0 ? ((px / h.avgPrice) - 1) * 100 : 0, todayPnl: round2(todayPnl) };
   });
-  const value = holdings.reduce((s, h) => s + h.value, 0);
+  const shortViews = (w.shorts ?? []).map((p) => {
+    const q = quotes[p.key];
+    const ltp = q && q.ltp > 0 ? q.ltp : null;
+    const px = ltp ?? p.entry;
+    return { ...p, ltp, pnl: round2((p.entry - px) * p.qty), pnlPct: ((p.entry - px) / p.entry) * 100 };
+  });
+  const shortValue = shortViews.reduce((a, p) => a + p.entry * p.qty + p.pnl, 0);
+  const value = holdings.reduce((s, h) => s + h.value, 0) + shortValue;
   const invested = holdings.reduce((s, h) => s + h.avgPrice * h.qty, 0);
-  const sells = w.fills.filter((f) => f.side === 'sell');
+  const sells = w.fills.filter((f) => f.pnl !== undefined);
   const realizedToday = sells.filter((f) => f.date === today).reduce((s, f) => s + (f.pnl ?? 0), 0);
   const total = w.cash + value;
   return {
@@ -428,12 +545,13 @@ export function walletSummary(w: WalletState, quotes: Record<string, WalletQuote
     total: round2(total),
     totalPnl: round2(total - w.startCash),
     totalPct: ((total / w.startCash) - 1) * 100,
-    todayPnl: round2(realizedToday + holdings.reduce((s, h) => s + h.todayPnl, 0)),
+    todayPnl: round2(realizedToday + holdings.reduce((s, h) => s + h.todayPnl, 0) + shortViews.reduce((a, p) => a + p.pnl, 0)),
     realizedToday: round2(realizedToday),
     realizedAll: round2(sells.reduce((s, f) => s + (f.pnl ?? 0), 0)),
     trades: sells.length,
     wins: sells.filter((f) => (f.pnl ?? 0) > 0).length,
     holdings,
+    shorts: shortViews,
   };
 }
 

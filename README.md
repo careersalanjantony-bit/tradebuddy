@@ -26,6 +26,31 @@ inside the app (see *How it is built*).
 **Updates:** install the newer APK over the old one; data is kept (every build is signed with the
 same key, `android/signing/`). Uninstalling deletes all app data, including practice trades.
 
+## New in 1.4
+
+- **Are more stocks rising or falling?** (Home and Day trade): every minute during market hours the
+  app counts how many Nifty 500 stocks are up and down (±0.05 % counts as unchanged) and says in plain
+  words what that means for a day trade, a few-day hold and selling first.
+- **Falling now — sell-first ideas** (Day trade): every 5 minutes from 9:35 to 2:30 the app takes the
+  15 stocks falling most (below today's open, more than 0.3 % down, Nifty 100 or ≥ ₹20 cr traded),
+  downloads today's 5-minute candles and scores each finished candle out of 100: below the day's
+  average price (VWAP), below EMA 9, lower highs, a strong red candle, a bearish engulfing candle,
+  a shooting star, heavy selling volume, RSI 25–45 (very oversold counts against), below today's open
+  and yesterday's close. Score 60+ is listed, highest first, with: **sell first at**, **buy back if it
+  rises to** (above the last 3 highs and VWAP, 0.3–1.2 % away), **target 1** (1×, half the shares)
+  and **target 2** (2×, the rest), **quantity** so the loss at the stop stays within your chosen risk
+  (₹50 / ₹100 / ₹200), and the result **after Upstox intraday charges**. Score 75+ sends an alert
+  (at most 3 a day; switch "Sell-first ideas" under Alerts). A warning shows when most stocks are rising.
+- **Past test of the sell-first rules** on the stored 5-minute history (Nifty 100, at most 3 trades a
+  day, same split into older and newest days as the buy rules). Until it passes, the card says
+  "use practice only".
+- **Practice sell-first:** the practice wallet can now sell first. Half is bought back at target 1
+  (the rest's stop moves to the entry so it can no longer lose), the rest at target 2, at the stop,
+  or at 3:10 pm. A sell-first trade is never kept overnight. Practice tab → "Sold first — buy back
+  today" with a "Buy back now" button.
+- Selling first is **not** lower risk than holding: it must close the same day, a sudden jump up can
+  pass the stop, and with ₹50 risk the charges (≈ ₹10–45 a trade, more when the stop is close) are a big part of each trade.
+
 ## New in 1.3
 
 - **Login to the app:** after the guide you create a profile (name + colour) and an optional
