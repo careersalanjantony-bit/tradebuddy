@@ -194,7 +194,11 @@ export function App() {
         <Disclaimer />
       </div>
       <nav class="bottom-nav" aria-label="Main screens" style={{ '--tabs': MAIN.length, '--tab': Math.max(0, MAIN.findIndex((s) => s.id === activeMain)) }}>
-        <span class="nav-pill" aria-hidden="true" />
+        <span class="nav-pill" aria-hidden="true">
+          <span class="pill-icon" key={activeMain}>
+            <Icon name={(MAIN.find((s) => s.id === activeMain)?.icon ?? 'home') as IconName} size={26} />
+          </span>
+        </span>
         {MAIN.map((s) => (
           <button type="button" data-nav={s.id} aria-current={activeMain === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
             <span class="ic">
