@@ -98,6 +98,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (shortTest === undefined) await kv.set({ shortTest: null });
     },
   },
+  {
+    to: 10,
+    description: 'app v1.5: in-app updates',
+    async up(kv) {
+      const { appUpdate } = await kv.get(['appUpdate']);
+      if (appUpdate === undefined) await kv.set({ appUpdate: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

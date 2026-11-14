@@ -82,5 +82,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     mlJournal: [],
     account: null,
     shortTest: null,
+    appUpdate: null,
   };
 }

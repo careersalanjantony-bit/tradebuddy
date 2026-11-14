@@ -14,6 +14,7 @@ import { AnimatedNumber, toast } from '../components/Motion';
 import { useQuotes } from '../data';
 import { useLocal, useNow, useSettings } from '../hooks';
 import { MoreScreen } from './More';
+import { UpdateCard } from '../components/Update';
 
 declare const __APP_VERSION__: string;
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
@@ -201,6 +202,8 @@ export function AccountScreen({ go, unread }: { go: Go; unread: number }) {
       <AlertSettings settings={settings} />
 
       <MoreScreen go={go} unread={unread} simple={settings.ui.mode === 'simple'} />
+
+      <UpdateCard />
 
       <section class="card" data-testid="account-data">
         <h2>Your data</h2>

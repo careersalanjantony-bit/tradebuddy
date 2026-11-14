@@ -137,6 +137,12 @@ await page.route('https://nsearchives.nseindia.com/**', (route) =>
     ? route.fulfill({ status: 200, headers: { 'content-type': 'text/csv', 'access-control-allow-origin': '*' }, body: nifty50Csv })
     : route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }),
 );
+// in-app updates: no release yet until the test publishes a pretend 9.9.9
+await page.route('https://github.com/careersalanjantony-bit/tradebuddy/releases/**', (route) => {
+  const v = mock.updateVersion;
+  if (!v || !route.request().url().includes('/latest/download/latest.json')) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'Not Found' });
+  return route.fulfill(json({ version: v, date: '2026-11-16', apk: `https://github.com/careersalanjantony-bit/tradebuddy/releases/download/v${v}/TradeBuddy-${v}.apk`, size: 14680064, sha256: 'b'.repeat(64), notes: ['Update the app from inside the app', 'Sell-first ideas look clearer', 'Safer signing key'] }));
+});
 const revealAll = () => page.evaluate(() => document.querySelectorAll('[data-rv]').forEach((el) => el.classList.add('in'))).catch(() => undefined);
 const until = async (fn, ms = 15000) => {
   const t0 = Date.now();
@@ -352,11 +358,23 @@ const covered = await until(() => page.evaluate(async () => ((await chrome.stora
 check('"Buy back now" closes the rest of the sell-first trade', covered);
 mock.fallPrice = undefined;
 
+console.log('── In-app updates');
+mock.updateVersion = '9.9.9';
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'update:check', payload: undefined }));
+await page.click('.bottom-nav [data-nav="today"]');
+const banner = await until(async () => !!(await page.$('[data-testid="update-banner"]')), 8000);
+const bannerText = ((await page.textContent('[data-testid="update-banner"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Home shows "New version 9.9.9 is ready" with what is new and an Update now button', banner && bannerText.includes('New version 9.9.9 is ready') && bannerText.includes('Update the app from inside the app') && bannerText.includes('Update now · 14.0 MB'), bannerText.slice(0, 160));
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-update.png') });
+
 console.log('── Me: account, lock');
 await page.click('.bottom-nav [data-nav="account"]');
 await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
 const accText = ((await page.textContent('[data-testid="account"]')) ?? '').replace(/\s+/g, ' ');
 check('Me: profile, practice record, Upstox connection, security, look, alerts, data', ['Alan Joy', 'Your practice record', 'Best trade', 'Upstox connection', 'App lock', 'Look', 'Alerts', 'Your data', 'Copy backup'].every((t) => accText.includes(t)), accText.slice(0, 120));
+const updText = ((await page.textContent('[data-testid="account-update"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Me: App updates card shows your version, that 9.9.9 is ready, and Check now', /You have version \d+\.\d+\.\d+/.test(updText) && updText.includes('Version 9.9.9 is ready') && updText.includes('Check now'), updText.slice(0, 140));
+mock.updateVersion = undefined;
 await page.click('[data-theme-choice="light"]');
 check('theme switches to light', await until(() => page.evaluate(() => document.documentElement.getAttribute('data-theme') === 'light'), 5000));
 await page.click('[data-theme-choice="dark"]');

@@ -13,6 +13,7 @@ import { openTrade } from '../components/TradeSheet';
 import { meterTone } from '../components/RisingNow';
 import { signalState } from '../../daytrade/live';
 import { BreadthCard } from '../components/Shorts';
+import { UpdateBanner } from '../components/Update';
 
 /**
  * Home (app v1.1): one glance — your practice money, the single best idea right now, what is rising,
@@ -236,6 +237,7 @@ export function HomeScreen({ go }: { go: Go }) {
         <MarketPill />
       </header>
       <SetupNudge go={go} />
+      <UpdateBanner />
       <WalletHero go={go} />
       <BestIdea go={go} />
       <RisingCarousel />

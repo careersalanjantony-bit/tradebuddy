@@ -1,7 +1,7 @@
 {
   "name": "tradebuddy",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "TradeBuddy: personal Android app for NSE day and swing trading ideas, practice money and alerts. Read-only towards the broker.",
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "smoke": "node scripts/app-smoke.mjs",
     "cap:sync": "npm run build && npx cap sync android",
     "apk": "node scripts/build-apk.mjs",
+    "release": "node scripts/release.mjs",
     "smoke:extension": "node scripts/smoke-test.mjs"
   },
   "dependencies": {

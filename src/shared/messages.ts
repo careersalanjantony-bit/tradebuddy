@@ -73,6 +73,7 @@ export interface ApiMap {
   'wallet:short': { req: import('../wallet/wallet').ShortRequest; res: { price: number } };
   'wallet:cover': { req: { key: string }; res: { pnl: number } };
   'shorts:scan': { req: undefined; res: { ideas: number } };
+  'update:check': { req: undefined; res: import('../update/update').UpdateState };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>> }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };

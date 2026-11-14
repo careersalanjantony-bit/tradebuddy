@@ -1,0 +1,3 @@
+Update TradeBuddy from inside the app: when a new version is ready, Home shows "Update now" and the Me tab has an "App updates" card.
+Sell-first ideas: the score circle and the "most I want to lose" buttons look tidier.
+The Practice tab lists sell-first trades still open, with a "Buy back now" button.
