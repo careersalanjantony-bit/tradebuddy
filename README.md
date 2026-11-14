@@ -38,6 +38,41 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.6
+
+- **Black and red look:** deep black screens, red accents and gradients everywhere, a slow red glow
+  behind the app, a light sweep across the main buttons, a glowing tab circle, cards that flash red as
+  they slide in, live pulsing dots. Everyone is switched to the dark theme once (Me → Look still works).
+- **Auto-trader (Practice → Auto-trader, and a live card on Home):** ₹50 lakh of pretend money that
+  trades by itself during market hours, with no taps. Every minute from 9:30 it takes the ideas the
+  app already finds — day-trade buy signals, "Rising today", the top picks and the "Falling now"
+  sell-first ideas — and for each one works out a chance of making money and the expected result
+  after charges (in R: 1 R = the planned loss at the safety net). It only takes ideas worth more than
+  their risk, best first.
+  - **Size (it decides):** about 0.5 % of its money at risk per trade (0.15 % unsure … 0.75 %
+    confident), never more than 20 % of its money in one stock; at most 6 open trades and 10 new a
+    day; no new same-day trades after 2:30; it stops for the day after losing 1.5 %.
+  - **Managing trades:** safety net and target on every trade; once 1 R up the safety net moves to
+    the buy price; same-day trades close by 3:10, top picks after 10 market days, sell-first trades
+    buy back half at target 1. If the phone stopped the app during market hours, it replays the
+    5-minute candles it missed (worst price first) so a hit safety net counts as hit.
+  - **Learning (`src/bot/brain.ts`):** a small logistic model on 13 inputs (kind of trade, the
+    studies' chance, today's move, buyers vs sellers, the whole market, time of day, news, distance
+    from the day's average price, size of the safety net). It starts out equal to the studies'
+    chance and takes one learning step after every finished trade (bigger surprises teach a little
+    more), pulled gently back toward the studies so a few lucky trades do not swing it. A scorecard
+    per kind of trade sizes down kinds that lose and pauses a kind after 10+ trades under 35 % wins
+    with a loss. About 1 decision in 8 is a small test trade so it keeps learning.
+  - **On screen:** money, today, overall, win rate, open trades moving live on a bar (safety net ←
+    price → target), "What it did" timeline, finished trades with the lesson each one taught, "What
+    it has learned" in plain words, a pause switch and resets (money only, or everything).
+  - Pretend money only — it never sends anything to Upstox.
+- **Stocks → "For short selling":** stocks that look most likely to fall today, scored on their
+  trend (20/50-day averages, 4-week move, lower highs, RSI, heavy selling), today's opening gap, live
+  price below the open and today's news. The chance shown is **measured**: the same score on every
+  past day of every stock in the list (about a year), and how often those days ended ≥ 0.3 % below
+  their open. Typical results are 40–60 %, not 80–90 %; the screen says so.
+
 ## New in 1.5
 
 - **Updates inside the app.** Each version is published on this repository's `updates` branch, which

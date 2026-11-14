@@ -120,7 +120,7 @@ export function App() {
       content = <DayTradeScreen go={go} />;
       break;
     case 'practice':
-      content = <PracticeScreen go={go} />;
+      content = <PracticeScreen go={go} view={param} />;
       break;
     case 'watchlist':
       content = <WatchlistScreen go={go} />;

@@ -15,6 +15,7 @@ import { suggestBuys } from '../../advisor/suggest';
 import { explainSnapshot } from '../../advisor/explain';
 import { INDEX_LABEL, INDEX_ORDER, inPriceRange, type UniverseIndex } from '../../data/universeParse';
 import { istDate } from '../../lib/time';
+import { ShortSellList } from '../components/ShortSell';
 
 type SortKey = 'mine' | 'setup' | 'change' | 'rsi';
 const SETUP_ORDER = ['Breakout', 'Pullback in uptrend', 'Clean uptrend', 'Recovering — trend not confirmed', 'No setup'];
@@ -43,7 +44,7 @@ export function WatchlistScreen({ go }: { go: Go }) {
 
 const VERDICT_ORDER = ['Good setup', 'Wait', 'No setup', 'Check data', 'Avoid'];
 
-type Filter = 'all' | 'picks' | 'day' | 'good' | 'wait' | 'avoid' | 'uptrend' | 'downtrend' | 'recovering' | 'sideways' | 'breakout' | 'pullback' | 'stretched' | 'rising' | 'falling';
+type Filter = 'all' | 'picks' | 'day' | 'good' | 'wait' | 'avoid' | 'uptrend' | 'downtrend' | 'recovering' | 'sideways' | 'breakout' | 'pullback' | 'stretched' | 'rising' | 'falling' | 'short';
 /** today's change in %, from the price history or (before it has downloaded) from the live quote */
 function dayChange(d: { snapshot?: { changePct: number | null } | null; quote?: { ltp: number; prevClose: number | null } | null } | undefined): number {
   const s = d?.snapshot?.changePct;
@@ -60,6 +61,7 @@ const QUICK: Array<[Filter, string]> = [
   ['good', 'Good to buy'],
   ['rising', '▲ Rising today'],
   ['falling', '▼ Falling today'],
+  ['short', '⇣ For short selling'],
 ];
 
 const FILTERS: Array<[Filter, string]> = [
@@ -78,6 +80,7 @@ const FILTERS: Array<[Filter, string]> = [
   ['stretched', 'Stretched (ran up too fast)'],
   ['rising', 'Rising today'],
   ['falling', 'Falling today'],
+  ['short', 'For short selling (sell first, buy back lower)'],
 ];
 const PAGE = 120;
 
@@ -142,6 +145,8 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
             return dayChange(s.data) > 0;
           case 'falling':
             return dayChange(s.data) < 0;
+          case 'short':
+            return true;
         }
       })
       .sort((a, b) => {
@@ -252,6 +257,9 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
           </ul>
         </details>
       </section>
+      {filter === 'short' ? (
+        <ShortSellList keys={keys} data={data} symbolOf={(k) => byKey.get(k)?.trading_symbol ?? k} go={go} />
+      ) : (
       <section class="list" data-testid="auto-list">
         {loading && !rows.length && <div class="card empty">Studying…</div>}
         {!loading && !rows.length && <div class="card empty">No stock matches this filter right now.</div>}
@@ -270,6 +278,7 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
           </button>
         )}
       </section>
+      )}
     </>
   );
 }

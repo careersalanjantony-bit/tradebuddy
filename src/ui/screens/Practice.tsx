@@ -8,13 +8,33 @@ import { openTrade } from '../components/TradeSheet';
 import { AnimatedNumber } from '../components/Motion';
 import { useQuotes } from '../data';
 import { useLocal, useNow } from '../hooks';
+import { AutoTraderView } from '../components/AutoTrader';
+import { Icon } from '../components/Icon';
 
 const signed = (x: number, d = 0) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), d)}`;
 const tone = (x: number) => (x > 0 ? 'ok-text' : x < 0 ? 'err-text' : 'muted');
 const REASON: Record<Fill['reason'], string> = { order: '', stop: 'safety net', target: 'take-profit', 'day-end': '3:10 pm', t1: 'target 1' };
 
+/** Practice tab (app v1.6): your own practice money, or the auto-trader's ₹50 lakh. */
+export function PracticeScreen({ go, view }: { go: Go; view?: string | null }) {
+  const [tab, setTab] = useState<'me' | 'bot'>(view === 'bot' ? 'bot' : 'me');
+  return (
+    <>
+      <div class="segmented practice-tabs" role="tablist" data-testid="practice-tabs">
+        <button type="button" role="tab" aria-selected={tab === 'me'} data-tab="me" onClick={() => setTab('me')}>
+          My practice · ₹10 L
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'bot'} data-tab="bot" onClick={() => setTab('bot')}>
+          <Icon name="robot" size={16} /> Auto-trader · ₹50 L
+        </button>
+      </div>
+      {tab === 'bot' ? <AutoTraderView /> : <MyPractice go={go} />}
+    </>
+  );
+}
+
 /** Practice money: ₹10 lakh of pretend money, live prices, real charges, no orders to Upstox. */
-export function PracticeScreen({ go }: { go: Go }) {
+function MyPractice({ go }: { go: Go }) {
   const stored = useLocal('wallet');
   const quotes = useQuotes();
   const now = useNow(5_000);

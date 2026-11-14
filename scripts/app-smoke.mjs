@@ -283,7 +283,7 @@ await page.waitForSelector('[data-testid="wallet-mini"]');
 check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
 await until(async () => !!(await page.$('[data-testid="rising-carousel"] .rise-tile')) && ((await page.textContent('[data-testid="market-pill"]').catch(() => '')) ?? '').includes('Market open'), 15000);
 check('Home: greeting, market open pill, the best-idea card and the rising-now carousel',((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
-check('dark theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(11, 15, 20)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+check('black theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
 const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
 const marks = await page.$$eval('[data-testid="news"] [data-mood]', (els) => els.map((e) => e.getAttribute('data-mood')));
@@ -367,6 +367,61 @@ const bannerText = ((await page.textContent('[data-testid="update-banner"]').cat
 check('Home shows "New version 9.9.9 is ready" with what is new and an Update now button', banner && bannerText.includes('New version 9.9.9 is ready') && bannerText.includes('Update the app from inside the app') && bannerText.includes('Update now · 14.0 MB'), bannerText.slice(0, 160));
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-update.png') });
 
+console.log('── Auto-trader (₹50 lakh, trades by itself)');
+mock.move = 0;
+mock.fallPrice = undefined;
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'bot:run', payload: undefined }));
+await page.waitForSelector('[data-testid="bot-mini"]', { timeout: 10000 }).catch(() => {});
+const miniText = ((await page.textContent('[data-testid="bot-mini"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Home shows the auto-trader card (money, today, open trades, what it learned from)', miniText.includes('Auto-trader') && /₹\d{2},\d{2},\d{3}/.test(miniText) && miniText.includes('learned from'), miniText.slice(0, 140));
+await page.click('[data-testid="bot-mini"]');
+await page.waitForSelector('[data-testid="bot-view"]', { timeout: 10000 }).catch(() => {});
+const botTraded = await until(async () => {
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'bot:run', payload: undefined }));
+  return (await page.$$('[data-testid="bot-trade"]')).length >= 1;
+}, 25000);
+const botState = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
+const heroText = ((await page.textContent('[data-testid="bot-hero"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Auto-trader: ₹50 lakh of pretend money, trading by itself in market hours', botState?.wallet?.startCash === 5000000 && heroText.includes('Trading by itself'), heroText.slice(0, 120));
+const openBot = (botState?.trades ?? []).filter((t) => t.status === 'open');
+check(
+  'it opened trades by itself — each with a safety net, a target, reasons, and a size within its limits (≤0.75% of its money at risk, ≤20% in one stock)',
+  botTraded && openBot.length > 0 && openBot.every((t) => t.riskRupees <= 0.0075 * 5e6 + 100 && t.qty * t.entry <= 0.2 * 5e6 + 1 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy),
+  openBot.map((t) => `${t.side} ${t.qty} ${t.symbol} @${t.entry} (${t.strategy}, ${Math.round(t.chance * 100)}%, risk ₹${t.riskRupees})`).join('; '),
+);
+check('each open trade moves live on a bar: safety net ← price → target', !!(await page.$('[data-testid="bot-trade"] .trade-track .mark.now')));
+// make one trade finish: the falling stock drops to its 2nd target, or the others jump up
+const botShort = openBot.find((t) => t.side === 'short' && t.symbol === FALL);
+if (botShort) mock.fallPrice = botShort.target - 1;
+else mock.move = 0.08;
+const learned = await until(async () => {
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+  return page.evaluate(async () => {
+    const b = (await chrome.storage.local.get('bot')).bot;
+    return (b?.trades ?? []).some((t) => t.status === 'closed') && b.brain.n >= 1;
+  });
+}, 25000);
+const botAfter = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
+const firstClosed = (botAfter?.trades ?? []).find((t) => t.status === 'closed');
+check('a finished trade is settled after charges and the brain learns from it (win/loss, R, a lesson)', learned && firstClosed && typeof firstClosed.pnl === 'number' && typeof firstClosed.r === 'number' && botAfter.log.some((l) => l.kind === 'learn'), firstClosed ? `${firstClosed.symbol} ${firstClosed.exitWhy} ${firstClosed.pnl} (${firstClosed.r} R) — ${firstClosed.lesson}` : 'none');
+await page.waitForTimeout(600);
+const learnedText = ((await page.textContent('[data-testid="bot-learned"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"What it has learned" shows its record and each kind of trade', learnedText.includes('finished trades') && learnedText.includes('Rising today') && learnedText.includes('Top picks'), learnedText.slice(0, 160));
+check('"What it did" lists its decisions with times', (await page.$$('[data-testid="bot-log"] .timeline li')).length >= 2);
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot.png'), fullPage: true });
+mock.move = 0;
+mock.fallPrice = undefined;
+
+console.log('── Stocks: for short selling');
+await page.click('.bottom-nav [data-nav="watchlist"]');
+await page.waitForSelector('[data-filter="short"]', { timeout: 10000 }).catch(() => {});
+await page.click('[data-filter="short"]');
+await page.waitForSelector('[data-testid="short-sell-list"]', { timeout: 10000 }).catch(() => {});
+const ssText = ((await page.textContent('[data-testid="short-sell-list"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Stocks → "For short selling": ranked by a measured chance, with an honest note (no 80–90% promises)', ssText.includes('Stocks for short selling') && ssText.includes('No study can find stocks that fall 80–90%'), ssText.slice(0, 160));
+
 console.log('── Me: account, lock');
 await page.click('.bottom-nav [data-nav="account"]');
 await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
@@ -393,12 +448,14 @@ check('the right PIN opens it', await until(async () => !(await page.$('[data-te
 console.log('── Scrolling + navbar');
 await page.click('.bottom-nav [data-nav="today"]');
 await page.waitForSelector('[data-testid="home"]');
+await page.waitForTimeout(800); // the tab switch scrolls to the top first
 const scrolled = await page.evaluate(async () => {
   window.scrollTo(0, 600);
   await new Promise((r) => setTimeout(r, 400));
   return window.scrollY;
 });
-check('the page scrolls', scrolled > 100, `scrollY ${scrolled}`);
+const scrollInfo = await page.evaluate(() => { const se = document.scrollingElement; const cs = (el) => { const c = getComputedStyle(el); return `${c.overflow}/${c.overflowY}/${c.height}/${c.position}`; }; return `sh ${se.scrollHeight} ch ${se.clientHeight} html ${cs(document.documentElement)} body ${cs(document.body)} app ${cs(document.querySelector('.app'))} content ${cs(document.querySelector('.content'))}`; });
+check('the page scrolls', scrolled > 100, `scrollY ${scrolled} ${scrollInfo}`);
 const shown = await until(() => page.evaluate(() => [...document.querySelectorAll('[data-rv]')].filter((el) => { const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }).every((el) => el.classList.contains('in'))), 4000);
 check('cards scrolled into view appear', shown);
 const pill = await page.evaluate(() => { const n = document.querySelector('.bottom-nav .nav-pill').getBoundingClientRect(); const b = document.querySelector('.bottom-nav [data-nav="today"]').getBoundingClientRect(); return Math.abs((n.left + n.width / 2) - (b.left + b.width / 2)); });

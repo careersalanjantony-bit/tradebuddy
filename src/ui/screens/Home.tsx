@@ -13,6 +13,7 @@ import { openTrade } from '../components/TradeSheet';
 import { meterTone } from '../components/RisingNow';
 import { signalState } from '../../daytrade/live';
 import { BreadthCard } from '../components/Shorts';
+import { AutoTraderMini } from '../components/AutoTrader';
 import { UpdateBanner } from '../components/Update';
 
 /**
@@ -239,6 +240,7 @@ export function HomeScreen({ go }: { go: Go }) {
       <SetupNudge go={go} />
       <UpdateBanner />
       <WalletHero go={go} />
+      <AutoTraderMini go={go} />
       <BestIdea go={go} />
       <RisingCarousel />
       <BreadthCard />

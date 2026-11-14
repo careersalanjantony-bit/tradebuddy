@@ -106,6 +106,19 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (appUpdate === undefined) await kv.set({ appUpdate: null });
     },
   },
+  {
+    to: 11,
+    description: 'app v1.6: auto-trader, black-and-red look',
+    async up(kv) {
+      const { bot, settings } = await kv.get(['bot', 'settings']);
+      if (bot === undefined) await kv.set({ bot: null });
+      // the new look is black and red: switch everyone to the dark theme once
+      if (settings && typeof settings === 'object' && (settings as { ui?: { theme?: string } }).ui) {
+        const s = settings as { ui: Record<string, unknown> };
+        await kv.set({ settings: { ...s, ui: { ...s.ui, theme: 'dark' } } });
+      }
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

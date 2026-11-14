@@ -1,0 +1,3 @@
+New black and red look with more animations.
+Auto-trader: ₹50 lakh of pretend money that trades by itself in market hours, decides the size, shows every trade live and learns from each win and loss (Practice → Auto-trader).
+Stocks → "For short selling": stocks most likely to fall today, with a chance measured on the past year.

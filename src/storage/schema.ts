@@ -285,6 +285,8 @@ export interface LocalStore {
   mlModel: import('../ml/learn').MlReport | null;
   /** live signals with the clues only known live (buyers meter, pace, news mood), for future learning */
   mlJournal: Array<{ date: string; key: string; symbol: string; side: 'long' | 'short'; barT: number; entry: number; stop: number; target: number | null; chance: number | null; buyers: string | null; pace: number | null; news: string | null; late: boolean }>;
+  /** the auto-trader: ₹50 lakh of pretend money that trades and learns by itself (app v1.6); null until it first runs */
+  bot: import('../background/botJobs').BotState | null;
   /** in-app updates: the newest published version (app v1.5) */
   appUpdate: import('../update/update').UpdateState | null;
   /** past test of the sell-first (short) rules (app v1.4) */

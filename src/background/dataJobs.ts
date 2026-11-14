@@ -29,6 +29,7 @@ import { INDEX_KEYS } from '../data/indices';
 import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 import { refreshBreadth, scanShorts } from './shortJobs';
+import { runBot } from './botJobs';
 
 const log = createLogger('data');
 
@@ -149,6 +150,7 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     await evaluateIntraday(await getQuotes(), cal, alerts.hysteresisPct, now);
     await checkPracticeTrades(now).catch((err: unknown) => log.warn('Practice check failed', { error: err }));
     await checkWallet(now).catch((err: unknown) => log.warn('Practice money check failed', { error: err }));
+    await runBot(now).catch((err: unknown) => log.warn('Auto-trader check failed', { error: err }));
     await recordEquity(now).catch(() => undefined);
     await syncPortfolio(now).catch((err: unknown) => log.warn('Upstox account check failed', { error: err }));
     await dayTick(now).catch((err: unknown) => log.warn('Day-trade check failed', { error: err }));

@@ -43,6 +43,7 @@ import { learnIfDue, learnNow } from './mlJobs';
 import { walletCover, walletShort } from './walletJobs';
 import { scanShorts } from './shortJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
+import { botReset, botSetEnabled, runBot } from './botJobs';
 
 initLogging('background');
 const log = createLogger('bg');
@@ -279,6 +280,9 @@ const handlers: Handlers = {
   'wallet:cover': async ({ key }) => walletCover(key),
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'update:check': async () => checkForUpdate(Date.now(), true),
+  'bot:run': async () => ({ ok: !!(await runBot(Date.now(), true)) }),
+  'bot:enable': async ({ enabled }) => (await botSetEnabled(enabled), { ok: true }),
+  'bot:reset': async ({ forget }) => (await botReset(forget), { ok: true }),
   'wallet:cancel': async ({ id }) => {
     await walletCancel(id);
     return { done: true };

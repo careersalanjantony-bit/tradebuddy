@@ -83,5 +83,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     account: null,
     shortTest: null,
     appUpdate: null,
+    bot: null,
   };
 }
