@@ -23,7 +23,7 @@ inside the app (see *How it is built*).
 6. Allow notifications. During market hours a small "TradeBuddy is watching the market" notification
    keeps alerts working while the app is in the background.
 
-**Updates (from 1.5):** the app looks for a new version on start and every 6 hours. When one is
+**Updates (from 1.5):** the app looks for a new version on start and every 5 minutes (since 1.8). When one is
 ready, Home shows **Update now** (also Me → App updates → Check now). The first time, Android asks once
 to "Allow from this source" for TradeBuddy; after that it is Update now → Android's **Update** button.
 Practice money, settings and login stay. Without the app, download the newest `TradeBuddy-x.y.z.apk`

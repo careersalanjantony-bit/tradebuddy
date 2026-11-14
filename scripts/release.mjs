@@ -94,7 +94,7 @@ try {
   const origin = git(['remote', 'get-url', 'origin']);
   git(['push', '-q', '--force', origin, `${BRANCH}:${BRANCH}`], dir);
   console.log(`published ${apkName} (${bytes.length} bytes, sha256 ${sha256.slice(0, 12)}…) on branch ${BRANCH}`);
-  console.log(`phones offer ${version} at their next check (every 6 hours, or Me → App updates → Check now)`);
+  console.log(`phones offer ${version} at their next check (every 5 minutes, or Me → App updates → Check now)`);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
