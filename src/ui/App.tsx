@@ -26,6 +26,7 @@ import { NewsScreen } from './screens/News';
 import { AccountScreen } from './screens/Account';
 import { LockScreen, ProfileSetup } from './components/Lock';
 import { lockDue } from '../account/account';
+import { scrollMemory } from './persist';
 
 /** Every screen. `main` ones are in the bottom bar on a phone; the rest are under "More". */
 const SCREENS = [
@@ -54,8 +55,36 @@ const MAIN = SCREENS.filter((s) => s.main);
 const MORE_IDS: ScreenId[] = ['account', 'more', 'alerts', 'learning', 'guide', 'settings', 'diagnostics', 'shortlist', 'planner'];
 const HOME_IDS: ScreenId[] = ['today', 'swing'];
 
+/** Scrolls back to `y` as soon as the page is tall enough (the list may still be loading); stops if you touch the screen. */
+// the app restores scroll positions itself; the browser's own restore on Back would fight it
+if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+function restoreScroll(y: number): () => void {
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+  };
+  // any touch, click, wheel or key means you are using the screen: stop pulling the page
+  const events = ['touchstart', 'pointerdown', 'wheel', 'keydown'] as const;
+  for (const ev of events) window.addEventListener(ev, stop, { passive: true, once: true });
+  const start = performance.now();
+  const step = () => {
+    if (stopped) return;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo(0, Math.min(y, Math.max(0, max)));
+    if (max >= y - 2 && Math.abs(window.scrollY - y) < 3) return;
+    if (performance.now() - start < 8000) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return () => {
+    stopped = true;
+    for (const ev of events) window.removeEventListener(ev, stop);
+  };
+}
+
 export function App() {
-  const [route, param, go] = useHashRoute(IDS, 'today');
+  // each screen's scroll position is saved the moment you leave it (before the next screen is drawn)
+  const [route, param, go] = useHashRoute(IDS, 'today', (from) => scrollMemory.set(from, window.scrollY));
   const unread = useSessionValue('alertsUnread') ?? 0;
   const settings = useSettings();
   // the app's own login: PIN / fingerprint lock (app v1.3)
@@ -84,8 +113,17 @@ export function App() {
     const t = setInterval(() => void callBackground('quotes:fast').catch(() => undefined), 2_000);
     return () => clearInterval(t);
   }, []);
+  // App v1.7 (owner: "when I open a stock and return to the stock list, keep the scroll position"):
+  // each screen's scroll position is remembered; coming back from a stock page restores it, any
+  // other move starts at the top.
+  const prevRoute = useRef<string | null>(null);
   useEffect(() => {
+    const from = prevRoute.current;
+    prevRoute.current = route;
+    const saved = scrollMemory.get(route);
+    if ((from === 'stock' || from === 'planner') && route !== 'stock' && saved && saved > 0) return restoreScroll(saved);
     window.scrollTo(0, 0);
+    return undefined;
   }, [route, param]);
   // a practice sale with a profit: a little celebration (and a toast for any sale)
   const wallet = useLocal('wallet');

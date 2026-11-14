@@ -6,32 +6,50 @@ import { callBackground } from '../../shared/messages';
 import type { NewsReason } from '../../background/newsJobs';
 import type { Go } from '../App';
 import { useInstrumentMap, useQuotes } from '../data';
-import { useNow, useSessionValue } from '../hooks';
+import { useMarketState, useNow, useSessionValue } from '../hooks';
+import { useNews } from '../components/NewsData';
+import { usePersistentState } from '../persist';
 import { Icon } from '../components/Icon';
 import { openTrade } from '../components/TradeSheet';
 
 /**
  * News (app v1.2, owner: "stock news based on the rising stocks or high-chance-to-rise stocks, not
- * random news"). Only stocks that matter today, grouped, each with why it is here.
+ * random news"; v1.7: "show the recent and live news even when the market is down"). The stocks that
+ * matter today first, then the rest of your list; kept on the phone, so it is never empty.
  */
 
-const REASON_LABEL: Record<NewsReason, string> = { idea: 'Buy idea', rising: 'Rising now', pick: 'Top pick', holding: 'You hold (practice)', trade: 'You hold' };
-const FILTERS: Array<{ id: 'all' | NewsReason; label: string }> = [
+const REASON_LABEL: Record<NewsReason, string> = {
+  idea: 'Buy idea',
+  rising: 'Rising now',
+  falling: 'Falling now',
+  pick: 'Top pick',
+  holding: 'You hold (practice)',
+  trade: 'You hold',
+  mover: 'Big move',
+  market: 'In your list',
+};
+type Filter = 'all' | 'idea' | 'rising' | 'falling' | 'pick' | 'holding' | 'market' | 'bad';
+const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'idea', label: 'Buy ideas' },
   { id: 'rising', label: 'Rising now' },
+  { id: 'falling', label: 'Falling now' },
   { id: 'pick', label: 'Top picks' },
   { id: 'holding', label: 'My shares' },
+  { id: 'bad', label: '👎 Bad news' },
+  { id: 'market', label: 'Market' },
 ];
+const ORDER: NewsReason[] = ['idea', 'rising', 'falling', 'pick', 'trade', 'holding', 'mover', 'market'];
 
 export function NewsScreen({ go }: { go: Go }) {
-  const news = useSessionValue('news');
+  const news = useNews();
   const signals = useSessionValue('daySignals');
   const flow = useSessionValue('flow');
   const quotes = useQuotes();
   const byKey = useInstrumentMap();
+  const market = useMarketState();
   const now = useNow(30_000);
-  const [filter, setFilter] = useState<'all' | NewsReason>('all');
+  const [filter, setFilter] = usePersistentState<Filter>('news.filter', 'all');
   const [spinning, setSpinning] = useState(false);
   const refresh = () => {
     setSpinning(true);
@@ -46,26 +64,38 @@ export function NewsScreen({ go }: { go: Go }) {
   const groups = useMemo(() => {
     const by = new Map<string, Array<{ heading: string; link: string; at: number }>>();
     for (const i of news?.items ?? []) {
-      if (now - i.at > 3 * 86_400_000) continue;
+      if (now - i.at > 7 * 86_400_000) continue;
       const l = by.get(i.key) ?? [];
       l.push(i);
       by.set(i.key, l);
     }
-    const order: NewsReason[] = ['idea', 'rising', 'pick', 'trade', 'holding'];
     return [...by.entries()]
-      .map(([key, items]) => ({ key, items: items.sort((a, b) => b.at - a.at).slice(0, 4), reason: (reasons[key] ?? 'pick') as NewsReason, latest: Math.max(...items.map((x) => x.at)) }))
-      .filter((g) => reasons[g.key])
-      .sort((a, b) => order.indexOf(a.reason) - order.indexOf(b.reason) || b.latest - a.latest);
+      .map(([key, items]) => {
+        const sorted = items.sort((a, b) => b.at - a.at);
+        return { key, items: sorted.slice(0, 4), more: Math.max(0, sorted.length - 4), reason: (reasons[key] ?? 'market') as NewsReason, latest: sorted[0]!.at, mood: stockSentiment(sorted, now, 72) };
+      })
+      .sort((a, b) => {
+        const ra = ORDER.indexOf(a.reason) < ORDER.indexOf('mover') ? ORDER.indexOf(a.reason) : 50;
+        const rb = ORDER.indexOf(b.reason) < ORDER.indexOf('mover') ? ORDER.indexOf(b.reason) : 50;
+        return ra - rb || b.latest - a.latest;
+      });
   }, [news, now]);
-  const counts = (id: 'all' | NewsReason) => (id === 'all' ? groups.length : groups.filter((g) => g.reason === id || (id === 'holding' && g.reason === 'trade')).length);
-  const shown = groups.filter((g) => filter === 'all' || g.reason === filter || (filter === 'holding' && g.reason === 'trade'));
+  const match = (g: (typeof groups)[number], id: Filter) =>
+    id === 'all' || g.reason === id || (id === 'holding' && g.reason === 'trade') || (id === 'market' && (g.reason === 'mover' || g.reason === 'market')) || (id === 'bad' && g.mood?.label === 'bad');
+  const counts = (id: Filter) => groups.filter((g) => match(g, id)).length;
+  const shown = groups.filter((g) => match(g, filter));
+  const open = market.phase === 'open';
 
   return (
     <div class="screen news-screen" data-testid="news-screen">
       <header class="page-head">
         <div>
           <h1>News</h1>
-          <p class="small muted">Only for today's buy ideas, stocks rising now, top picks and your shares.</p>
+          <p class="small muted" data-testid="news-sub">
+            {open ? 'Live: today\'s ideas, rising and falling stocks first, then the rest of your list.' : 'Market closed — the latest news from the past 7 days for your list.'}
+            {news?.at ? ` Updated ${istDate(news.at) === today ? formatTimeIST(news.at).slice(0, 5) : istDate(news.at)}.` : ''}
+          </p>
+          {news?.error && <p class="tiny err-text">Latest download failed: {news.error}</p>}
         </div>
         <button class={`icon-btn ${spinning ? 'spin' : ''}`} type="button" aria-label="Refresh" data-testid="news-refresh" onClick={refresh}>
           <Icon name="refresh" />
@@ -87,8 +117,8 @@ export function NewsScreen({ go }: { go: Go }) {
             <rect x="32" y="58" width="40" height="6" rx="3" class="es-line" />
             <circle cx="92" cy="26" r="9" class="es-dot" />
           </svg>
-          <b>{news ? 'No news for these stocks yet' : 'Loading news…'}</b>
-          <p class="small muted">News follows today's buy ideas and rising stocks, so it fills up during market hours. It updates every 15 minutes.</p>
+          <b>{news?.items.length ? 'No news in this group' : 'Loading news…'}</b>
+          <p class="small muted">News comes for the stocks in your list (Upstox keeps the last 7 days). It updates every 15 minutes in market hours and every 45 minutes otherwise — log in to Upstox if it stays empty.</p>
         </section>
       ) : (
         <div class="news-grid">
@@ -96,7 +126,7 @@ export function NewsScreen({ go }: { go: Go }) {
             const sym = byKey.get(g.key)?.trading_symbol ?? g.key;
             const q = quotes[g.key];
             const ch = q?.prevClose ? (q.ltp / q.prevClose - 1) * 100 : null;
-            const mood = stockSentiment(g.items, now);
+            const mood = g.mood;
             const sig = signals?.date === today ? signals.signals.find((s) => s.key === g.key) : undefined;
             const rise = flow?.rising.find((r) => r.key === g.key);
             return (
@@ -116,7 +146,9 @@ export function NewsScreen({ go }: { go: Go }) {
                   )}
                 </div>
                 {mood && mood.label !== 'neutral' && (
-                  <div class={`mood-line ${mood.label}`}>{mood.label === 'good' ? '👍 Mostly good news today' : '👎 Mostly bad news today — be careful with a buy'}</div>
+                  <div class={`mood-line ${mood.label}`}>
+                    {mood.label === 'good' ? '👍 Mostly good news — counts against selling first' : '👎 Mostly bad news — be careful with a buy; counts for selling first'}
+                  </div>
                 )}
                 <ul class="headlines">
                   {g.items.map((i) => {
@@ -140,11 +172,15 @@ export function NewsScreen({ go }: { go: Go }) {
                   <button class="btn small" type="button" onClick={() => openTrade({ key: g.key, symbol: sym, side: 'buy', source: 'News' })}>
                     Practice buy
                   </button>
+                  <button class="btn small" type="button" onClick={() => go('stock', mood?.label === 'bad' || g.reason === 'falling' ? `${g.key}~short` : g.key)}>
+                    {mood?.label === 'bad' || g.reason === 'falling' ? 'Sell-first analysis' : 'Full analysis'}
+                  </button>
                   {g.reason === 'idea' && (
                     <button class="link-btn small" type="button" onClick={() => go('daytrade')}>
                       See the idea
                     </button>
                   )}
+                  {g.more > 0 && <span class="tiny muted">+{g.more} older</span>}
                 </div>
               </article>
             );

@@ -1084,3 +1084,76 @@ h2 { letter-spacing: -0.01em; }
 @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 @media (prefers-reduced-motion: reduce) { body::before, .bot-hero-bg, .bot-avatar i, .btn.primary::after { animation: none !important; } }
+
+/* ===================== app v1.7: softer, darker red; navbar icon fix; smoother motion ===================== */
+:root {
+  --red: #a93a45; --red-text: #d46a74;
+  --accent: #a93a45; --accent-fg: #ffffff; --err: #c9505b; --info: #b5505a; --info-bg: #fbecee;
+  --grad: linear-gradient(135deg, #9c3540 0%, #6b2129 55%, #2a0e12 100%);
+  --glow: 0 12px 30px rgba(120, 32, 42, 0.26);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --border: #23151a; --accent: #a93a45; --err: #e06c75; --info: #d0646e; --info-bg: #190b0e; --err-bg: #1c0a0d;
+  }
+}
+:root[data-theme='dark'] { --border: #23151a; --accent: #a93a45; --err: #e06c75; --info: #d0646e; --info-bg: #190b0e; --err-bg: #1c0a0d; }
+
+body::before {
+  background: radial-gradient(38% 28% at 12% 4%, rgba(150, 45, 58, 0.11), transparent 70%), radial-gradient(34% 26% at 92% 12%, rgba(105, 24, 34, 0.13), transparent 72%), radial-gradient(40% 30% at 60% 100%, rgba(150, 45, 58, 0.05), transparent 70%);
+}
+.card { background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, var(--red) 6%) 0, var(--surface) 46px); }
+@keyframes edgeGlow { 0% { box-shadow: 0 0 0 1px rgba(169, 58, 69, 0.4), 0 0 20px rgba(169, 58, 69, 0.18); } 100% { box-shadow: var(--shadow); } }
+.home-head::before { background: #8d2f3a; opacity: 0.26; }
+.home-head::after { background: #4d141c; opacity: 0.3; }
+.lock-glow { background: radial-gradient(circle, rgba(150, 45, 58, 0.3), transparent 65%); }
+.btn.primary:not(.buy) { box-shadow: 0 6px 16px rgba(120, 32, 42, 0.32); }
+.btn.primary:not(.buy)::after { background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.16), transparent); }
+.filter-chip.on { box-shadow: 0 4px 12px rgba(120, 32, 42, 0.3); }
+.bottom-nav button[aria-current='page'] .lbl, .bottom-nav button[aria-current='page'] span:last-child { color: var(--red-text); }
+
+/* navbar: one round red circle with the icon inside — no square frame around the icon (v1.6 bug) */
+.bottom-nav .pill-icon { box-shadow: none !important; background: none !important; border-radius: 50%; width: 30px; height: 30px; }
+.bottom-nav .nav-pill { animation: none; background: var(--grad); box-shadow: 0 0 0 8.5px var(--bg), 0 8px 20px rgba(120, 32, 42, 0.45); will-change: left; }
+.bottom-nav .nav-pill svg { width: 26px; height: 26px; }
+
+/* auto-trader + short selling in the softer red */
+.bot-hero { background: linear-gradient(150deg, #140609 0%, #000 45%, #1d090d 100%); border-color: rgba(169, 58, 69, 0.35); box-shadow: 0 14px 34px rgba(120, 32, 42, 0.22); }
+.bot-hero-bg { background: conic-gradient(from 0deg, transparent 0 70%, rgba(169, 58, 69, 0.22) 80%, transparent 90%); }
+.bot-total { text-shadow: 0 0 18px rgba(169, 58, 69, 0.35); }
+.bot-hero .spark .spark-line { stroke: var(--red-text); }
+.bot-hero .spark .spark-fill { fill: var(--red); opacity: 0.2; }
+.bot-pnl .pnl-chip { background: rgba(169, 58, 69, 0.22); }
+.bot-avatar { background: rgba(169, 58, 69, 0.16); color: var(--red-text); }
+.bot-avatar.big { background: rgba(169, 58, 69, 0.24); color: #fff; }
+.bot-avatar i { border-color: rgba(169, 58, 69, 0.6); }
+.bot-mini { border-color: rgba(169, 58, 69, 0.3) !important; }
+@keyframes redPulse { 0% { box-shadow: 0 0 0 0 rgba(169, 58, 69, 0.6); } 70% { box-shadow: 0 0 0 8px rgba(169, 58, 69, 0); } 100% { box-shadow: 0 0 0 0 rgba(169, 58, 69, 0); } }
+.trade-track .mark.now { box-shadow: 0 0 0 3px var(--red), 0 0 10px rgba(169, 58, 69, 0.55); }
+.timeline li.open .tl-dot { box-shadow: 0 0 8px rgba(169, 58, 69, 0.6); }
+.think { background: radial-gradient(circle, var(--red-text) 2.5px, transparent 3px) 0 50% / 8px 8px repeat-x; }
+.down-arrow, .short-sell-card .rank { color: var(--red-text); }
+.fall-bar span { background: linear-gradient(90deg, #4d141c, var(--red)); }
+.fall-chance { color: var(--red-text); }
+.fall-chance.big b { font-size: 26px; }
+
+/* the sell-first analysis page */
+.stock-view { margin-top: 12px; border-radius: 12px; padding: 3px; gap: 3px; }
+.stock-view button { border-radius: 9px; padding: 8px; font-weight: 700; }
+.short-analysis { border-color: rgba(169, 58, 69, 0.35) !important; }
+.short-analysis .row { gap: 8px; align-items: center; }
+.sa-mode { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; background: var(--surface-2); color: var(--muted); margin-bottom: 10px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex: none; animation: redPulse 1.6s infinite; }
+.sa-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 12px; margin-top: 10px; }
+@media (min-width: 520px) { .sa-facts { grid-template-columns: repeat(3, 1fr); } }
+.sa-facts > div { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border-radius: 12px; background: var(--surface-2); }
+.sa-h { font-size: 14px; margin: 16px 0 6px; }
+.sa-kv { display: grid; grid-template-columns: minmax(110px, 40%) 1fr; gap: 6px 10px; margin: 0; }
+.sa-kv dt { color: var(--muted); }
+.sa-kv dd { margin: 0; }
+.short-sell-card { cursor: pointer; transition: transform 0.15s var(--ease), border-color 0.2s; }
+.short-sell-card:active { transform: scale(0.985); }
+.open-analysis { margin-top: 6px; color: var(--red-text); font-weight: 700; }
+
+/* smoother motion at 90–120 Hz: the turning glows get their own GPU layer */
+.hero-card::before, .bot-hero-bg { will-change: transform; }

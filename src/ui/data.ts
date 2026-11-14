@@ -60,6 +60,12 @@ export function useInstrumentMap(): Map<string, Instrument> {
   return useMemo(() => new Map((list ?? []).map((i) => [i.instrument_key, i])), [list]);
 }
 
+/**
+ * The last computed data per list (app v1.7): a screen you come back to shows its list at once — at
+ * full length, so the scroll position can be restored — and refreshes it in the background.
+ */
+const lastData = new Map<string, Map<string, StockData>>();
+
 /** Computed data for many stocks; recomputes on new quotes, new candles, settings or minute ticks. */
 export function useStocksData(keys: string[]): { data: Map<string, StockData>; loading: boolean } {
   const settings = useSettings();
@@ -67,8 +73,11 @@ export function useStocksData(keys: string[]): { data: Map<string, StockData>; l
   const quotes = useQuotes();
   const version = useDataVersion();
   const minute = Math.floor(useNow(30_000) / 60_000);
-  const [state, setState] = useState<{ data: Map<string, StockData>; loading: boolean }>({ data: new Map(), loading: true });
   const keyStr = keys.join(',');
+  const [state, setState] = useState<{ data: Map<string, StockData>; loading: boolean }>(() => {
+    const cached = lastData.get(keyStr);
+    return cached ? { data: cached, loading: false } : { data: new Map(), loading: true };
+  });
   const quoteStamp = keys.map((k) => quotes[k]?.fetchedAt ?? 0).join(',');
 
   // A newer load may start before an older one finishes (prices arrive every 2 s). Every finished load
@@ -84,6 +93,9 @@ export function useStocksData(keys: string[]): { data: Map<string, StockData>; l
       run.current.shown = id;
       const m = new Map<string, StockData>();
       rows.forEach((r) => r && m.set(r.key, r));
+      lastData.delete(keyStr);
+      lastData.set(keyStr, m);
+      while (lastData.size > 6) lastData.delete(lastData.keys().next().value!);
       setState({ data: m, loading: false });
     });
     return () => {

@@ -2,14 +2,14 @@ import { updateSettings } from '../../storage/local';
 import type { Settings } from '../../storage/schema';
 import { askNotificationPermission } from '../../platform/nativeBindings';
 
-/** Settings → Alerts: four plain switches. */
+/** Settings → Alerts: plain switches. */
 export function AlertSettings({ settings }: { settings: Settings }) {
   const rows: Array<{ id: string; on: boolean; title: string; about: string; set: (v: boolean) => Promise<unknown> }> = [
     {
       id: 'ideas',
       on: settings.dayTrade.alerts,
-      title: 'Buy ideas',
-      about: 'When a stock breaks out with heavy buying (9:30–11:30). Marked ⭐ when self-learning is very sure.',
+      title: 'Day-trade BUY / SELL ideas',
+      about: 'Every new signal the moment it appears (9:35–11:30), each with its prices. Marked ⭐ when self-learning is very sure.',
       set: (v) => updateSettings({ dayTrade: { alerts: v } }),
     },
     {
@@ -23,8 +23,15 @@ export function AlertSettings({ settings }: { settings: Settings }) {
       id: 'shorts',
       on: settings.notifications.shorts ?? true,
       title: 'Sell-first ideas',
-      about: 'A stock falling clearly (score 75+) with an entry, buy-back price and two targets. At most 3 a day.',
+      about: 'Every stock the "Falling now" scan finds (score 60+, every 5 minutes, 9:35–2:30) with an entry, buy-back price and two targets.',
       set: (v) => updateSettings({ notifications: { shorts: v } }),
+    },
+    {
+      id: 'picks',
+      on: settings.scanner.newPickAlerts,
+      title: 'New top picks (hold a few days)',
+      about: 'When a stock becomes a top pick during market hours, with its buy, sell-if-falls and target prices.',
+      set: (v) => updateSettings({ scanner: { newPickAlerts: v } }),
     },
     {
       id: 'background',

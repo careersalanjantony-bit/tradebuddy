@@ -16,6 +16,7 @@ import { explainSnapshot } from '../../advisor/explain';
 import { INDEX_LABEL, INDEX_ORDER, inPriceRange, type UniverseIndex } from '../../data/universeParse';
 import { istDate } from '../../lib/time';
 import { ShortSellList } from '../components/ShortSell';
+import { usePersistentState } from '../persist';
 
 type SortKey = 'mine' | 'setup' | 'change' | 'rsi';
 const SETUP_ORDER = ['Breakout', 'Pullback in uptrend', 'Clean uptrend', 'Recovering — trend not confirmed', 'No setup'];
@@ -23,7 +24,7 @@ const SETUP_ORDER = ['Breakout', 'Pullback in uptrend', 'Clean uptrend', 'Recove
 export function WatchlistScreen({ go }: { go: Go }) {
   const settings = useSettings();
   const { universeKeys, listLabel } = useStudyKeys();
-  const [view, setView] = useState<'auto' | 'mine'>('auto');
+  const [view, setView] = usePersistentState<'auto' | 'mine'>('stocks.view', 'auto');
   const auto = view === 'auto' && universeKeys.length > 0;
   return (
     <>
@@ -93,9 +94,10 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
   const progress = useSessionValue('syncProgress');
   const lastPoll = useSessionValue('lastPoll');
   const daySignals = useSessionValue('daySignals');
-  const [q, setQ] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
-  const [limit, setLimit] = useState(PAGE);
+  // remembered when you open a stock and come back, and across restarts (app v1.7)
+  const [q, setQ] = usePersistentState('stocks.q', '');
+  const [filter, setFilter] = usePersistentState<Filter>('stocks.filter', 'all');
+  const [limit, setLimit] = usePersistentState('stocks.limit', PAGE);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const safety = (settings?.scanner.rankBy ?? 'safety') === 'safety';
@@ -289,7 +291,7 @@ function MyStocks({ go }: { go: Go }) {
   const byKey = useInstrumentMap();
   const { data } = useStocksData(watchlist);
   const lastPoll = useSessionValue('lastPoll');
-  const [sort, setSort] = useState<SortKey>('mine');
+  const [sort, setSort] = usePersistentState<SortKey>('stocks.sort', 'mine');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 

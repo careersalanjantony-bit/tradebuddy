@@ -1,5 +1,6 @@
 import { calibrate, historyPairs, indicatorsOf, shortSellList, type Calibration, type Pair } from '../advisor/shortSell';
 import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
+import { stockChance } from '../advisor/shortModel';
 import { newBrain, learnFrom, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
 import { BOT_START, decide, SWING_MAX_DAYS, trailStop, type Idea } from '../bot/policy';
 import { marketState } from '../data/calendar';
@@ -238,13 +239,23 @@ async function refreshStudies(now: number, equity: number): Promise<void> {
     const res = suggestBuys(stocks, botSettings, [], istDate(now), { priceMin: 0, priceMax: null });
     studies.picks = [...res.suggestions, ...res.more].slice(0, 12);
     const today = istDate(now);
-    if (studies.calDate !== today) {
+    const model = await getLocal('shortModel');
+    // the score bands are only needed until the per-stock model exists
+    if (studies.calDate !== today && !model) {
       const pairs: Pair[] = [];
       for (const s of stocks) if (s.data.candles.length > 60) pairs.push(...historyPairs(s.data.candles, indicatorsOf(s.data.candles)));
       studies.calLive = calibrate(pairs, 'score');
       studies.calDate = today;
     }
-    if (studies.calLive) {
+    if (model) {
+      // app v1.7: each stock's own chance from the per-stock model
+      const m = new Map<string, number>();
+      for (const st of stocks) {
+        const c = stockChance(model, st.key, st.data.candles);
+        if (c) m.set(st.key, c.chance);
+      }
+      studies.shortChance = m;
+    } else if (studies.calLive) {
       const rows = shortSellList(
         stocks.map((s) => ({ key: s.key, symbol: s.symbol, candles: s.data.candles, ltp: quotes[s.key]?.ltp ?? null, news: 0 })),
         studies.calLive,

@@ -19,6 +19,10 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { upstoxRequest } from '../upstox/client';
 import { dayKeys } from './dayJobs';
+import { SHORT_MODEL_VERSION } from '../advisor/shortModel';
+import { trainShortModelAsync } from '../advisor/shortModelRun';
+import { loadStockData } from '../data/stockData';
+import type { Candle } from '../indicators/types';
 
 /**
  * App v1.4: market breadth (Nifty 500 up vs down, every minute) and the "Falling now" sell-first
@@ -116,25 +120,33 @@ export async function scanShorts(now = Date.now(), force = false): Promise<numbe
   }
 }
 
-/** The strongest new idea (score ≥ 75), at most 3 alerts a day, each stock once. */
+/** Most sell-first alerts in one day (a safety cap against a flood on a crash day). */
+export const MAX_SHORT_ALERTS = 25;
+
+/**
+ * App v1.7 (owner: "an instant alert whenever a new valid BUY or SELL trade idea appears"): every new
+ * sell-first idea (score 60+) gets its own alert the moment the scan finds it, each stock once a day.
+ */
 async function alertShorts(ideas: ShortIdea[], now: number): Promise<void> {
   const settings = await getSettings();
   if (!settings.notifications.shorts) return;
   const date = istDate(now);
   const prev = await getSession('shortAlerted');
-  const sent = prev?.date === date ? prev.keys : [];
-  if (sent.length >= 3) return;
+  const sent = prev?.date === date ? [...prev.keys] : [];
+  const fresh = ideas.filter((x) => x.score >= MIN_SCORE && !sent.includes(x.key)).slice(0, Math.max(0, MAX_SHORT_ALERTS - sent.length));
+  if (!fresh.length) return;
   const breadth = await getSession('breadth');
-  const top = ideas.find((x) => x.score >= 75 && !sent.includes(x.key));
-  if (!top) return;
   const against = breadth && breadth.advanced > breadth.declined * 2;
-  await notify(`alert:short-${top.key}-${date}`, {
-    title: `▼ Sell-first idea: ${top.symbol} at ${rs(top.plan.entry)} · score ${top.score}`,
-    message: `Buy back if it rises to ${rs(top.plan.stop)} · target 1 ${rs(top.plan.t1)} · target 2 ${rs(top.plan.t2)} · ${top.plan.qty} shares (risk ${rs(top.plan.risk)}). Close by 3:10 pm.${against ? ' Most stocks are rising today — be careful.' : ''}`,
-    priority: 2,
-  });
+  for (const top of fresh) {
+    await notify(`alert:short-${top.key}-${date}`, {
+      title: `▼ SELL first ${top.symbol} at ${rs(top.plan.entry)} · score ${top.score}${top.score >= 75 ? ' ⭐' : ''}`,
+      message: `Buy back if it rises to ${rs(top.plan.stop)} · target 1 ${rs(top.plan.t1)} · target 2 ${rs(top.plan.t2)} · ${top.plan.qty} shares (risk ${rs(top.plan.risk)}). Close by 3:10 pm.${against ? ' Most stocks are rising today — be careful.' : ''}`,
+      priority: 2,
+    });
+    sent.push(top.key);
+  }
   await playSound('info');
-  await setSession('shortAlerted', { date, keys: [...sent, top.key] });
+  await setSession('shortAlerted', { date, keys: sent });
 }
 
 // ---------------------------------------------------------------- past test
@@ -157,4 +169,94 @@ export async function testShortsIfDue(now = Date.now()): Promise<void> {
   const r = await getLocal('shortTest');
   if (r && now - r.at < 20 * 3600_000) return;
   await testShorts(now).catch((err: unknown) => log.warn('Sell-first past test failed', { error: errorMessage(err) }));
+}
+
+// ---------------------------------------------------------------- app v1.7: per-stock fall chance
+
+let modelRunning = false;
+
+/**
+ * Trains the per-stock short-selling model once a day (on the list's daily candles, off the screen's
+ * thread). Skipped when today's model exists for (nearly) the same list.
+ */
+export async function trainShortModelIfDue(now = Date.now(), force = false): Promise<boolean> {
+  if (modelRunning) return false;
+  const today = istDate(now);
+  const keys = await dayKeys();
+  const have = await getLocal('shortModel');
+  if (!force && have && have.v === SHORT_MODEL_VERSION && have.date === today) return false;
+  modelRunning = true;
+  try {
+    const [settings, cal, quotes] = await Promise.all([getSettings(), getCalendar(), getQuotes()]);
+    const stocks: Array<{ key: string; candles: Candle[] }> = [];
+    for (const key of keys) {
+      const d = await loadStockData(key, { quote: quotes[key] ?? null, settings, calendar: cal, now });
+      const finished = d.candles.filter((c) => !c.partial);
+      if (finished.length >= 70) stocks.push({ key, candles: finished });
+    }
+    if (stocks.length < 5) return false;
+    const m = await trainShortModelAsync(stocks, today, now);
+    if (!m) return false;
+    await setLocal('shortModel', m);
+    log.info(`Short-selling model trained on ${m.samples} past days of ${m.stocks} stocks${m.test ? ` — newest ${m.test.n} days: top-rated fell ${Math.round(m.test.topRate * 100)}% vs ${Math.round(m.test.baseRate * 100)}% average` : ''}`);
+    return true;
+  } catch (err) {
+    log.warn('Short-selling model not trained', { error: errorMessage(err) });
+    return false;
+  } finally {
+    modelRunning = false;
+  }
+}
+
+export interface LiveShortAnalysis {
+  key: string;
+  symbol: string;
+  at: number;
+  /** minutes since midnight of the 5-minute candle used */
+  candleT: number;
+  price: number;
+  score: number;
+  reasons: Reason[];
+  vwap: number;
+  ema9: number;
+  rsi5: number | null;
+  /** last candle's volume vs the average candle today */
+  volRatio: number | null;
+  plan: ShortPlan | null;
+  /** today's high and low so far */
+  dayHigh: number;
+  dayLow: number;
+}
+
+/** The "Falling now" study for one stock right now (market hours): today's 5-minute candles. */
+export async function analyzeShort(key: string, now = Date.now()): Promise<LiveShortAnalysis | null> {
+  const m = marketState(now, await getCalendar());
+  if (m.phase !== 'open') return null;
+  const bars = await fetchTodayBars(key, now);
+  if (!bars || !bars.t.length) return null;
+  const i = lastClosedIndex(bars, minutesIST(now));
+  if (i < 1) return null;
+  const q = (await getQuotes())[key];
+  const s = bearishScore(bars, i, q?.prevClose ?? null);
+  if (!s) return null;
+  const price = q?.ltp ?? bars.c[i]!;
+  const inst = await getInstrument(key);
+  const settings = await getSettings();
+  const plan = planShort(bars, i, price, s.vwap, settings.dayTrade.shortRiskInr ?? 50, inst?.tick ?? 0.05);
+  return {
+    key,
+    symbol: inst?.trading_symbol ?? key,
+    at: now,
+    candleT: bars.t[i]!,
+    price,
+    score: s.score,
+    reasons: s.reasons,
+    vwap: s.vwap,
+    ema9: s.ema9,
+    rsi5: s.rsi,
+    volRatio: s.volRatio,
+    plan,
+    dayHigh: Math.max(...bars.h.slice(0, i + 1)),
+    dayLow: Math.min(...bars.l.slice(0, i + 1)),
+  };
 }

@@ -160,14 +160,17 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   await recordJournal(add, now);
   // busiest stocks first when several fire at the same boundary (as in the past test)
   add.sort((a, b) => b.rvol - a.rvol);
+  // app v1.7 (owner: "an instant alert whenever a new valid BUY or SELL trade idea appears"):
+  // every signal that is not late gets its own alert at once — no daily cap. Ideas beyond the day's
+  // trade slots, or after the losing-trades limit, still alert, with a note.
   for (const s of add) {
-    if (s.late || stopped || !settings.dayTrade.alerts || announced >= slots) continue;
+    if (s.late || !settings.dayTrade.alerts) continue;
     s.announced = true;
     announced++;
-    const tgt = s.target !== null ? `target ${rs(s.target)}` : 'no fixed target';
-    await notify(`alert:day-${s.symbol}:${now}`, {
+    const extra = stopped ? ' You reached your losing-trades limit today — practice only.' : announced > slots ? ` (Idea ${announced} today — you planned at most ${slots} day trades.)` : '';
+    await notify(`alert:day-${s.side}-${s.symbol}:${now}`, {
       title: `${s.ml && s.chance !== undefined && s.chance >= 0.6 ? '⭐ Strong idea — ' : s.trusted || s.ml ? '' : 'Practice idea — '}${s.side === 'long' ? '▲ BUY' : '▼ SELL first'} ${s.symbol} at ${rs(s.entry)}${s.chance !== undefined ? ` · ${Math.round(s.chance * 100)}% chance` : ''}`,
-      message: `${s.side === 'long' ? `Take profit at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} · sell if it falls to ${rs(s.stop)}` : `Buy back at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} for the profit · buy back if it rises to ${rs(s.stop)}`} · close by 3:10 pm.${s.inNews ? ' This company is in the news today — be extra careful.' : ''}${s.caution ? ` ${s.caution}` : ''} Open the Day trade tab.`,
+      message: `${s.side === 'long' ? `Take profit at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} · sell if it falls to ${rs(s.stop)}` : `Buy back at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} for the profit · buy back if it rises to ${rs(s.stop)}`} · close by 3:10 pm.${s.inNews ? ' This company is in the news today — be extra careful.' : ''}${s.caution ? ` ${s.caution}` : ''}${extra} Open the Day trade tab.`,
       priority: 2,
     });
     sounded = true;

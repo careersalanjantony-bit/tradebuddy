@@ -220,6 +220,11 @@ export interface ShortSellRow {
   key: string;
   symbol: string;
   score: number;
+  /** the stock's own past year: days that fell ≥ 0.3 % from the open, out of how many (per-stock model only) */
+  ownFell: number;
+  ownDays: number;
+  /** the chance comes from the per-stock model (app v1.7), not the score bands */
+  modelled: boolean;
   /** measured chance (0–1) that it ends ≥ 0.3 % below today's open, or null if too few similar days */
   chance: number | null;
   similar: number;
@@ -236,11 +241,16 @@ export interface ShortSellRow {
 
 export const MIN_SHORT_SCORE = 45;
 
+/** The per-stock model's answer for one stock (app v1.7, see shortModel.ts). */
+export type ChanceOf = (s: ShortSellInput) => { chance: number; ownFell: number; ownDays: number } | null;
+
 /**
  * Today's list: during market hours the setup uses today's open and the stock must be trading below
- * it; otherwise the setups are for the next session (no opening price yet). Best measured chance first.
+ * it; otherwise the setups are for the next session (no opening price yet). Best chance first.
+ * With `model`, each stock gets its own chance and only stocks above the average day's chance are
+ * listed; without it, the score bands (one chance per band) are used.
  */
-export function shortSellList(stocks: ShortSellInput[], calLive: Calibration, calNext: Calibration): ShortSellRow[] {
+export function shortSellList(stocks: ShortSellInput[], calLive: Calibration, calNext: Calibration, model?: { chanceOf: ChanceOf; minChance: number }): ShortSellRow[] {
   const rows: ShortSellRow[] = [];
   for (const s of stocks) {
     const c = s.candles;
@@ -251,7 +261,8 @@ export function shortSellList(stocks: ShortSellInput[], calLive: Calibration, ca
     const setup = live ? shortSetupAt(c, c.length - 1, ind, true) : shortSetupAt(c, c.length, ind, false);
     if (!setup) continue;
     const score = live ? setup.score : setup.base;
-    if (score < MIN_SHORT_SCORE) continue;
+    const own = model ? model.chanceOf(s) : null;
+    if (model ? !own || own.chance < model.minChance : score < MIN_SHORT_SCORE) continue;
     const reasons = [...setup.reasons];
     const against = [...setup.against];
     const ltp = s.ltp ?? last.close;
@@ -266,7 +277,10 @@ export function shortSellList(stocks: ShortSellInput[], calLive: Calibration, ca
       key: s.key,
       symbol: s.symbol,
       score,
-      chance: m?.chance ?? null,
+      ownFell: own?.ownFell ?? 0,
+      ownDays: own?.ownDays ?? 0,
+      modelled: !!own,
+      chance: own ? own.chance : (m?.chance ?? null),
       similar: m?.n ?? 0,
       fellCount: m?.fell ?? 0,
       avgMove: m?.avgMove ?? 0,

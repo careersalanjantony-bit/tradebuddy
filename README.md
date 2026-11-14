@@ -38,6 +38,44 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.7
+
+- **An instant alert for every new idea:** every day-trade BUY / SELL-first signal that is not late
+  (no daily cap any more; ideas beyond your planned number of day trades or after your losing-trades
+  limit still alert, with a note), every sell-first idea from the "Falling now" scan (score 60+, each
+  stock once a day, safety cap 25), and new top picks (now also before an amount is set, sized for
+  ₹1 lakh). Alerts → "New top picks" is a new switch.
+- **Short selling: each stock its own chance** (`src/advisor/shortModel.ts`): a logistic regression +
+  boosted trees ensemble trained once a day (in a Web Worker) on ≈ a year of daily candles of every
+  stock in the list, on eleven numbers known at the open (distance from the 20-day average, 20 vs 50-day
+  average, 4-week and 1-week move, RSI, lower highs, red-candle volume, yesterday's move, ATR %, the
+  opening gap, the stock's own habit of falling). Label: the day ended ≥ 0.3 % below its open. It is
+  first trained on the older two thirds of the days and tested on the newest third; the screen shows
+  how its top-rated stocks really did on those unseen days. The old score bands are only used until
+  the first model exists.
+- **Tap a short-selling stock → full sell-first analysis** (Stock page → "Sell-first view"): entry,
+  stop-loss (buy back if it rises to), target 1 / target 2, quantity for your ₹ risk, most you lose,
+  risk : reward, results after charges; RSI 14 (daily and 5-minute), VWAP and price vs VWAP, EMA 9,
+  today's high / low, volume (vs 20-day average, today's pace, last candle), trend, ATR, support and
+  resistance, why it may fall, news with its mood, a practice button and the Upstox steps. During
+  market hours the plan comes from today's 5-minute candles; otherwise from daily data (stop half an
+  ATR above, 0.5–2 %).
+- **News always there:** Upstox's News API only gives news per stock (30 per request, last 7 days), so
+  the app asks for today's ideas, rising and falling stocks, top picks and your shares first, then
+  the day's biggest movers and the rest of the list (up to 90 stocks) — every 15 minutes in market
+  hours and every 45 minutes otherwise, weekends included. Headlines are kept for 7 days and saved on
+  the phone. News mood is shown on every stock page (buy and sell-first views) and used by the
+  short-selling list and the auto-trader.
+- **Look:** a softer, darker red (less bright, less saturated); the bottom bar's active icon is round
+  again (v1.6 drew a square frame around it); chart candles use the same colours.
+- **120 Hz:** the app asks Android for the screen's fastest refresh rate at the current resolution
+  (`preferredDisplayModeId`), and on Android 15+ marks the web view as wanting a high frame rate.
+  The phone still decides (battery saver, its own smoothness setting).
+- **Remembers where you were:** the Stocks tab keeps its view, filter, search and list length (also
+  after a restart), the last-built list is shown at once when you come back, and the scroll position
+  is restored when you return from a stock page (any tap stops the restore; the browser's own
+  restore is switched off so they do not fight).
+
 ## New in 1.6
 
 - **Black and red look:** deep black screens, red accents and gradients everywhere, a slow red glow

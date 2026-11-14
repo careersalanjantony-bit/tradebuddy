@@ -44,6 +44,8 @@ import { walletCover, walletShort } from './walletJobs';
 import { scanShorts } from './shortJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
 import { botReset, botSetEnabled, runBot } from './botJobs';
+import { analyzeShort, trainShortModelIfDue } from './shortJobs';
+import { startNewsChecks } from './newsJobs';
 
 initLogging('background');
 const log = createLogger('bg');
@@ -85,8 +87,17 @@ ready.catch(() => undefined); // logged above; keep the rejection from being "un
 ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up failed', { error: err }));
 // Self-learning: learn again when the last learning is a day old (a minute after start, so the screens come first).
 ready.then(() => setTimeout(() => void learnIfDue().catch(() => undefined), 60_000)).catch(() => undefined);
+// News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
+ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
 ready.then(() => startUpdateChecks()).catch(() => undefined);
+// Per-stock short-selling chance: train once a day (a little after start, then hourly checks).
+ready
+  .then(() => {
+    setTimeout(() => void trainShortModelIfDue().catch(() => undefined), 40_000);
+    setInterval(() => void trainShortModelIfDue().catch(() => undefined), 3600_000);
+  })
+  .catch(() => undefined);
 
 chrome.runtime.onInstalled.addListener((details) => {
   void ready.finally(() =>
@@ -281,6 +292,8 @@ const handlers: Handlers = {
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'update:check': async () => checkForUpdate(Date.now(), true),
   'bot:run': async () => ({ ok: !!(await runBot(Date.now(), true)) }),
+  'shorts:analyze': async ({ key }) => analyzeShort(key),
+  'shorts:model': async () => ({ trained: await trainShortModelIfDue(Date.now(), true) }),
   'bot:enable': async ({ enabled }) => (await botSetEnabled(enabled), { ok: true }),
   'bot:reset': async ({ forget }) => (await botReset(forget), { ok: true }),
   'wallet:cancel': async ({ id }) => {

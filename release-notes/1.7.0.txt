@@ -1,0 +1,7 @@
+An instant alert for every new BUY or SELL idea (day-trade signals, sell-first ideas and new top picks).
+"For short selling" now gives each stock its own fall chance, from a model that studied a year of prices.
+Tap a short-selling stock for its full sell-first plan: entry, stop-loss, targets, quantity, risk : reward, RSI, VWAP, volume, trend and news.
+News now also shows in the evening and on weekends, and is kept on the phone.
+A softer, darker red, and the bottom bar's icon is round again.
+Smoother screen: up to 120 Hz on phones that support it.
+The Stocks tab remembers your filter, search and scroll position when you open a stock and come back.

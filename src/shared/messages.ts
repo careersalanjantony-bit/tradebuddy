@@ -75,6 +75,8 @@ export interface ApiMap {
   'shorts:scan': { req: undefined; res: { ideas: number } };
   'update:check': { req: undefined; res: import('../update/update').UpdateState };
   'bot:run': { req: undefined; res: { ok: boolean } };
+  'shorts:analyze': { req: { key: string }; res: import('../background/shortJobs').LiveShortAnalysis | null };
+  'shorts:model': { req: undefined; res: { trained: boolean } };
   'bot:enable': { req: { enabled: boolean }; res: { ok: boolean } };
   'bot:reset': { req: { forget: boolean }; res: { ok: boolean } };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>> }; res: { done: true } };

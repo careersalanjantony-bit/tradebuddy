@@ -119,6 +119,15 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       }
     },
   },
+  {
+    to: 12,
+    description: 'app v1.7: per-stock short-selling model, stored news',
+    async up(kv) {
+      const { shortModel, newsCache } = await kv.get(['shortModel', 'newsCache']);
+      if (shortModel === undefined) await kv.set({ shortModel: null });
+      if (newsCache === undefined) await kv.set({ newsCache: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

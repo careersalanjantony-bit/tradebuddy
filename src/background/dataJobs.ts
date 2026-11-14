@@ -157,7 +157,8 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     if (m.phase === 'open' && m.session.openAt !== undefined && now >= m.session.openAt + 5 * 60_000) {
       await checkNewPicks(now).catch((err: unknown) => log.warn('Top-pick check failed', { error: err }));
     }
-    if (m.phase === 'open' || m.phase === 'pre_open') void refreshNews(now).catch(() => undefined);
+    // news in every phase (app v1.7): weekends and evenings too, paced inside refreshNews
+    void refreshNews(now).catch(() => undefined);
     if (m.phase === 'open') void refreshFlow(now).catch(() => undefined);
     void refreshBreadth(now).catch(() => undefined);
     if (m.phase === 'open') void scanShorts(now).catch(() => undefined);
@@ -284,8 +285,10 @@ export async function sendHoldSellAdvice(now = Date.now()): Promise<number> {
  * prices; announce each stock the first time it becomes a top pick that day (max 3 per check).
  */
 export async function checkNewPicks(now = Date.now()): Promise<string[]> {
-  const settings = await getSettings();
-  if (!settings.scanner.newPickAlerts || !settings.risk.capitalInr) return [];
+  const stored = await getSettings();
+  if (!stored.scanner.newPickAlerts) return [];
+  // app v1.7: alerts also before an amount is set — the plan is then sized for ₹1 lakh
+  const settings = stored.risk.capitalInr ? stored : { ...stored, risk: { ...stored.risk, capitalInr: 100_000 } };
   const last = await getSession('lastPickCheck');
   if (last && now - last < 5 * 60_000) return [];
   await setSession('lastPickCheck', now);
@@ -303,7 +306,7 @@ export async function checkNewPicks(now = Date.now()): Promise<string[]> {
   for (const p of fresh) {
     await notify(`alert:pick-${p.symbol}:${now}`, {
       title: `New top pick: ${p.symbol}`,
-      message: `Buy ${p.plan.qty} at ₹${p.plan.entry.toFixed(2)}. Possible +₹${Math.round(p.targetEarning).toLocaleString('en-IN')} · most you could lose ₹${Math.round(p.plan.riskRupees).toLocaleString('en-IN')}. Open Today to save it.`,
+      message: `Buy ${p.plan.qty} at ₹${p.plan.entry.toFixed(2)}${stored.risk.capitalInr ? '' : ' (for ₹1 lakh)'} · sell if it falls to ₹${p.plan.stop.toFixed(2)} · target ₹${p.plan.target.toFixed(2)}. Possible +₹${Math.round(p.targetEarning).toLocaleString('en-IN')} · most you could lose ₹${Math.round(p.plan.riskRupees).toLocaleString('en-IN')}. Hold a few days.`,
     });
   }
   if (fresh.length) {

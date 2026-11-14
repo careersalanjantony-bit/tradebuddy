@@ -306,7 +306,9 @@ const newsOk = await until(async () => (await page.$$('[data-testid="news-screen
 const reasons = await page.$$eval('[data-testid="news-screen"] .news-item', (els) => els.map((e) => e.getAttribute('data-reason')));
 const risingKeys = await page.evaluate(async () => ((await chrome.storage.session.get('flow')).flow?.rising ?? []).map((r) => r.key));
 const newsKeysUsed = await page.evaluate(async () => Object.keys((await chrome.storage.session.get('news')).news?.targets ?? {}));
-check('News only for stocks that matter today: rising now first, each with its reason', newsOk && reasons.length > 0 && reasons.every((r) => ['idea', 'rising', 'pick', 'holding', 'trade'].includes(r)) && risingKeys.every((k) => newsKeysUsed.includes(k)), `${reasons.join(',')} · ${newsKeysUsed.length} stocks asked`);
+check('News: the stocks that matter today first (ideas / rising), then the rest of the list, each with its reason', newsOk && reasons.length > 0 && ['idea', 'rising'].includes(reasons[0]) && reasons.every((r) => ['idea', 'rising', 'falling', 'pick', 'holding', 'trade', 'mover', 'market'].includes(r)) && risingKeys.every((k) => newsKeysUsed.includes(k)), `${reasons.join(',')} · ${newsKeysUsed.length} stocks asked`);
+const savedNews = await page.evaluate(async () => ((await chrome.storage.local.get('newsCache')).newsCache?.items ?? []).length);
+check('the headlines are also saved on the phone (shown after a restart or on a closed day)', savedNews > 0, `${savedNews} saved`);
 await page.click('.filter-chip[data-filter="rising"]');
 const afterFilter = await page.$$eval('[data-testid="news-screen"] .news-item', (els) => els.map((e) => e.getAttribute('data-reason')));
 check('the "Rising now" chip shows only rising stocks', afterFilter.length > 0 && afterFilter.every((r) => r === 'rising'));
@@ -422,6 +424,71 @@ await page.waitForSelector('[data-testid="short-sell-list"]', { timeout: 10000 }
 const ssText = ((await page.textContent('[data-testid="short-sell-list"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('Stocks → "For short selling": ranked by a measured chance, with an honest note (no 80–90% promises)', ssText.includes('Stocks for short selling') && ssText.includes('No study can find stocks that fall 80–90%'), ssText.slice(0, 160));
 
+console.log('── Sell-first analysis + remembered filters and scroll');
+// the short filter is still chosen from the section above; open the falling stock's sell-first view
+await page.evaluate((k) => (location.hash = `/stock/${encodeURIComponent(`${k}~short`)}`), fallKey());
+await page.waitForSelector('[data-testid="short-analysis"]', { timeout: 10000 }).catch(() => {});
+const saReady = await until(async () => ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').includes('Live plan'), 15000);
+const saText = ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check(
+  'a short-selling stock opens its full sell-first analysis: entry, stop-loss, two targets, quantity, risk : reward, RSI, VWAP, volume, trend, news',
+  saReady && ['Sell first at', 'Stop-loss', 'Target 1', 'Target 2', 'Quantity', 'Risk : reward', 'RSI 14', 'VWAP', 'Volume', 'Trend', 'News'].every((t) => saText.includes(t)) && /1 : \d/.test(saText),
+  saText.slice(0, 220),
+);
+check('the stock page has a Buy view / Sell-first view switch, opened on Sell-first', (await page.getAttribute('[data-testid="stock-view"] [data-view="short"]', 'aria-selected')) === 'true');
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-short-analysis.png'), fullPage: true });
+await page.goBack();
+await page.waitForSelector('[data-testid="short-sell-list"]', { timeout: 8000 }).catch(() => {});
+check('back on Stocks, the chosen filter is remembered (For short selling)', !!(await page.$('[data-testid="short-sell-list"]')) && (await page.getAttribute('.filter-chip[data-filter="short"]', 'class'))?.includes('on'));
+// scroll position: All stocks, scroll down, open a stock, come back
+await page.click('.filter-chip[data-filter="all"]');
+await page.waitForSelector('[data-testid="auto-list"] .stock-card, [data-testid="auto-list"] [role="button"], [data-testid="auto-list"] > *', { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(600);
+const before = await page.evaluate(() => `page ${document.documentElement.scrollHeight}, rows ${document.querySelectorAll('[data-testid="auto-list"] > *').length}`);
+const target = await page.evaluate(() => {
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  const y = Math.max(0, Math.min(900, max - 50));
+  window.scrollTo(0, y);
+  return y;
+});
+await page.waitForTimeout(400);
+const atOpen = await page.evaluate(() => {
+  const rows = [...document.querySelectorAll('[data-testid="auto-list"] > *')];
+  const r = rows.find((el) => el.getBoundingClientRect().top > 120);
+  r?.setAttribute('data-smoke-open', '1');
+  return { y: window.scrollY, rowTop: r ? Math.round(r.getBoundingClientRect().top) : null, sym: r?.getAttribute('data-symbol') ?? r?.textContent?.slice(0, 12) ?? '' };
+});
+// where the list really is when the stock opens (Playwright may scroll a little to click it)
+await page.evaluate(() =>
+  document.addEventListener(
+    'click',
+    () => {
+      const r = document.querySelector('[data-smoke-open="1"]');
+      window.__atLeave = { y: window.scrollY, rowTop: r ? Math.round(r.getBoundingClientRect().top) : null };
+    },
+    { once: true, capture: true },
+  ),
+);
+await page.click('[data-smoke-open="1"]').catch(() => {});
+await page.waitForTimeout(700);
+const onStock = await page.evaluate(() => location.hash.startsWith('#/stock/'));
+const leftAt = await page.evaluate(() => window.__atLeave ?? null);
+if (leftAt) Object.assign(atOpen, leftAt);
+await page.goBack();
+// the same row back at (about) the same place on the screen
+const restored = await until(
+  () =>
+    page.evaluate((want) => {
+      const rows = [...document.querySelectorAll('[data-testid="auto-list"] > *')];
+      const r = rows.find((el) => (el.getAttribute('data-symbol') ?? el.textContent?.slice(0, 12) ?? '') === want.sym);
+      return !!r && want.rowTop !== null && Math.abs(r.getBoundingClientRect().top - want.rowTop) < 40 && window.scrollY > 100;
+    }, atOpen),
+  6000,
+);
+const backY = await page.evaluate(() => `${window.scrollY} (page ${document.documentElement.scrollHeight}, hash ${location.hash}, filter ${localStorage.getItem('tb:stocks.filter')})`);
+check('opening a stock and coming back keeps the list where you were (scroll position)', target > 100 && onStock && restored, `scrolled to ${target} (${before}); opened ${atOpen.sym.trim()} with the list at ${atOpen.y}, row at ${atOpen.rowTop}; back at ${backY}`);
+
 console.log('── Me: account, lock');
 await page.click('.bottom-nav [data-nav="account"]');
 await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
@@ -465,7 +532,7 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: buy ideas, rising fast, sell-first ideas, closed-app checks and sounds — all on by default', switches.length === 5 && switches.every(Boolean), JSON.stringify(switches));
+check('Alerts card: day-trade BUY / SELL ideas, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 6 && switches.every(Boolean), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });

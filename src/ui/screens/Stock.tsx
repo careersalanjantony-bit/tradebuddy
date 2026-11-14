@@ -11,10 +11,16 @@ import { useInstrumentMap, useStockData } from '../data';
 import { useLocal } from '../hooks';
 import { AddStock } from './Watchlist';
 import { ExplainCard, StudyButton } from '../components/Explain';
+import { ShortAnalysis } from '../components/ShortAnalysis';
+import { StockNews } from '../components/StockNews';
 
 export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go }) {
   const watchlist = useLocal('watchlist') ?? [];
-  const key = keyParam ?? watchlist[0] ?? null;
+  // "<instrument key>~short" opens the sell-first view (app v1.7)
+  const [paramKey, mode] = (keyParam ?? '').split('~');
+  const key = paramKey || watchlist[0] || null;
+  const [view, setView] = useState<'buy' | 'short'>(mode === 'short' ? 'short' : 'buy');
+  const [shortLines, setShortLines] = useState<ChartLine[]>([]);
   const byKey = useInstrumentMap();
   const plans = useLocal('plans') ?? [];
   const { data, loading } = useStockData(key);
@@ -27,10 +33,11 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
   const sym = inst?.trading_symbol ?? key ?? '';
   const s = data?.snapshot ?? null;
   const plan = plans.find((p) => p.key === key && !p.practice && (p.status === 'planned' || p.status === 'open'));
-  const lines = useMemo<ChartLine[]>(
-    () => (plan ? [{ price: plan.entry, title: 'Entry', color: '#1f6feb' }, { price: plan.stop, title: 'Stop', color: '#cf222e' }, { price: plan.target, title: 'Target', color: '#1a7f37' }] : []),
+  const buyLines = useMemo<ChartLine[]>(
+    () => (plan ? [{ price: plan.entry, title: 'Entry', color: '#9aa0a6' }, { price: plan.stop, title: 'Stop', color: '#c23a48' }, { price: plan.target, title: 'Target', color: '#2fa36b' }] : []),
     [plan?.entry, plan?.stop, plan?.target],
   );
+  const lines = view === 'short' ? shortLines : buyLines;
 
   if (!key) {
     return (
@@ -101,10 +108,20 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
           </button>
         </div>
         {msg && <p class={`small ${msg.tone === 'ok' ? 'ok-text' : 'err-text'}`}>{msg.text}</p>}
+        <div class="segmented stock-view" role="tablist" data-testid="stock-view">
+          <button type="button" role="tab" aria-selected={view === 'buy'} data-view="buy" onClick={() => setView('buy')}>
+            ▲ Buy view
+          </button>
+          <button type="button" role="tab" aria-selected={view === 'short'} data-view="short" onClick={() => setView('short')}>
+            ▼ Sell-first view
+          </button>
+        </div>
       </section>
 
-      {s && <ExplainCard symbol={sym} snap={s} />}
-      {s && (
+      {view === 'short' && <ShortAnalysis stockKey={key} sym={sym} data={data ?? undefined} onLines={setShortLines} />}
+      {view === 'buy' && s && <ExplainCard symbol={sym} snap={s} />}
+      {view === 'buy' && <StockNews stockKey={key} side="buy" />}
+      {view === 'buy' && s && (
         <section class="card">
           <h2>Company study (free)</h2>
           <StudyButton

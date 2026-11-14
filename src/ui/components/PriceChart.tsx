@@ -36,18 +36,21 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
     });
     chartRef.current = chart;
 
+    // the app's own softer green and red (app v1.7)
+    const up = css('--ok', '#2fa36b');
+    const down = css('--err', '#c9505b');
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#1a7f37',
-      downColor: '#cf222e',
+      upColor: up,
+      downColor: down,
       borderVisible: false,
-      wickUpColor: '#1a7f37',
-      wickDownColor: '#cf222e',
+      wickUpColor: up,
+      wickDownColor: down,
     });
     candleSeries.setData(candles.map((c) => ({ time: c.date, open: c.open, high: c.high, low: c.low, close: c.close })));
 
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    vol.setData(candles.map((c) => ({ time: c.date, value: c.volume, color: c.close >= c.open ? 'rgba(26,127,55,0.35)' : 'rgba(207,34,46,0.35)' })));
+    vol.setData(candles.map((c) => ({ time: c.date, value: c.volume, color: c.close >= c.open ? 'rgba(47,163,107,0.3)' : 'rgba(201,80,91,0.3)' })));
 
     const closes = candles.map((c) => c.close);
     for (const [n, color] of [
@@ -60,8 +63,8 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
       line.setData(candles.flatMap((c, i) => (s[i] === null ? [] : [{ time: c.date, value: s[i]! }])));
     }
 
-    for (const l of supports) candleSeries.createPriceLine({ price: l.price, color: '#1a7f37', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: 'S' });
-    for (const l of resistances) candleSeries.createPriceLine({ price: l.price, color: '#cf222e', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: 'R' });
+    for (const l of supports) candleSeries.createPriceLine({ price: l.price, color: up, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: 'S' });
+    for (const l of resistances) candleSeries.createPriceLine({ price: l.price, color: down, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: 'R' });
     for (const l of lines) candleSeries.createPriceLine({ price: l.price, color: l.color, lineStyle: LineStyle.Solid, lineWidth: 2, axisLabelVisible: true, title: l.title });
 
     const total = candles.length;

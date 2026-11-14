@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { DEFAULT_SETTINGS } from '../storage/defaults';
 import { getLocal, getSettings, onLocalChanged } from '../storage/local';
 import { mergeWithDefaults } from '../storage/merge';
@@ -47,7 +47,7 @@ export function useNow(ms = 1000): number {
 }
 
 /** Hash routes like "#/stock/NSE_EQ%7CINE002A01018": [screen, param, go]. */
-export function useHashRoute<T extends string>(valid: readonly T[], fallback: T): [T, string | null, (r: T, param?: string | null) => void] {
+export function useHashRoute<T extends string>(valid: readonly T[], fallback: T, onLeave?: (from: T) => void): [T, string | null, (r: T, param?: string | null) => void] {
   const read = (): [T, string | null] => {
     const [screen, ...rest] = location.hash.replace(/^#\/?/, '').split('/');
     const r = (valid as readonly string[]).includes(screen ?? '') ? (screen as T) : fallback;
@@ -55,8 +55,16 @@ export function useHashRoute<T extends string>(valid: readonly T[], fallback: T)
     return [r, param];
   };
   const [route, setRoute] = useState<[T, string | null]>(read);
+  // the screen being left, told before the new one is drawn (app v1.7: its scroll position is kept)
+  const current = useRef(route[0]);
+  current.current = route[0];
+  const leave = useRef(onLeave);
+  leave.current = onLeave;
   useEffect(() => {
-    const onHash = () => setRoute(read());
+    const onHash = () => {
+      leave.current?.(current.current);
+      setRoute(read());
+    };
     addEventListener('hashchange', onHash);
     return () => removeEventListener('hashchange', onHash);
   }, []);

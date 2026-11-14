@@ -128,7 +128,8 @@ describe('news (Upstox News API shapes)', () => {
     expect(headlines(items, 5).map((i) => i.heading)).toEqual(['A wins a large order', 'Old story']);
     expect([...inTheNews(items, now)].sort()).toEqual(['NSE_EQ|A', 'NSE_EQ|B']);
     expect(mergeNews(items, items, now)).toHaveLength(3);
-    expect(mergeNews(items, [], now + 4 * 24 * 3600_000)).toEqual([]);
+    expect(mergeNews(items, [], now + 4 * 24 * 3600_000)).toHaveLength(3); // kept a week (app v1.7)
+    expect(mergeNews(items, [], now + 8 * 24 * 3600_000)).toEqual([]);
   });
 });
 
