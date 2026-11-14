@@ -30,13 +30,13 @@ Practice money, settings and login stay. Without the app, download the newest `T
 from the [updates branch](https://github.com/careersalanjantony-bit/tradebuddy/tree/updates) and
 open it — it installs over the old one. Uninstalling deletes all app data, including practice trades.
 
-**Signing key — to be replaced.** This repository was made public on 14 Nov 2026, so the signing key
-in `android/signing/` (and its password) can now be read by anyone. Android only accepts an update
-signed with the same key; with this key someone could build a fake "TradeBuddy" that installs over
-the real one *if you open their file*. Until the key is replaced: install TradeBuddy only from the
-updates branch or through **Update now**. The plan is a new private key with Android's key rotation
-(`apksigner --lineage`), which keeps your data and makes phones refuse files signed with the old key.
-It needs a private place to keep the new key (a private repository), never this public one.
+**Signing keys (from 1.5.1).** Android only installs an update signed with the app's key. The first
+key became public when this repository was made public (14 Nov 2026), so 1.5.1 switched to a new
+key using Android's key rotation: on Android 9+ the app is signed with the new key plus a record,
+signed by the old key, that hands over to the new one. Phones keep their data, and after 1.5.1 they
+refuse files signed with the old key alone (its "rollback" right is off). Android 7–8 keep the old
+key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
+repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
 ## New in 1.5
 
@@ -50,7 +50,7 @@ It needs a private place to keep the new key (a private repository), never this 
   file must be TradeBuddy, a newer version, and signed with the app's key. Then Android's own installer
   asks "Do you want to update this app?" — nothing installs without that tap. Android also refuses
   any file not signed with the same key.
-- **Publishing a version:** build the APK, copy it to `release/TradeBuddy-<version>.apk`, write
+- **Publishing a version:** `npm run apk` (builds and signs `release/TradeBuddy-<version>.apk`), write
   `release-notes/<version>.txt` (one plain-words line per change), push, then `npm run release`
   (replaces the `updates` branch with the new files, one commit, so it never grows).
 

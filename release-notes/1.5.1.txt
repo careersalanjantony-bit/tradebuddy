@@ -1,0 +1,1 @@
+Safer updates: TradeBuddy now uses a new private signing key. Your phone accepts this update and keeps your data, and from now on refuses fake copies signed with the old key.

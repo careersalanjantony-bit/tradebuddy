@@ -8,10 +8,8 @@ def appVersion = pkg.version as String
 def parts = appVersion.tokenize('.').collect { it as int }
 def appVersionCode = parts[0] * 10000 + parts[1] * 100 + parts[2]
 
-// Signing key for installable builds. The same key must sign every update, or Android refuses it.
-def signingProps = new Properties()
-def signingFile = file('../signing/signing.properties')
-if (signingFile.exists()) signingFile.withInputStream { signingProps.load(it) }
+// Release builds come out unsigned. scripts/build-apk.mjs signs them with the keys in the private
+// tradebuddy-keys repository (new key + the old key's rotation lineage). Never put keys in this repo.
 
 android {
     namespace = "in.tradebuddy.app"
@@ -29,20 +27,8 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    signingConfigs {
-        release {
-            if (signingFile.exists()) {
-                storeFile file("../signing/${signingProps['storeFile']}")
-                storePassword signingProps['storePassword']
-                keyAlias signingProps['keyAlias']
-                keyPassword signingProps['keyPassword']
-                storeType 'pkcs12'
-            }
-        }
-    }
     buildTypes {
         release {
-            if (signingFile.exists()) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

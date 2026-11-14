@@ -11,3 +11,9 @@ smoke-output/
 *.log
 .DS_Store
 release/
+# signing keys live only in the private tradebuddy-keys repository
+android/signing/
+*.p12
+*.jks
+*.keystore
+lineage.bin
