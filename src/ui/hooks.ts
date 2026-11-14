@@ -6,13 +6,22 @@ import type { LocalKey, LocalStore, Settings } from '../storage/schema';
 import { getSession, onSessionChanged, type SessionKey, type SessionStore } from '../storage/session';
 import { marketState, type MarketState } from '../data/calendar';
 
+/** the last value seen per key: a screen opened again shows it at once instead of flickering (app v1.9) */
+const localSeen = new Map<LocalKey, unknown>();
+
 /** Live view of one chrome.storage.local key. `undefined` while loading or when unset. */
 export function useLocal<K extends LocalKey>(key: K): LocalStore[K] | undefined {
-  const [value, setValue] = useState<LocalStore[K] | undefined>(undefined);
+  const [value, setValue] = useState<LocalStore[K] | undefined>(() => localSeen.get(key) as LocalStore[K] | undefined);
   useEffect(() => {
     let alive = true;
-    void getLocal(key).then((v) => alive && setValue(v));
-    const off = onLocalChanged(key, (v) => setValue(v));
+    void getLocal(key).then((v) => {
+      localSeen.set(key, v);
+      if (alive) setValue(v);
+    });
+    const off = onLocalChanged(key, (v) => {
+      localSeen.set(key, v);
+      setValue(v);
+    });
     return () => {
       alive = false;
       off();

@@ -1,0 +1,6 @@
+🚀 Breakout Today (Day trade tab, below Falling now): live buy-first ideas. An alert the moment a stock breaks above today's high with a volume surge, then a separate ✅ Confirmed alert when the 5-minute candle closes above.
+Each idea shows breakout price, current price, time, volume jump, entry, stop-loss, two targets and the quantity for your risk. Stale ideas are marked Too late and removed; each alert comes once.
+Notification tones: pick Cash register, Falling coins, Jackpot, Market bell, Profit chime, Soft pop or your phone's sound. Alerts pop up at the top of the screen, also when the app is closed.
+Alerts also appear as a banner inside the app, and tapping an alert opens its screen.
+The auto-trader now also learns from breakouts and from the Stocks tab's "For short selling" list.
+"Save mobile data" switch on the Breakout card if your data pack is small.

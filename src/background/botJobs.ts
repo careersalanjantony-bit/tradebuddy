@@ -2,7 +2,7 @@ import { calibrate, historyPairs, indicatorsOf, shortSellList, shortSetupAt, typ
 import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
 import { stockChance } from '../advisor/shortModel';
 import { dailyShortPlan, type DailyShortPlan } from '../advisor/shortPlan';
-import { newBrain, learnFrom, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
+import { newBrain, learnFrom, upgradeBrain, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
 import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, trailStop, type Idea } from '../bot/policy';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
@@ -105,7 +105,9 @@ let seq = 0;
 const newId = (now: number) => `B${now.toString(36)}${(seq++ % 1296).toString(36)}`;
 
 export async function getBot(now = Date.now()): Promise<BotState> {
-  return (await getLocal('bot')) ?? newBot(now);
+  const b = await getLocal('bot');
+  // app v1.9: a brain saved by an older version learns the new kinds of trade (breakouts) too
+  return b ? { ...b, brain: upgradeBrain(b.brain) } : newBot(now);
 }
 
 async function marketCtx(now: number): Promise<MarketCtx> {
@@ -317,7 +319,15 @@ export function resetBotStudies(): void {
 async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<Idea[]> {
   const today = istDate(now);
   const t = minutesIST(now);
-  const [signals, flow, breadth, shortIdeas, news] = await Promise.all([getSession('daySignals'), getSession('flow'), getSession('breadth'), getSession('shortIdeas'), getSession('news')]);
+  const [signals, flow, breadth, shortIdeas, news, breakouts, boTest] = await Promise.all([
+    getSession('daySignals'),
+    getSession('flow'),
+    getSession('breadth'),
+    getSession('shortIdeas'),
+    getSession('news'),
+    getSession('breakouts'),
+    getLocal('breakoutTest'),
+  ]);
   const br = breadth && breadth.advanced + breadth.declined > 20 ? (breadth.advanced - breadth.declined) / (breadth.advanced + breadth.declined) : 0;
   const mood = (key: string): number => {
     const s = stockSentiment((news?.items ?? []).filter((i) => i.key === key), now);
@@ -382,6 +392,29 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     const measured = studies.shortChance.get(s.key);
     const prior = measured ?? Math.min(0.55, Math.max(0.35, 0.4 + (s.score - 60) / 200));
     ideas.push({ key: s.key, symbol: s.symbol, strategy: 'short', side: 'short', price: q.ltp, stop: s.plan.stop, target: s.plan.t2, t1: s.plan.t1, ctx: ctxOf(s.key, q, 'short', prior, s.plan.stop, -1), reasons: [`falling now (score ${s.score})`, ...s.reasons.slice(0, 2).map((x) => x.text), ...(measured !== undefined ? [`similar days fell ${Math.round(measured * 100)}% of the time`] : [])] });
+  }
+  // 5. the Stocks tab's live "For short selling" list (app v1.9): each stock's own fall chance from its
+  //    model, only while it trades below today's opening price; plan from its daily prices
+  for (const tTop of studies.shortTop) {
+    const q = quotes[tTop.key];
+    if (!tTop.live || !fresh(q) || ideas.some((i) => i.key === tTop.key && i.side === 'short')) continue;
+    if (q.ltp >= tTop.plan.stop || q.ltp <= tTop.plan.t1 || (q.open !== null && q.ltp >= q.open)) continue;
+    const prior = Math.min(0.7, Math.max(0.3, tTop.chance));
+    ideas.push({ key: tTop.key, symbol: tTop.symbol, strategy: 'short', side: 'short', price: q.ltp, stop: tTop.plan.stop, target: tTop.plan.t2, t1: tTop.plan.t1, ctx: ctxOf(tTop.key, q, 'short', prior, tTop.plan.stop, -1), reasons: ['in the Stocks tab’s “For short selling” list', `its own chance from a year of prices: ${Math.round(tTop.chance * 100)}%`, ...tTop.reasons.slice(0, 1)] });
+  }
+  // 6. 🚀 breakouts (app v1.9): fresh live breakouts above today's resistance with a volume surge; the
+  //    chance starts from the breakout rule's past test and the brain learns from every result.
+  //    Target = 1× the risk from the price now (the same as the past test's first target).
+  const boPrior = boTest && boTest.older.trades + boTest.newer.trades >= 20 ? boTest.winRate : 0.45;
+  for (const b of breakouts?.date === today ? breakouts.signals : []) {
+    const q = quotes[b.key];
+    if ((b.status !== 'breakout' && b.status !== 'confirmed') || !fresh(q) || now - (b.confirmedAt ?? b.at) > 10 * 60_000) continue;
+    const R0 = b.plan.entry - b.plan.stop;
+    if (q.ltp <= b.plan.stop || q.ltp > b.plan.entry + 0.3 * R0) continue;
+    const stop = b.plan.stop;
+    const target = Math.round((q.ltp + (q.ltp - stop)) * 20) / 20;
+    const prior = Math.min(0.62, Math.max(0.35, boPrior + (b.status === 'confirmed' ? 0.03 : 0) + (b.score - 60) / 500));
+    ideas.push({ key: b.key, symbol: b.symbol, strategy: 'breakout', side: 'long', price: q.ltp, stop, target, ctx: ctxOf(b.key, q, 'breakout', prior, stop, 1), reasons: [b.status === 'confirmed' ? `confirmed breakout above ₹${b.level.toFixed(2)}` : `broke above ₹${b.level.toFixed(2)} with a volume surge`, ...b.reasons.slice(1, 3)] });
   }
   return ideas;
 }

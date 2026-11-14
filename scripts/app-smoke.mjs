@@ -29,7 +29,7 @@ const check = (name, ok, detail = '') => {
 };
 
 // ---------- static server for dist/
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.map': 'application/json', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.map': 'application/json', '.json': 'application/json', '.ogg': 'audio/ogg' };
 const server = createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   const f = join(dist, p === '/' ? 'index.html' : p);
@@ -66,6 +66,27 @@ function fallCandles() {
   mock.fallLast = c;
   return out.reverse();
 }
+/**
+ * App v1.9 breakout stock: a Nifty 50 company with no other role in this test (Adani Enterprises, in
+ * the app's built-in Nifty 50 list). Its morning climbs slowly with pullbacks under a high of ₹200.45;
+ * the test then lifts the price above it with a burst of volume, and the live engine must alert at once.
+ */
+const BREAK = 'NSE_EQ|INE423A01024';
+const BREAK_SYM = 'ADANIENT';
+allRows.push({ ...eq[0], name: 'Adani Enterprises Ltd.', trading_symbol: BREAK_SYM, isin: 'INE423A01024', instrument_key: BREAK, exchange_token: '99999' });
+mock.breakPrice = 200.3;
+mock.breakVol = 1_000_000;
+const BREAK_CLOSES = [199.0, 199.4, 199.1, 199.6, 199.3, 199.8, 199.5, 200.0, 199.7, 200.2, 199.9, 200.3, 200.0, 200.3, 200.1];
+function breakCandles() {
+  const out = BREAK_CLOSES.map((c, i) => {
+    const o = i === 0 ? 198.8 : BREAK_CLOSES[i - 1];
+    const m = 15 + i * 5;
+    const hh = String(9 + Math.floor(m / 60)).padStart(2, '0');
+    const mm = String(m % 60).padStart(2, '0');
+    return [`2026-11-16T${hh}:${mm}:00+05:30`, o, Math.max(o, c) + 0.15, Math.min(o, c) - 0.15, c, i === 0 ? 80_000 : 40_000, 0];
+  });
+  return out.reverse();
+}
 const hashPct = (k) => ([...k].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 1000) / 1000;
 const priceOf = (key) => {
   if (symOf[key] === FALL) return Math.round((mock.fallPrice ?? BASE[FALL] * 0.988) * 20) / 20;
@@ -84,12 +105,17 @@ async function upstox(route) {
   if (url.pathname === '/v3/market-quote/ltp') {
     const data = {};
     // other NSE companies (the Nifty 500 breadth): about one in three up
-    for (const k of keys) if (!symOf[k] && k.startsWith('NSE_EQ|INE')) data[`NSE_EQ:${k.slice(7)}`] = { last_price: hashPct(k) < 0.32 ? 101 : 99, instrument_token: k, ltq: 1, volume: 1000, cp: 100 };
+    for (const k of keys) if (!symOf[k] && k !== BREAK && k.startsWith('NSE_EQ|INE')) data[`NSE_EQ:${k.slice(7)}`] = { last_price: hashPct(k) < 0.32 ? 101 : 99, instrument_token: k, ltq: 1, volume: 1000, cp: 100 };
     for (const k of keys) if (symOf[k]) data[`NSE_EQ:${symOf[k]}`] = { last_price: priceOf(k), instrument_token: k, ltq: 1, volume: 100000, cp: (BASE[symOf[k]] ?? 500) };
+    if (keys.includes(BREAK)) data[`NSE_EQ:${BREAK_SYM}`] = { last_price: mock.breakPrice, instrument_token: BREAK, ltq: 1, volume: mock.breakVol, cp: 199.5 };
+    mock.ltpCalls = (mock.ltpCalls ?? 0) + 1;
+    if (keys.includes(BREAK)) mock.breakSeen = (mock.breakSeen ?? 0) + 1;
+    mock.lastLtpKeys = keys.length;
     return route.fulfill(json({ status: 'success', data }));
   }
   if (url.pathname === '/v3/market-quote/ohlc') {
     const data = {};
+    if (keys.includes(BREAK)) data[`NSE_EQ:${BREAK_SYM}`] = { last_price: mock.breakPrice, instrument_token: BREAK, prev_ohlc: { open: 199, high: 200, low: 198.5, close: 199.5, volume: 1, ts: 0 }, live_ohlc: { open: 198.8, high: Math.max(200.45, mock.breakPrice), low: 198.65, close: mock.breakPrice, volume: mock.breakVol, ts: 0 } };
     for (const k of keys) {
       if (!symOf[k]) continue;
       const b = BASE[symOf[k]] ?? 500;
@@ -115,6 +141,7 @@ async function upstox(route) {
     return route.fulfill(json({ status: 'success', data }));
   }
   if (url.pathname.startsWith('/v3/historical-candle/intraday/') && decodeURIComponent(url.pathname).includes(fallKey())) return route.fulfill(json({ status: 'success', data: { candles: fallCandles() } }));
+  if (url.pathname.startsWith('/v3/historical-candle/intraday/') && decodeURIComponent(url.pathname).includes(BREAK)) return route.fulfill(json({ status: 'success', data: { candles: breakCandles() } }));
   if (url.pathname.startsWith('/v3/historical-candle')) return route.fulfill(json({ status: 'success', data: { candles: [] } }));
   if (url.pathname.startsWith('/v2/fundamentals')) return route.fulfill(json({ status: 'success', data: [] }));
   if (/\/order|gtt/i.test(url.pathname)) mock.calls.push('ORDER-LIKE ' + url.pathname);
@@ -360,6 +387,59 @@ const covered = await until(() => page.evaluate(async () => ((await chrome.stora
 check('"Buy back now" closes the rest of the sell-first trade', covered);
 mock.fallPrice = undefined;
 
+console.log('── Breakout Today (live)');
+await page.click('.bottom-nav [data-nav="daytrade"]');
+await page.waitForSelector('[data-testid="breakouts"]', { timeout: 15000 }).catch(() => {});
+const boOrder = await page.evaluate(() => {
+  const cards = [...document.querySelectorAll('section.card')].map((c) => c.getAttribute('data-testid'));
+  return cards.indexOf('breakouts') - cards.indexOf('falling-now');
+});
+check('"🚀 Breakout Today — buy-first ideas" sits directly below "Falling now"', boOrder === 1, `${boOrder}`);
+const boStatus = ((await page.textContent('[data-testid="breakout-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('it says it checks the list on every live price', /Checking \d+ stocks on every live price/.test(boStatus), boStatus);
+// the price crosses ₹200.45 with a burst of volume → alert at once (no waiting for the 5-minute scan)
+let boFound = false;
+for (let i = 0; i < 4 && !boFound; i++) {
+  mock.breakPrice = 200.85;
+  mock.breakVol += 100_000;
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+  boFound = await until(async () => !!(await page.$(`[data-testid="breakouts"] .bo-idea[data-symbol="${BREAK_SYM}"]`)), 6000);
+}
+if (!boFound) {
+  const dbg = await page.evaluate(async (k) => {
+    const b = (await chrome.storage.session.get('breakouts')).breakouts;
+    const q = (await chrome.storage.session.get('quotes')).quotes?.[k];
+    const lp = (await chrome.storage.session.get('lastPoll')).lastPoll;
+    const u = (await chrome.storage.local.get('universe')).universe;
+    const st = (await chrome.storage.local.get('settings')).settings;
+    return { uni: u ? { index: u.index, source: u.source, n: u.members.length, first: u.members.slice(0, 3).map((m) => m.isin), hasFill: u.members.some((m) => m.isin === 'INF000000000') } : null, setUni: st.scanner.universe, now: new Date(Date.now()).toISOString(), at: b ? new Date(b.at).toISOString() : null, scanned: b?.scanned, signals: b?.signals?.length, q, lastPoll: lp ? { ...lp, at: new Date(lp.at).toISOString() } : null };
+  }, BREAK);
+  console.log('DEBUG breakout:', JSON.stringify(dbg), 'ltpCalls', mock.ltpCalls, 'breakSeen', mock.breakSeen, 'lastLtpKeys', mock.lastLtpKeys, 'BREAK', BREAK);
+}
+const boSig = await page.evaluate(async () => (await chrome.storage.session.get('breakouts')).breakouts?.signals?.[0]);
+const boText = ((await page.textContent(`.bo-idea[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check(
+  'a live breakout shows at once: name, breakout price, current price, time, volume jump, entry, stop-loss, two targets and quantity',
+  boFound && boSig?.status === 'breakout' && Math.abs(boSig.level - 200.45) < 1e-6 && ['🚀 Breakout', 'Breakout price', '₹200.85', 'Current price', 'Volume increase', 'Breakout time', 'Stop-loss', 'Target 1', 'Target 2', 'shares'].every((w) => boText.includes(w)),
+  boSig ? `${boSig.symbol} ${boSig.price} > ${boSig.level}, ${boSig.volX.toFixed(1)}× volume, ${boSig.plan.qty} @ ${boSig.plan.entry} stop ${boSig.plan.stop} t1 ${boSig.plan.t1} t2 ${boSig.plan.t2}` : boText.slice(0, 160),
+);
+const bannerShown = await until(async () => ((await page.textContent('.alert-banners').catch(() => '')) ?? '').includes(`Breakout: ${BREAK_SYM}`), 5000);
+check('the alert pops up inside the app at the top (with the chosen tone)', bannerShown);
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-alert-banner.png') });
+await page.waitForTimeout(400);
+await page.$eval(`.bo-idea[data-symbol="${BREAK_SYM}"]`, (el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-breakout.png') });
+await page.click('.alert-banner-close').catch(() => {});
+await page.click(`.bo-idea[data-symbol="${BREAK_SYM}"] [data-testid="breakout-practice"]`);
+const sheetOk = await until(async () => ((await page.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').includes(BREAK_SYM), 5000);
+check('"Practice buy" opens the buy panel with the breakout’s quantity, stop-loss and target', sheetOk);
+await page.keyboard.press('Escape').catch(() => {});
+await page.click('.sheet-backdrop', { position: { x: 10, y: 10 } }).catch(() => {});
+const sentOnce = await page.evaluate(async () => (await chrome.storage.local.get('breakoutAlerted')).breakoutAlerted?.ids ?? []);
+check('each breakout alert is sent once (remembered even if the app restarts)', sentOnce.length === 1 && sentOnce[0].endsWith('-early'), JSON.stringify(sentOnce));
+mock.breakPrice = 200.3;
+
 console.log('── In-app updates');
 mock.updateVersion = '9.9.9';
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'update:check', payload: undefined }));
@@ -421,6 +501,7 @@ mock.move = 0;
 mock.fallPrice = undefined;
 await page.click('.bottom-nav [data-nav="today"]');
 await page.waitForSelector('[data-testid="home-greeting"]', { timeout: 8000 }).catch(() => {});
+await until(async () => ((await page.textContent('[data-testid="home-greeting"]').catch(() => '')) ?? '').includes('Alan'), 4000);
 const greet = ((await page.textContent('[data-testid="home-greeting"]').catch(() => '')) ?? '').trim();
 const motto = ((await page.textContent('[data-testid="motto"]').catch(() => '')) ?? '').trim();
 check('Home: "Good morning Alan!" and a short motivation line under it', greet.startsWith('Good morning Alan!') && motto.length > 5 && motto.length <= 40, `${greet} / ${motto}`);
@@ -577,10 +658,21 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: day-trade BUY / SELL ideas, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 6 && switches.every(Boolean), JSON.stringify(switches));
+check('Alerts card: day-trade BUY / SELL ideas, breakouts, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 7 && switches.every(Boolean), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });
+const tones = await page.$$eval('[data-testid="tone-settings"] .tone-row', (els) => els.map((e) => e.getAttribute('data-tone')));
+check('Notification tone: several money sounds (+ the phone’s own), "Cash register" chosen at first', tones.length >= 7 && tones.includes('coins') && tones.includes('jackpot') && (await page.getAttribute('[data-tone="cash"] .tone-pick', 'aria-checked')) === 'true', tones.join(', '));
+await page.click('[data-tone="coins"] .tone-pick');
+const toneSet = await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.tone === 'coins'), 5000);
+const toneNow = await page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.tone);
+const coinsOn = await until(async () => (await page.getAttribute('[data-tone="coins"] .tone-pick', 'aria-checked')) === 'true' && (await page.$('[data-tone="coins"].on')) !== null, 4000);
+check('choosing a tone saves it (and plays it)', toneSet && coinsOn, `tone ${toneNow}`);
+const toneFile = await page.evaluate(async () => (await fetch('sounds/tone_coins.ogg')).ok);
+check('the tone files are part of the app', toneFile);
+await page.$eval('[data-testid="tone-settings"]', (el) => el.scrollIntoView({ block: 'start' }));
+await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-tones.png') });
 
 console.log('── Safety');
 check('no order / GTT request was ever made', !mock.calls.some((c) => c.startsWith('ORDER-LIKE')), `${mock.calls.length} fake Upstox calls`);

@@ -73,6 +73,8 @@ export interface ApiMap {
   'wallet:short': { req: import('../wallet/wallet').ShortRequest; res: { price: number } };
   'wallet:cover': { req: { key: string }; res: { pnl: number } };
   'shorts:scan': { req: undefined; res: { ideas: number } };
+  'breakouts:scan': { req: undefined; res: { found: number } };
+  'breakouts:test': { req: undefined; res: { done: boolean } };
   'update:check': { req: undefined; res: import('../update/update').UpdateState };
   'bot:run': { req: undefined; res: { ok: boolean } };
   'ideas:suggest': { req: { side: 'buy' | 'sell' }; res: { at: number; marketOpen: boolean; items: import('../background/botJobs').Suggestion[] } };

@@ -12,6 +12,7 @@ interface AppUpdaterPlugin {
   download(o: { url: string; size: number; sha256: string }): Promise<{ versionName: string; versionCode: number; sha256: string; bytes: number }>;
   canInstall(): Promise<{ allowed: boolean; downloaded: boolean; downloadedVersion?: string }>;
   openInstallSettings(): Promise<void>;
+  openNotificationSettings(o: { channel?: string }): Promise<void>;
   install(): Promise<void>;
   clear(): Promise<void>;
   addListener(event: 'downloadProgress', cb: (p: { done: number; total: number }) => void): Promise<PluginListenerHandle>;
@@ -122,4 +123,15 @@ export async function cleanupDownloaded(offered: string | null): Promise<void> {
 
 export function resetUpdateStep(): void {
   set({ step: 'idle' });
+}
+
+/** App v1.9: the phone's notification settings for TradeBuddy (pop-ups, sound), or for one alert channel. */
+export async function openNotificationSettings(channel?: string): Promise<boolean> {
+  if (!isNative()) return false;
+  try {
+    await AppUpdater.openNotificationSettings(channel ? { channel } : {});
+    return true;
+  } catch {
+    return false;
+  }
 }

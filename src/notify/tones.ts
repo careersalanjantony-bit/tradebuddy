@@ -30,9 +30,12 @@ const PATTERNS: Record<SoundKind, Tone[]> = {
 
 let ctx: AudioContext | null = null;
 
+const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))]);
+
 export async function playTone(kind: SoundKind): Promise<void> {
   ctx ??= new AudioContext();
-  if (ctx.state === 'suspended') await ctx.resume();
+  // a browser may hold audio until the screen is touched: never wait for it
+  if (ctx.state === 'suspended') await within(ctx.resume(), 500);
   const t0 = ctx.currentTime + 0.05;
   for (const t of PATTERNS[kind] ?? PATTERNS.info) {
     const osc = ctx.createOscillator();

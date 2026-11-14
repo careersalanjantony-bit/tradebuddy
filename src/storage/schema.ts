@@ -121,6 +121,8 @@ export interface Settings {
     maxLossesPerDay: number;
     /** most you want to lose on one sell-first trade, ₹ (app v1.4) */
     shortRiskInr?: number;
+    /** most you want to lose on one breakout (buy-first) trade, ₹ (app v1.9) */
+    breakoutRiskInr?: number;
     /** notification + sound for new signals */
     alerts: boolean;
   };
@@ -143,12 +145,18 @@ export interface Settings {
     background: boolean;
     /** app v1.4: alert about strong sell-first (short) ideas, max 3 a day */
     shorts?: boolean;
+    /** app v1.9: instant alerts for live breakouts and confirmed breakouts */
+    breakouts?: boolean;
+    /** app v1.9: the sound of every notification (also with the app closed) */
+    tone?: import('../notify/toneList').ToneId;
   };
   data: {
     candleHistoryYears: number;
     fetchFullHistory: boolean;
     /** instant prices over the Upstox WebSocket feed (v0.12.0) */
     liveFeed: boolean;
+    /** app v1.9: prices only on the live feed (much less mobile data); volume then comes every ~10 s */
+    saveData?: boolean;
   };
   logging: {
     level: LogLevel;
@@ -295,6 +303,10 @@ export interface LocalStore {
   appUpdate: import('../update/update').UpdateState | null;
   /** past test of the sell-first (short) rules (app v1.4) */
   shortTest: (import('../daytrade/shortScan').ShortTestReport & { at: number }) | null;
+  /** past test of the confirmed-breakout rule on the 5-minute history (app v1.9) */
+  breakoutTest: (import('../daytrade/breakout').BreakoutTestReport & { at: number }) | null;
+  /** breakout alerts already sent today (kept across app restarts: never the same alert twice) */
+  breakoutAlerted: { date: string; ids: string[] } | null;
   /** the app's own profile and lock (app v1.3); null until set up */
   account: import('../account/account').AccountState | null;
   /** practice money (app v1.0); null until first used */

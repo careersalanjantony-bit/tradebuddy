@@ -12,6 +12,12 @@ export const RUNNER_LABEL = 'in.tradebuddy.background';
 export interface BackgroundConfig {
   enabled: boolean;
   rising: boolean;
+  /** app v1.9: closed-app breakout check, its ₹ risk, and the notification channel of the chosen tone */
+  breakouts: boolean;
+  breakoutRisk: number;
+  channel: string;
+  /** per stock: yesterday's high and the usual daily volume */
+  levels: Record<string, { ph: number; av: number }>;
   token: string | null;
   holidays: string[];
   universe: string[];

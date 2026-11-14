@@ -13,6 +13,7 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { setSession } from '../storage/session';
 import { dayKeys } from './dayJobs';
 import { testShorts } from './shortJobs';
+import { testBreakouts } from './breakoutJobs';
 
 /**
  * Self-learning jobs: learn from the stored 5-minute history (after the day-trade test, every
@@ -47,6 +48,7 @@ export function learnNow(now = Date.now()): Promise<MlReport | null> {
         log.info('Not enough 5-minute history to learn yet', { days: dates.length, signals: candidates.length });
       }
       void testShorts(now).catch(() => undefined);
+      void testBreakouts(now).catch(() => undefined);
       return report;
     } catch (err) {
       log.warn('Learning failed', { error: errorMessage(err) });

@@ -11,6 +11,12 @@
  *   2. Rising fast: stocks up from the open, above the day's average price, with clearly more
  *      buyers than sellers → at most 3 alerts a day, each stock once.
  *   3. Morning reminder at about 9:15 if the app was not opened yet today.
+ *   4. Breakouts (app v1.9): a stock breaking above YESTERDAY's high right now, near today's high,
+ *      above the day's average price, with clearly more volume than usual for this time of day and
+ *      more buyers than sellers → at most 3 alerts a day, each stock once. (The app itself watches
+ *      every price live and uses today's 5-minute candles; this is the simpler check it can do
+ *      while closed, every ~15 minutes, from Upstox's own quotes.)
+ * Every alert uses the tone chosen in the app (its own notification channel).
  * Read-only: it only reads prices from Upstox. It never places an order.
  * Plain JavaScript on purpose (no imports, no build step): the background engine runs this file as is.
  */
@@ -18,6 +24,8 @@
 var API = 'https://api.upstox.com';
 var IST_MS = 5.5 * 3600 * 1000;
 var CHANNEL = 'trade-alerts';
+// the notification channel of the tone chosen in the app (set from the app's settings at each check)
+var channel = CHANNEL;
 
 function kvGet(key, fallback) {
   try {
@@ -45,7 +53,7 @@ function notifyId(text) {
 }
 
 function notify(id, title, body) {
-  CapacitorNotifications.schedule([{ id: notifyId(id), title: title, body: body, largeBody: body, channelId: CHANNEL, smallIcon: 'ic_stat_tradebuddy', autoCancel: true }]);
+  CapacitorNotifications.schedule([{ id: notifyId(id), title: title, body: body, largeBody: body, channelId: channel, smallIcon: 'ic_stat_tradebuddy', autoCancel: true }]);
 }
 
 function rupees(x) {
@@ -97,16 +105,81 @@ function risingFast(data) {
   return rows;
 }
 
+/** price rounded to the 0.05 tick: down for a stop, up for a target */
+function tickDown(x) {
+  return Math.floor(x / 0.05 + 1e-9) * 0.05;
+}
+function tickUp(x) {
+  return Math.ceil(x / 0.05 - 1e-9) * 0.05;
+}
+
+/**
+ * Breakouts from the full market quote: above yesterday's high (by 0.05 %–0.8 %), within 0.3 % of
+ * today's high, above the open and the day's average price, volume ≥ 1.5× usual for this time of day,
+ * ≥ 55 % of waiting orders are buys, not up more than 6 % today. `levels[key]` = { ph: yesterday's
+ * high, av: average daily volume }, from the app. Plan: stop just under yesterday's high (0.35 %–1.5 %
+ * below the price), targets at 1× and 2× that risk, quantity for `risk` rupees.
+ */
+function breakouts(data, levels, t, risk) {
+  var rows = [];
+  var elapsed = Math.min(1, Math.max(0.1, (t - (9 * 60 + 15)) / 375));
+  Object.keys(data).forEach(function (k) {
+    var q = data[k];
+    if (!q || !q.instrument_token || !(q.last_price > 0)) return;
+    var lv = levels && levels[q.instrument_token];
+    if (!lv || !(lv.ph > 0) || !(lv.av > 0)) return;
+    var p = q.last_price;
+    var o = q.ohlc || {};
+    var vwap = q.average_price;
+    var buy = q.total_buy_quantity || 0;
+    var sell = q.total_sell_quantity || 0;
+    var prev = typeof q.net_change === 'number' ? p - q.net_change : null;
+    if (!o.open || !o.high || !vwap || !prev || buy + sell <= 0 || !(q.volume > 0)) return;
+    var ext = p / lv.ph - 1;
+    if (ext < 0.0005 || ext > 0.008) return;
+    if (p < o.high * 0.997 || p <= o.open || p <= vwap) return;
+    var volX = q.volume / (lv.av * elapsed);
+    var buyShare = buy / (buy + sell);
+    var change = (p / prev - 1) * 100;
+    if (volX < 1.5 || buyShare < 0.55 || change > 6) return;
+    var stop = Math.min(lv.ph * (1 - 0.0015), p * (1 - 0.0035));
+    stop = Math.max(stop, p * (1 - 0.015));
+    stop = Math.round(tickDown(stop) * 100) / 100;
+    var R = p - stop;
+    if (!(R > 0)) return;
+    rows.push({
+      key: q.instrument_token,
+      symbol: q.symbol || k.split(':')[1] || k,
+      ltp: p,
+      level: lv.ph,
+      volX: volX,
+      buyShare: buyShare,
+      stop: stop,
+      t1: Math.round(tickUp(p + R) * 100) / 100,
+      t2: Math.round(tickUp(p + 2 * R) * 100) / 100,
+      qty: Math.max(1, Math.floor(risk / R)),
+      risk: Math.round(R * Math.max(1, Math.floor(risk / R)) * 100) / 100,
+      score: Math.min(4, volX) * 2 + (buyShare - 0.5) * 10 - ext * 100,
+    });
+  });
+  rows.sort(function (a, b) {
+    return b.score - a.score;
+  });
+  return rows;
+}
+
 async function check(now) {
   var cfg = kvGet('cfg', null);
   if (!cfg || !cfg.enabled || !cfg.token) return 'not set up';
+  channel = cfg.channel || CHANNEL;
   var p = istParts(now);
   if (p.weekday === 0 || p.weekday === 6 || (cfg.holidays || []).indexOf(p.date) >= 0) return 'market closed';
   // the app is running: it alerts live, nothing to do here
   if (cfg.appActiveAt && now - cfg.appActiveAt < 6 * 60 * 1000) return 'app running';
 
-  var sent = kvGet('sent', { date: '', ids: [], rising: 0 });
-  if (sent.date !== p.date) sent = { date: p.date, ids: [], rising: 0 };
+  var sent = kvGet('sent', { date: '', ids: [], rising: 0, breakouts: 0 });
+  if (sent.date !== p.date) sent = { date: p.date, ids: [], rising: 0, breakouts: 0 };
+  sent.breakouts = sent.breakouts || 0;
 
   // 3. morning reminder
   if (p.t >= 9 * 60 + 5 && p.t <= 9 * 60 + 45 && sent.ids.indexOf('morning') < 0 && cfg.lastOpenDate !== p.date) {
@@ -150,14 +223,35 @@ async function check(now) {
     kvSet('hits', hits);
   }
 
-  // 2. rising fast
-  if (cfg.rising && sent.rising < 3 && p.t >= 9 * 60 + 30 && p.t <= 14 * 60 + 30 && (cfg.universe || []).length) {
+  // 2. rising fast, 4. breakouts (one read of the quotes for both)
+  var wantRising = cfg.rising && sent.rising < 3 && p.t >= 9 * 60 + 30 && p.t <= 14 * 60 + 30;
+  var wantBreakouts = cfg.breakouts !== false && cfg.levels && sent.breakouts < 3 && p.t >= 9 * 60 + 30 && p.t <= 14 * 60 + 45;
+  if ((wantRising || wantBreakouts) && (cfg.universe || []).length) {
     var keys = cfg.universe;
     var rows = [];
+    var found = [];
     for (var i = 0; i < keys.length; i += 500) {
       var data = await getJson('/v2/market-quote/quotes?instrument_key=' + encodeURIComponent(keys.slice(i, i + 500).join(',')), cfg.token);
-      rows = rows.concat(risingFast(data));
+      if (wantRising) rows = rows.concat(risingFast(data));
+      if (wantBreakouts) found = found.concat(breakouts(data, cfg.levels, p.t, cfg.breakoutRisk || 100));
     }
+    found.sort(function (a, b) {
+      return b.score - a.score;
+    });
+    var bo = found.filter(function (r) {
+      return sent.ids.indexOf('bo-' + r.key) < 0;
+    })[0];
+    if (wantBreakouts && bo) {
+      notify(
+        'bg-bo-' + bo.key + '-' + p.date,
+        '🚀 Breakout: ' + bo.symbol + ' ' + rupees(bo.ltp) + ' above yesterday’s high ' + rupees(bo.level),
+        bo.volX.toFixed(1) + '× usual volume, ' + Math.round(bo.buyShare * 100) + '% of waiting orders are buys. Buy around ' + rupees(bo.ltp) + ' · stop-loss ' + rupees(bo.stop) + ' · target 1 ' + rupees(bo.t1) + ' · target 2 ' + rupees(bo.t2) + ' · ' + bo.qty + ' shares (risk ' + rupees(bo.risk) + '). Found while TradeBuddy was closed — open it to check the live chart first. Sell by 3:10 pm.',
+      );
+      sent.ids.push('bo-' + bo.key);
+      sent.breakouts++;
+    }
+  }
+  if (wantRising && (cfg.universe || []).length) {
     rows.sort(function (a, b) {
       return b.score - a.score;
     });
@@ -210,4 +304,4 @@ addEventListener('drain', function (resolve, reject, args) {
 });
 
 // for tests (Node): expose the pieces
-if (typeof module !== 'undefined') module.exports = { check: check, risingFast: risingFast, istParts: istParts };
+if (typeof module !== 'undefined') module.exports = { check: check, risingFast: risingFast, breakouts: breakouts, istParts: istParts };

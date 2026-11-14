@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { openDB, type IDBPDatabase } from 'idb';
+import { appOnScreen } from './appState';
 
 /**
  * TradeBuddy started as a Chrome extension. Its tested logic talks to a handful of `chrome.*` APIs
@@ -210,7 +211,7 @@ function tickAlarms(): void {
 const onNotificationClicked = new Event<(id: string) => void>();
 const shownNotifications = new Map<string, { title: string; message: string }>();
 export interface NotificationBackend {
-  show(id: string, title: string, message: string, opts: { requireInteraction?: boolean; priority?: number }): Promise<void>;
+  show(id: string, title: string, message: string, opts: { requireInteraction?: boolean; priority?: number; onScreen?: boolean }): Promise<void>;
   clear(id: string): Promise<void>;
 }
 let notificationBackend: NotificationBackend = {
@@ -226,6 +227,8 @@ let notificationBackend: NotificationBackend = {
     /* browser notifications close themselves */
   },
 };
+/** Window event for alerts shown inside the app (detail: { id, title, message, at }). */
+export const ALERT_EVENT = 'tb-alert';
 export function setNotificationBackend(b: NotificationBackend): void {
   notificationBackend = b;
 }
@@ -317,7 +320,10 @@ export function installChromeShim(version: string): void {
     notifications: {
       create: async (id: string, o: { title: string; message: string; requireInteraction?: boolean; priority?: number }) => {
         shownNotifications.set(id, { title: o.title, message: o.message });
-        await notificationBackend.show(id, o.title, o.message, { ...(o.requireInteraction ? { requireInteraction: true } : {}), ...(o.priority !== undefined ? { priority: o.priority } : {}) });
+        // app v1.9: on screen → the app shows the alert itself (a banner at the top, with the chosen tone)
+        const onScreen = appOnScreen();
+        if (onScreen) window.dispatchEvent(new CustomEvent(ALERT_EVENT, { detail: { id, title: o.title, message: o.message, at: Date.now() } }));
+        await notificationBackend.show(id, o.title, o.message, { ...(o.requireInteraction ? { requireInteraction: true } : {}), ...(o.priority !== undefined ? { priority: o.priority } : {}), onScreen });
         return id;
       },
       clear: async (id: string) => {

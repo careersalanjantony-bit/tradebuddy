@@ -12,8 +12,9 @@ import { setSession } from '../storage/session';
 import { upstoxRequest } from '../upstox/client';
 
 /**
- * Instant prices (v0.12.0): Upstox Market Data Feed V3 over a WebSocket, in "ltpc" mode (last price
- * and previous close) — docs checked 12 Nov 2026:
+ * Instant prices (v0.12.0): Upstox Market Data Feed V3 over a WebSocket — "full" mode since app v1.9
+ * (price, VWAP, today's volume, buy / sell quantities, 1-minute candles), "ltpc" for any extra keys —
+ * docs checked 12 Nov 2026 (proto re-checked 14 Nov 2026):
  *   GET /v3/feed/market-data-feed/authorize → data.authorized_redirect_uri (a one-time wss:// address);
  *   after connecting, send {guid, method:"sub", data:{mode:"ltpc", instrumentKeys}} as a BINARY frame;
  *   messages are protobuf (see data/feedProto.ts). Limits: 2 connections, 5000 keys in ltpc mode.
@@ -70,6 +71,7 @@ export function closeFeed(reason: string): void {
   const sock = ws;
   ws = null;
   subscribed = new Set();
+  fullKeys = new Set();
   try {
     sock.close(1000, reason);
   } catch {
@@ -78,13 +80,37 @@ export function closeFeed(reason: string): void {
   void status(true);
 }
 
+/**
+ * App v1.9: the first FULL_KEYS stocks are asked for in "full" mode (adds VWAP, today's volume, the
+ * waiting buy / sell quantities and 1-minute candles — needed for live breakout alerts); the rest
+ * in "ltpc" mode (price only). Upstox allows fewer keys in full mode than in ltpc mode.
+ */
+export const FULL_KEYS = 1500;
+
+/** stocks asked for in "full" mode right now, and how many may be ("Save mobile data" → none) */
+let fullKeys = new Set<string>();
+let fullRoom = FULL_KEYS;
+
+/**
+ * Brings the subscription in line with `keys`: new stocks are added, old ones removed, and a stock
+ * whose mode should change (the "Save mobile data" switch) is moved with Upstox's change_mode.
+ */
 function resubscribe(sock: WebSocket, keys: string[]): void {
   const want = new Set(keys);
-  const add = keys.filter((k) => !subscribed.has(k));
   const remove = [...subscribed].filter((k) => !want.has(k));
   for (const part of chunk(remove, 500)) sock.send(subscribeMessage(part, 'unsub'));
-  for (const part of chunk(add, 500)) sock.send(subscribeMessage(part, 'sub'));
+  const wantFull = new Set(keys.slice(0, fullRoom));
+  const add = keys.filter((k) => !subscribed.has(k));
+  const addFull = add.filter((k) => wantFull.has(k));
+  const addPlain = add.filter((k) => !wantFull.has(k));
+  const toFull = keys.filter((k) => subscribed.has(k) && wantFull.has(k) && !fullKeys.has(k));
+  const toPlain = keys.filter((k) => subscribed.has(k) && !wantFull.has(k) && fullKeys.has(k));
+  for (const part of chunk(addFull, 500)) sock.send(subscribeMessage(part, 'sub', undefined, 'full'));
+  for (const part of chunk(addPlain, 500)) sock.send(subscribeMessage(part, 'sub', undefined, 'ltpc'));
+  for (const part of chunk(toFull, 500)) sock.send(subscribeMessage(part, 'change_mode', undefined, 'full'));
+  for (const part of chunk(toPlain, 500)) sock.send(subscribeMessage(part, 'change_mode', undefined, 'ltpc'));
   subscribed = want;
+  fullKeys = wantFull;
 }
 
 async function flush(): Promise<void> {
@@ -111,6 +137,7 @@ function open(uri: string, keys: string[]): void {
   ws = sock;
   sock.onopen = () => {
     subscribed = new Set();
+    fullKeys = new Set();
     lastError = undefined;
     badMessages = 0;
     resubscribe(sock, keys);
@@ -160,6 +187,8 @@ export async function ensureFeed(now = Date.now(), force = false): Promise<strin
   }
   const keys = [...(await trackedKeys()), ...INDEX_KEYS];
   watched = new Set(keys);
+  // full details (volume, VWAP, 1-minute candles) for breakout alerts, unless "Save mobile data" is on
+  fullRoom = settings.data.saveData ? 0 : FULL_KEYS;
   if (ws && ws.readyState === WebSocket.OPEN) {
     resubscribe(ws, keys);
     return 'connected';

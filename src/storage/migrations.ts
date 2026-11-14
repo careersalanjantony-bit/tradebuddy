@@ -128,6 +128,15 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (newsCache === undefined) await kv.set({ newsCache: null });
     },
   },
+  {
+    to: 13,
+    description: 'app v1.9: breakout past test and sent alerts',
+    async up(kv) {
+      const { breakoutTest, breakoutAlerted } = await kv.get(['breakoutTest', 'breakoutAlerted']);
+      if (breakoutTest === undefined) await kv.set({ breakoutTest: null });
+      if (breakoutAlerted === undefined) await kv.set({ breakoutAlerted: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

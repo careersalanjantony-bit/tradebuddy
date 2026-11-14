@@ -15,6 +15,19 @@ export async function getRawCandles(key: string): Promise<Candle[]> {
   return rows.map(({ instrument_key: _k, ...c }) => c);
 }
 
+/** The newest `n` stored daily candles of a stock, oldest first (reads only those, app v1.9). */
+export async function getRecentCandles(key: string, n: number): Promise<Candle[]> {
+  const db = await getDb();
+  const out: Candle[] = [];
+  let cur = await db.transaction('candles').store.openCursor(IDBKeyRange.bound([key, ''], [key, '￿']), 'prev');
+  while (cur && out.length < n) {
+    const { instrument_key: _k, ...c } = cur.value;
+    out.push(c);
+    cur = await cur.continue();
+  }
+  return out.reverse();
+}
+
 async function lastStoredDate(key: string): Promise<string | null> {
   const db = await getDb();
   const cur = await db.transaction('candles').store.openCursor(IDBKeyRange.bound([key, ''], [key, '￿']), 'prev');

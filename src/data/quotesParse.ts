@@ -15,6 +15,13 @@ export interface Quote {
   prevClose: number | null;
   /** when we received it (epoch ms) */
   fetchedAt: number;
+  /** app v1.9, from the live feed in full mode: the day's average traded price (VWAP) */
+  vwap?: number | null;
+  /** quantity waiting to buy / to sell (full mode) */
+  buyQty?: number | null;
+  sellQty?: number | null;
+  /** the latest 1-minute candle (full mode) */
+  m1?: { open: number; high: number; low: number; close: number; vol: number; ts: number } | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -68,6 +75,8 @@ export function mergeLtp(prev: Record<string, Quote>, ltpData: unknown, fetchedA
     if (typeof key !== 'string' || ltp === null || !(ltp > 0)) continue;
     const old = quotes[key];
     quotes[key] = {
+      // app v1.9: keep what the live feed added (VWAP, waiting buy / sell quantities, 1-minute candle)
+      ...(old ?? {}),
       key,
       ltp,
       open: old?.open ?? null,
@@ -86,7 +95,12 @@ export function mergeLtp(prev: Record<string, Quote>, ltpData: unknown, fetchedA
  * Applies live feed ticks (WebSocket) to the stored quotes. Only watched stocks; a tick that is more
  * than 25% away from the stored price or previous close is treated as bad data and ignored.
  */
-export function mergeTicks(prev: Record<string, Quote>, ticks: Array<{ key: string; ltp: number; cp: number; ltt?: number; ltq?: number }>, watched: ReadonlySet<string>, fetchedAt: number): { quotes: Record<string, Quote>; updated: number } {
+export function mergeTicks(
+  prev: Record<string, Quote>,
+  ticks: Array<{ key: string; ltp: number; cp: number; ltt?: number; ltq?: number; atp?: number; vtt?: number; tbq?: number; tsq?: number; day?: { open: number; high: number; low: number }; m1?: Quote['m1'] }>,
+  watched: ReadonlySet<string>,
+  fetchedAt: number,
+): { quotes: Record<string, Quote> & Record<string, Quote>; updated: number } {
   const quotes = { ...prev };
   let updated = 0;
   for (const t of ticks) {
@@ -94,15 +108,21 @@ export function mergeTicks(prev: Record<string, Quote>, ticks: Array<{ key: stri
     const old = quotes[t.key];
     const ref = old?.ltp ?? (t.cp > 0 ? t.cp : null);
     if (ref !== null && Math.abs(t.ltp / ref - 1) > 0.25) continue;
+    // full mode (app v1.9) also brings today's candle, volume, VWAP and the waiting buy / sell quantities
+    const day = t.day && t.day.open > 0 ? t.day : null;
     quotes[t.key] = {
       key: t.key,
       ltp: t.ltp,
-      open: old?.open ?? null,
-      high: old?.high !== null && old?.high !== undefined ? Math.max(old.high, t.ltp) : null,
-      low: old?.low !== null && old?.low !== undefined && old.low > 0 ? Math.min(old.low, t.ltp) : (old?.low ?? null),
-      volume: old?.volume ?? null,
+      open: day ? day.open : (old?.open ?? null),
+      high: day ? Math.max(day.high, t.ltp) : old?.high !== null && old?.high !== undefined ? Math.max(old.high, t.ltp) : null,
+      low: day && day.low > 0 ? Math.min(day.low, t.ltp) : old?.low !== null && old?.low !== undefined && old.low > 0 ? Math.min(old.low, t.ltp) : (old?.low ?? null),
+      volume: t.vtt !== undefined && t.vtt > 0 ? t.vtt : (old?.volume ?? null),
       prevClose: t.cp > 0 ? t.cp : (old?.prevClose ?? null),
       fetchedAt,
+      ...(t.atp !== undefined && t.atp > 0 ? { vwap: t.atp } : old?.vwap ? { vwap: old.vwap } : {}),
+      ...(t.tbq !== undefined ? { buyQty: t.tbq } : old?.buyQty !== undefined ? { buyQty: old.buyQty } : {}),
+      ...(t.tsq !== undefined ? { sellQty: t.tsq } : old?.sellQty !== undefined ? { sellQty: old.sellQty } : {}),
+      ...(t.m1 ? { m1: t.m1 } : old?.m1 ? { m1: old.m1 } : {}),
     };
     updated++;
   }

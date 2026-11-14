@@ -192,6 +192,34 @@ public class AppUpdaterPlugin extends Plugin {
         }
     }
 
+    /**
+     * App v1.9: opens the phone's notification settings for TradeBuddy (or for one alert channel), where
+     * "Pop on screen" / "Floating notifications" and the sound can be allowed. Some phones turn pop-ups
+     * off for new apps.
+     */
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        String channel = call.getString("channel", "");
+        try {
+            Intent i;
+            if (Build.VERSION.SDK_INT >= 26 && channel != null && !channel.isEmpty()) {
+                i = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+                i.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+                i.putExtra(Settings.EXTRA_CHANNEL_ID, channel);
+            } else if (Build.VERSION.SDK_INT >= 26) {
+                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                i.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            } else {
+                i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
+            }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not open the setting. Open Settings → Apps → TradeBuddy → Notifications.");
+        }
+    }
+
     /** Hands the checked file to Android's installer, which asks "Do you want to update this app?". */
     @PluginMethod
     public void install(PluginCall call) {

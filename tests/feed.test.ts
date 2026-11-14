@@ -74,6 +74,71 @@ describe('Upstox Market Data Feed V3 decoder', () => {
   });
 });
 
+describe('full mode (app v1.9): VWAP, volume, buy / sell quantities, candles', () => {
+  it('reads every full-mode field exactly as the official definition encodes it', () => {
+    const bytes = encode({
+      type: 1,
+      currentTs: 1763264400500,
+      feeds: {
+        'NSE_EQ|INE002A01018': {
+          requestMode: 1,
+          fullFeed: {
+            marketFF: {
+              ltpc: { ltp: 1510.5, ltt: 1763264400000, ltq: 10, cp: 1500 },
+              marketLevel: { bidAskQuote: [{ bidQ: 100, bidP: 1510.4, askQ: 50, askP: 1510.6 }] },
+              marketOHLC: {
+                ohlc: [
+                  { interval: '1d', open: 1501, high: 1512, low: 1498, close: 1510.5, vol: 1234567, ts: 1763235000000 },
+                  { interval: 'I1', open: 1507, high: 1509.5, low: 1506.5, close: 1509, vol: 18000, ts: 1763264280000 },
+                  { interval: 'I1', open: 1509, high: 1511, low: 1508.5, close: 1510.5, vol: 25000, ts: 1763264340000 },
+                ],
+              },
+              atp: 1505.25,
+              vtt: 1234567,
+              oi: 0,
+              iv: 0,
+              tbq: 120000,
+              tsq: 80000,
+            },
+          },
+        },
+        'NSE_INDEX|Nifty 50': { fullFeed: { indexFF: { ltpc: { ltp: 26000, cp: 25900 }, marketOHLC: { ohlc: [{ interval: '1d', open: 25950, high: 26050, low: 25900, close: 26000, vol: 0, ts: 1763235000000 }] } } } },
+      },
+    });
+    const d = decodeFeedResponse(bytes);
+    const stock = d.ticks.find((t) => t.key === 'NSE_EQ|INE002A01018')!;
+    expect(stock).toMatchObject({ ltp: 1510.5, cp: 1500, ltq: 10, atp: 1505.25, vtt: 1234567, tbq: 120000, tsq: 80000 });
+    expect(stock.day).toMatchObject({ open: 1501, high: 1512, low: 1498, vol: 1234567 });
+    expect(stock.m1).toMatchObject({ ts: 1763264340000, vol: 25000, close: 1510.5 }); // the newest minute
+    const index = d.ticks.find((t) => t.key === 'NSE_INDEX|Nifty 50')!;
+    expect(index.ltp).toBe(26000);
+    expect(index.day?.open).toBe(25950);
+    expect(index.atp).toBeUndefined();
+  });
+
+  it('merges volume, VWAP, buy / sell quantities and today\'s open / high / low into the stored price', () => {
+    const now = 1763264401000;
+    const { quotes } = mergeTicks(
+      { K: { key: 'K', ltp: 1500, open: null, high: null, low: null, volume: 1000, prevClose: 1500, fetchedAt: now - 30_000 } },
+      [{ key: 'K', ltp: 1510.5, cp: 1500, atp: 1505.25, vtt: 1234567, tbq: 120000, tsq: 80000, day: { open: 1501, high: 1512, low: 1498 }, m1: { open: 1509, high: 1511, low: 1508.5, close: 1510.5, vol: 25000, ts: 1763264340000 } }],
+      new Set(['K']),
+      now,
+    );
+    expect(quotes.K).toMatchObject({ ltp: 1510.5, open: 1501, high: 1512, low: 1498, volume: 1234567, vwap: 1505.25, buyQty: 120000, sellQty: 80000, fetchedAt: now });
+    expect(quotes.K!.m1?.vol).toBe(25000);
+  });
+
+  it('can move stocks between modes ("Save mobile data")', () => {
+    const msg = JSON.parse(new TextDecoder().decode(subscribeMessage(['A', 'B'], 'change_mode', 'g2', 'ltpc')));
+    expect(msg).toEqual({ guid: 'g2', method: 'change_mode', data: { mode: 'ltpc', instrumentKeys: ['A', 'B'] } });
+  });
+
+  it('asks for "full" mode when told to', () => {
+    const msg = JSON.parse(new TextDecoder().decode(subscribeMessage(['A'], 'sub', 'g1', 'full')));
+    expect(msg).toEqual({ guid: 'g1', method: 'sub', data: { mode: 'full', instrumentKeys: ['A'] } });
+  });
+});
+
 describe('merging live ticks into the stored prices', () => {
   const q = (ltp: number): Quote => ({ key: 'K', ltp, open: 99, high: 101, low: 98, volume: 500, prevClose: 97, fetchedAt: 1 });
   it('updates the price, stretches the day high/low, keeps open and volume', () => {

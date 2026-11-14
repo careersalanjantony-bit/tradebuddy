@@ -67,6 +67,8 @@ export interface SessionStore {
   /** "Falling now" sell-first ideas (app v1.4) */
   shortIdeas: { at: number; ideas: import('../background/shortJobs').ShortIdea[]; risk: number };
   shortAlerted: { date: string; keys: string[] };
+  /** "Breakout today" live ideas (app v1.9) */
+  breakouts: { date: string; at: number; scanned: number; signals: import('../background/breakoutJobs').BreakoutSignal[] };
   /** rising-fast alerts sent today (app v1.1) */
   risingAlerted: { date: string; keys: string[] };
   /** self-learning in progress (app v1.0) */

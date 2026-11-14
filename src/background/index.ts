@@ -21,7 +21,7 @@ import { upstoxRequest } from '../upstox/client';
 import { parseFunds } from '../advisor/capital';
 import { registerRouter, type Handlers } from './router';
 import { notify } from '../notify/chrome';
-import { playSound } from '../notify/sound';
+import { playSound, toneJustPlayed } from '../notify/sound';
 import { catchUp, isJob, POLL_ALARM, runJob, runPoll, scheduleAll } from './scheduler';
 import { checkPracticeTrades, practiceBuy, practiceReset, practiceSell } from './practiceJobs';
 import { dayClose, dayReset, dayTake, dayTick, ensureIntraday, syncIntradayAll } from './dayJobs';
@@ -42,6 +42,8 @@ import { WALLET_START } from '../wallet/wallet';
 import { learnIfDue, learnNow } from './mlJobs';
 import { walletCover, walletShort } from './walletJobs';
 import { scanShorts } from './shortJobs';
+import { scanBreakouts, testBreakouts } from './breakoutJobs';
+import { testBreakoutsIfDue } from './breakoutJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
 import { botReset, botSetEnabled, runBot, suggestIdeas } from './botJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
@@ -87,6 +89,8 @@ ready.catch(() => undefined); // logged above; keep the rejection from being "un
 ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up failed', { error: err }));
 // Self-learning: learn again when the last learning is a day old (a minute after start, so the screens come first).
 ready.then(() => setTimeout(() => void learnIfDue().catch(() => undefined), 60_000)).catch(() => undefined);
+// app v1.9: the breakout rule's past test (also redone after each learning run)
+ready.then(() => setTimeout(() => void testBreakoutsIfDue().catch(() => undefined), 90_000)).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
@@ -191,7 +195,8 @@ const handlers: Handlers = {
       title: sound === 'stop' ? 'TEST — STOP HIT sound' : sound === 'target' ? 'TEST — TARGET sound' : 'TEST — alert sound',
       message: 'This is a test from Diagnostics. Real alerts look like this.',
     });
-    return { played: await playSound(sound, true) };
+    // on screen the alert itself already played the chosen tone (app v1.9): no second sound
+    return { played: toneJustPlayed() || (await playSound(sound, true)) };
   },
   'instruments:refresh': async () => ({ count: await ensureInstruments(true) }),
   'universe:refresh': async ({ force }) => {
@@ -290,6 +295,11 @@ const handlers: Handlers = {
   },
   'wallet:cover': async ({ key }) => walletCover(key),
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
+  'breakouts:scan': async () => ({ found: await scanBreakouts(Date.now()) }),
+  'breakouts:test': async () => {
+    await testBreakouts(Date.now());
+    return { done: true };
+  },
   'update:check': async () => checkForUpdate(Date.now(), true),
   'bot:run': async () => ({ ok: !!(await runBot(Date.now(), true)) }),
   'ideas:suggest': async ({ side }) => suggestIdeas(side),

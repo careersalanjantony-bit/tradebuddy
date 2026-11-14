@@ -38,6 +38,51 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.9
+
+- **🚀 Breakout Today — buy-first ideas** (Day trade tab, right below "Falling now"). From 9:15 the
+  app builds every stock's 5-minute candle from the live Upstox prices and checks it on **every
+  price update** (about once a second with the WebSocket feed, every 2 seconds without it):
+  - **Breakout alert at once** — no waiting for the 5-minute scan — when the price goes at least
+    0.05 % above the resistance (today's high of the finished candles; with only the first candle,
+    the higher of it and yesterday's high; never below the day's high Upstox reports) **with a sudden
+    volume surge** (this candle's volume ≥ 2× a normal candle's for the time elapsed, or a 1-minute
+    candle ≥ 2× a normal minute), above **VWAP** and **EMA 9**, **RSI** 55–80, **momentum** (above
+    today's open and +0.2 % over 15 minutes) and enough trading (₹25 lakh per candle).
+  - **✅ Confirmed breakout** — a separate alert when the 5-minute candle **closes** above the
+    resistance with ≥ 1.5× normal volume, above VWAP and EMA 9. Closing back below = failed.
+  - Each idea shows the stock, **breakout price, current price, breakout time, volume increase,
+    entry, stop-loss** (just under the broken level, 0.35 %–1.5 % below), **target 1** (1× the risk,
+    half) and **target 2** (2×, the rest), and the **quantity for your ₹ risk** (₹50/100/200/500),
+    with the result after charges at both targets and at the stop. Practice buy and Upstox steps.
+  - **Too late** when the price already ran more than 0.8 % above the level (no alert), after
+    10 minutes, or after 3:00 pm; marked when the stop-loss or target 2 is reached; old ideas are
+    removed after 30 minutes. Each alert is sent **once** (remembered across app restarts).
+  - **Genuine data only:** a price older than 15 seconds is never used; a candle the app could not
+    follow from its start (app opened late, phone asleep) is read again from Upstox instead of being
+    guessed, and confirmed from that real candle.
+  - **Past test:** the confirmed rule (bought at the next candle's open, half at target 1 then the
+    stop moves to the buy price, the rest at target 2, the stop or 3:10 pm) on the stored 5-minute
+    history, older half vs newest half.
+  - With the app closed, the background checker (about every 15 minutes) also looks for stocks
+    breaking above **yesterday's** high with 1.5× the usual volume for the time of day, above the day's
+    average price and with more buyers — at most 3 alerts a day.
+- **Notification tones:** six original money sounds made for TradeBuddy (Cash register, Falling
+  coins, Jackpot, Market bell, Profit chime, Soft pop) or the phone's own sound, with a preview, in
+  Settings → Notification tone. Each tone has its own Android notification channel ("high
+  importance"), so it also plays when the app is closed and the alert **pops up at the top of the
+  screen**. "Send a test alert" and "Allow pop-ups in phone settings" (some phones switch pop-ups off
+  for new apps). While the app is on screen, alerts appear as a banner inside the app with the tone,
+  and tapping any alert opens its screen.
+- **The auto-trader learns from breakouts** (a new kind of trade with its own weight and scorecard;
+  its starting chance comes from the breakout past test) and from the Stocks tab's live **"For short
+  selling"** list (each stock's own fall chance), besides the day-trade signals, Rising today, top
+  picks and Falling now it already used. Older saved brains keep everything they learned.
+- **Live feed in full mode** (volume, VWAP, waiting buy / sell quantities, 1-minute candles) for the
+  breakout engine. It uses more mobile data (about 1.3 MB an hour per stock); **"Save mobile data"**
+  on the Breakout card switches the feed to prices only (about 0.25 MB an hour per stock) — volume
+  then comes from the ~10-second check, so alerts can be a few seconds later.
+
 ## New in 1.8
 
 - **Auto-trader without limits:** no cap on open trades, on new trades a day, on a day's loss or on

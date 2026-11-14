@@ -11,13 +11,14 @@
  * Pure functions only — no storage, no network.
  */
 
-export type Strategy = 'day-buy' | 'rising' | 'swing' | 'short';
-export const STRATEGIES: Strategy[] = ['day-buy', 'rising', 'swing', 'short'];
+export type Strategy = 'day-buy' | 'rising' | 'swing' | 'short' | 'breakout';
+export const STRATEGIES: Strategy[] = ['day-buy', 'rising', 'swing', 'short', 'breakout'];
 export const STRATEGY_LABEL: Record<Strategy, string> = {
   'day-buy': 'Day-trade buy ideas',
   rising: 'Rising today',
   swing: 'Top picks (hold a few days)',
   short: 'Sell first (falling stocks)',
+  breakout: 'Breakout today (buy first)',
 };
 
 /** What the brain looks at for each idea, all in the trade's own direction (for a sell-first trade, "up" means "down"). */
@@ -41,7 +42,8 @@ export interface IdeaContext {
   riskPct: number;
 }
 
-export const FEATURES = ['base', 'day-buy', 'rising', 'swing', 'short', 'studies', 'move', 'pressure', 'breadth', 'time', 'news', 'vwap', 'risk'] as const;
+/** the order matters (saved weights follow it): new features are only ever added at the end */
+export const FEATURES = ['base', 'day-buy', 'rising', 'swing', 'short', 'studies', 'move', 'pressure', 'breadth', 'time', 'news', 'vwap', 'risk', 'breakout'] as const;
 
 /** Plain words for each feature, for "what it learned". [when the weight grows, when it shrinks] */
 export const FEATURE_WORDS: Record<(typeof FEATURES)[number], [string, string]> = {
@@ -58,6 +60,7 @@ export const FEATURE_WORDS: Record<(typeof FEATURES)[number], [string, string]> 
   news: ['good news (bad news for sell-first) helps', 'news makes little difference'],
   vwap: ['being well above the day\'s average price helps', 'buying far above the day\'s average price is risky'],
   risk: ['wider safety nets work better', 'tighter safety nets work better'],
+  breakout: ['breakouts above resistance keep going', 'breakouts often fail and fall back'],
 };
 
 const clip = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
@@ -77,6 +80,7 @@ export function features(c: IdeaContext): number[] {
     clip(c.news, -1, 1),
     clip(c.vwapPct, -2, 2),
     clip(c.riskPct - 1, -1, 2),
+    c.strategy === 'breakout' ? 1 : 0,
   ];
 }
 
@@ -105,6 +109,17 @@ export function newBrain(): Brain {
   const w0 = FEATURES.map((f) => (f === 'studies' ? 1 : 0));
   const by = Object.fromEntries(STRATEGIES.map((s) => [s, { n: 0, wins: 0, pnl: 0, r: 0 }])) as Record<Strategy, StrategyStats>;
   return { v: 1, w: [...w0], w0, n: 0, wins: 0, by, curve: [] };
+}
+
+/**
+ * A brain saved by an older version (fewer features or kinds of trade): new weights start at 0 —
+ * the studies decide for the new kind until it has its own results. Nothing learned is lost.
+ */
+export function upgradeBrain(b: Brain): Brain {
+  const fresh = newBrain();
+  if (b.w.length === FEATURES.length && STRATEGIES.every((k) => b.by[k])) return b;
+  const pad = (w: number[], base: number[]) => [...w, ...base.slice(w.length)];
+  return { ...b, w: pad(b.w, fresh.w0), w0: pad(b.w0, fresh.w0), by: { ...fresh.by, ...b.by } };
 }
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));

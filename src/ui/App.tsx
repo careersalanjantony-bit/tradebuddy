@@ -22,6 +22,7 @@ import { LearningScreen } from './screens/Learning';
 import { HomeScreen } from './screens/Home';
 import { Icon, type IconName } from './components/Icon';
 import { MotionHost, buzz, celebrate, toast } from './components/Motion';
+import { AlertBanner, routeForAlert } from './components/AlertBanner';
 import { NewsScreen } from './screens/News';
 import { AccountScreen } from './screens/Account';
 import { LockScreen, ProfileSetup } from './components/Lock';
@@ -125,6 +126,14 @@ export function App() {
     window.scrollTo(0, 0);
     return undefined;
   }, [route, param]);
+  // app v1.9: tapping a notification opens the screen it belongs to (e.g. a breakout → Day trade)
+  const goRef = useRef(go);
+  goRef.current = go;
+  useEffect(() => {
+    const onClick = (id: string) => goRef.current(routeForAlert(id) as ScreenId);
+    chrome.notifications.onClicked.addListener(onClick);
+    return () => chrome.notifications.onClicked.removeListener(onClick);
+  }, []);
   // a practice sale with a profit: a little celebration (and a toast for any sale)
   const wallet = useLocal('wallet');
   const seenFills = useRef<number | null>(null);
@@ -249,6 +258,7 @@ export function App() {
       </nav>
       <TradeSheetHost />
       <MotionHost />
+      <AlertBanner open={(id) => go(routeForAlert(id) as ScreenId)} />
       {settings && !settings.ui.guideSeen && <GuideOverlay go={go} />}
       {settings?.ui.guideSeen && account === null && <ProfileSetup onDone={() => setUnlocked(true)} />}
       {account?.pin && !unlocked && <LockScreen account={account} onUnlock={() => setUnlocked(true)} />}

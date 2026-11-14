@@ -29,6 +29,7 @@ import { INDEX_KEYS } from '../data/indices';
 import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 import { refreshBreadth, scanShorts } from './shortJobs';
+import { scanBreakouts } from './breakoutJobs';
 import { runBot } from './botJobs';
 
 const log = createLogger('data');
@@ -162,6 +163,8 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     if (m.phase === 'open') void refreshFlow(now).catch(() => undefined);
     void refreshBreadth(now).catch(() => undefined);
     if (m.phase === 'open') void scanShorts(now).catch(() => undefined);
+    // breakouts (app v1.9): also after every price poll, when the live feed is not connected
+    if (m.phase === 'open') void scanBreakouts(now).catch((err: unknown) => log.warn('Breakout scan failed', { error: err }));
   } finally {
     afterRunning = false;
   }
@@ -170,6 +173,9 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
 let lastFeedChecksAt = 0;
 // live-feed prices are stored every second; the checks above run on them at most every 2 seconds
 setFeedListener(async (now) => {
+  // breakouts are checked on EVERY live price update (about each second), not every 2 seconds:
+  // the alert must come the moment the price crosses the resistance with a volume surge
+  void scanBreakouts(now).catch(() => undefined);
   if (now - lastFeedChecksAt < 2_000) {
     announce('quotes');
     return;

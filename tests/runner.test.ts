@@ -46,6 +46,39 @@ beforeEach(async () => {
 });
 
 describe('background checker (app closed)', () => {
+  it('app v1.9: a breakout above yesterday’s high with heavy volume → one alert with the plan, on the chosen tone’s channel', async () => {
+    const calls: Array<{ title: string; body: string; channelId?: string }> = [];
+    (g.CapacitorNotifications as { schedule: (l: typeof calls) => void }).schedule = (list) => {
+      calls.push(...list);
+      shown.push(...list);
+    };
+    await sync({ rising: false, channel: 'alerts-coins', breakoutRisk: 100, levels: { [K]: { ph: 1500, av: 1_000_000 } } });
+    // 11:00 = 105 of 375 minutes: 1.5× usual needs 420,000 shares; this one has 800,000
+    quotes['NSE_EQ:RELIANCE'] = { instrument_token: K, symbol: 'RELIANCE', last_price: 1504, volume: 800_000, average_price: 1496, net_change: 14, total_buy_quantity: 70_000, total_sell_quantity: 30_000, ohlc: { open: 1492, high: 1505, low: 1488, close: 1490 } };
+    ltp = 1500;
+    expect(await runner.check(at('11:00'))).toBe('checked');
+    const bo = calls.filter((n) => n.title.startsWith('🚀 Breakout: RELIANCE'));
+    expect(bo).toHaveLength(1);
+    expect(bo[0]!.title).toContain('above yesterday’s high ₹1,500.00');
+    expect(bo[0]!.body).toMatch(/stop-loss ₹1,49\d\.\d\d · target 1 ₹1,5\d\d\.\d\d · target 2/);
+    expect(bo[0]!.channelId).toBe('alerts-coins');
+    // the same stock is not announced twice the same day
+    expect(await runner.check(at('11:30'))).toBe('checked');
+    expect(calls.filter((n) => n.title.startsWith('🚀'))).toHaveLength(1);
+    delete quotes['NSE_EQ:RELIANCE'];
+  });
+
+  it('app v1.9: no breakout alert when the volume is ordinary, the price ran too far, or it is below the day’s average', () => {
+    const base = { instrument_token: K, symbol: 'RELIANCE', last_price: 1504, volume: 800_000, average_price: 1496, net_change: 14, total_buy_quantity: 70_000, total_sell_quantity: 30_000, ohlc: { open: 1492, high: 1505, low: 1488, close: 1490 } };
+    const levels = { [K]: { ph: 1500, av: 1_000_000 } };
+    const find = (q: Record<string, unknown>) => (runner as unknown as { breakouts: (d: unknown, l: unknown, t: number, r: number) => unknown[] }).breakouts({ x: { ...base, ...q } }, levels, 660, 100);
+    expect(find({})).toHaveLength(1);
+    expect(find({ volume: 300_000 })).toHaveLength(0);
+    expect(find({ last_price: 1515, ohlc: { open: 1492, high: 1516, low: 1488, close: 1490 } })).toHaveLength(0); // 1 % above: too late
+    expect(find({ average_price: 1506 })).toHaveLength(0);
+    expect(find({ total_buy_quantity: 30_000, total_sell_quantity: 70_000 })).toHaveLength(0);
+  });
+
   it('reads IST time correctly', () => {
     expect(runner.istParts(at('10:30'))).toEqual({ date: '2026-11-16', t: 630, weekday: 1 });
   });
