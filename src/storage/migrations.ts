@@ -82,6 +82,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (settings?.dayTrade) await kv.set({ settings: { ...settings, dayTrade: { ...settings.dayTrade, enabled: true } } });
     },
   },
+  {
+    to: 8,
+    description: 'app v1.3: profile and app lock',
+    async up(kv) {
+      const { account } = await kv.get(['account']);
+      if (account === undefined) await kv.set({ account: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

@@ -133,6 +133,15 @@ function installGlobalMotion(): () => void {
     for (const m of muts) m.addedNodes.forEach((n) => n.nodeType === 1 && (scan(n as Element), (n as Element).matches?.(REVEAL) && scan(n.parentNode ?? document)));
   });
   mo.observe(document.body, { childList: true, subtree: true });
+  // safety net: anything on screen is shown even if the observer missed it (some phones' web views)
+  const failsafe = () => {
+    document.querySelectorAll('[data-rv]:not(.in)').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.top < innerHeight && r.bottom > 0) el.classList.add('in');
+    });
+  };
+  addEventListener('scroll', failsafe, { passive: true, capture: true });
+  const failTimer = setInterval(failsafe, 1200);
 
   // tap ripple
   const onDown = (e: PointerEvent) => {
@@ -173,6 +182,8 @@ function installGlobalMotion(): () => void {
   document.addEventListener('pointerup', onLeave, { passive: true });
   document.addEventListener('pointerout', onLeave, { passive: true });
   return () => {
+    clearInterval(failTimer);
+    removeEventListener('scroll', failsafe, { capture: true });
     io.disconnect();
     mo.disconnect();
     document.removeEventListener('pointerdown', onDown);

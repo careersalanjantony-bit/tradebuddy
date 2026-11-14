@@ -80,5 +80,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     wallet: null,
     mlModel: null,
     mlJournal: [],
+    account: null,
   };
 }

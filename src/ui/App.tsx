@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { callBackground } from '../shared/messages';
 import { Disclaimer } from './components/Disclaimer';
 import { LoginBanner } from './components/LoginBanner';
@@ -23,6 +23,9 @@ import { HomeScreen } from './screens/Home';
 import { Icon, type IconName } from './components/Icon';
 import { MotionHost, buzz, celebrate, toast } from './components/Motion';
 import { NewsScreen } from './screens/News';
+import { AccountScreen } from './screens/Account';
+import { LockScreen, ProfileSetup } from './components/Lock';
+import { lockDue } from '../account/account';
 
 /** Every screen. `main` ones are in the bottom bar on a phone; the rest are under "More". */
 const SCREENS = [
@@ -31,7 +34,8 @@ const SCREENS = [
   { id: 'practice', label: 'Practice', icon: 'wallet', main: true },
   { id: 'watchlist', label: 'Stocks', icon: 'list', main: true },
   { id: 'news', label: 'News', icon: 'news', main: true },
-  { id: 'more', label: 'More', icon: 'more', main: true },
+  { id: 'account', label: 'Me', icon: 'user', main: true },
+  { id: 'more', label: 'More', icon: 'more', main: false },
   { id: 'swing', label: 'Hold a few days', icon: 'calendar', main: false },
   { id: 'alerts', label: 'Trades & alerts', icon: 'bell', main: false },
   { id: 'learning', label: 'Self-learning', icon: 'brain', main: false },
@@ -47,13 +51,32 @@ export type ScreenId = (typeof SCREENS)[number]['id'];
 export type Go = (screen: ScreenId, param?: string | null) => void;
 const IDS = SCREENS.map((s) => s.id) as readonly ScreenId[];
 const MAIN = SCREENS.filter((s) => s.main);
-const MORE_IDS: ScreenId[] = ['more', 'alerts', 'learning', 'guide', 'settings', 'diagnostics', 'shortlist', 'planner'];
+const MORE_IDS: ScreenId[] = ['account', 'more', 'alerts', 'learning', 'guide', 'settings', 'diagnostics', 'shortlist', 'planner'];
 const HOME_IDS: ScreenId[] = ['today', 'swing'];
 
 export function App() {
   const [route, param, go] = useHashRoute(IDS, 'today');
   const unread = useSessionValue('alertsUnread') ?? 0;
   const settings = useSettings();
+  // the app's own login: PIN / fingerprint lock (app v1.3)
+  const account = useLocal('account');
+  const [unlocked, setUnlocked] = useState(false);
+  useEffect(() => {
+    let leftAt: number | null = null;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') leftAt = Date.now();
+      else if (lockDue(accountRef.current, leftAt, Date.now())) setUnlocked(false);
+    };
+    const onLock = () => setUnlocked(false);
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('tb-lock', onLock);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('tb-lock', onLock);
+    };
+  }, []);
+  const accountRef = useRef(account);
+  accountRef.current = account;
   const simple = (settings?.ui.mode ?? 'simple') === 'simple';
   // While the app is open: prices about every 2 seconds in market hours (instant when the live feed is on).
   useEffect(() => {
@@ -102,6 +125,9 @@ export function App() {
     case 'watchlist':
       content = <WatchlistScreen go={go} />;
       break;
+    case 'account':
+      content = <AccountScreen go={go} unread={unread} />;
+      break;
     case 'news':
       content = <NewsScreen go={go} />;
       break;
@@ -132,7 +158,7 @@ export function App() {
     default:
       content = <DiagnosticsScreen />;
   }
-  const activeMain = MORE_IDS.includes(route) ? 'more' : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
+  const activeMain = MORE_IDS.includes(route) ? 'account' : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
   // pages slide in from the side of the tab you came from
   const tabIndex = MAIN.findIndex((s) => s.id === activeMain);
   const lastTab = useRef(tabIndex);
@@ -144,7 +170,7 @@ export function App() {
   const sideItems = SCREENS.filter((s) => s.id !== 'more' && s.icon && !(simple && (s.id === 'diagnostics') && route !== s.id));
 
   return (
-    <div class="app">
+    <div class={`app ${account?.pin && !unlocked ? 'locked' : ''}`}>
       <aside class="side-nav" aria-label="Screens">
         <div class="brand">
           <span class="logo">
@@ -175,13 +201,15 @@ export function App() {
               <Icon name={s.icon as IconName} size={22} />
             </span>
             <span class="lbl">{s.label}</span>
-            {s.id === 'more' && unread > 0 && <span class="count">{unread}</span>}
+            {s.id === 'account' && unread > 0 && <span class="count">{unread}</span>}
           </button>
         ))}
       </nav>
       <TradeSheetHost />
       <MotionHost />
       {settings && !settings.ui.guideSeen && <GuideOverlay go={go} />}
+      {settings?.ui.guideSeen && account === null && <ProfileSetup onDone={() => setUnlocked(true)} />}
+      {account?.pin && !unlocked && <LockScreen account={account} onUnlock={() => setUnlocked(true)} />}
     </div>
   );
 }

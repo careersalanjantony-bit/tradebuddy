@@ -22,6 +22,7 @@ const PATHS: Record<string, string> = {
   chart: 'M3 3v18h18M7 15l4-4 3 3 6-7',
   news: 'M4 5h13a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm14 3h2a1 1 0 0 1 1 1v10a2 2 0 0 1-2 2M8 9h6M8 13h6M8 17h4',
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+  user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 9a7 7 0 0 1 14 0',
   calendar: 'M4 6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm0 4h16M8 3v4m8-4v4',
 };
 

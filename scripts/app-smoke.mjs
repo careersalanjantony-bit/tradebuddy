@@ -143,7 +143,21 @@ await page.evaluate(async (keys) => {
   await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, watchlist: keys, settings: { ...s, scanner: { ...s.scanner, universe: 'nifty50' }, dayTrade: { ...s.dayTrade, enabled: true }, risk: { ...s.risk, capitalInr: 200000 } } });
 }, eq.map((r) => r.instrument_key));
 await page.click('[data-testid="guide-done"]');
+
+console.log('── Login: profile + PIN');
+await page.waitForSelector('[data-testid="profile-setup"]', { timeout: 10000 });
+check('after the guide: create a profile (stays on the phone)', ((await page.textContent('[data-testid="profile-setup"]')) ?? '').includes('Create your profile'));
+await page.fill('[data-field="profile-name"]', 'Alan Joy');
+await page.click('[data-testid="profile-next"]');
+const typePin = async (pin) => {
+  for (const d of pin) await page.click(`.pinpad [data-key="${d}"]`);
+  await page.waitForTimeout(250);
+};
+await typePin('2580');
+await typePin('2580');
 await page.waitForSelector('[data-testid="wallet"]', { timeout: 10000 });
+const acct = await page.evaluate(async () => (await chrome.storage.local.get('account')).account);
+check('profile saved with only a salted hash of the PIN', acct?.name === 'Alan Joy' && acct.pin?.hash?.length === 64 && !JSON.stringify(acct).includes('2580'), acct ? `hash ${acct.pin?.hash?.slice(0, 8)}…` : 'none');
 check('after the guide: Practice tab with ₹10,00,000', ((await page.textContent('[data-testid="wallet-total"]')) ?? '').replace(/\s/g, '') === '₹10,00,000');
 check('the guide does not come back', await page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.ui.guideSeen === true));
 
@@ -226,7 +240,7 @@ check('page slides in from the side of the tab (Day trade is right of Home)', aw
 check("Day trade starts with today's plan, the current step highlighted (10:30 = buy ideas)", ((await page.textContent('[data-testid="day-plan"] .plan-step.now').catch(() => '')) ?? '').includes('Buy ideas'));
 check('the past test and how-it-works are folded away under one line', !!(await page.$('[data-testid="day-details"]')) && !(await page.$eval('[data-testid="day-details"]', (e) => e.hasAttribute('open'))));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
-await page.click('.bottom-nav [data-nav="more"]');
+await page.click('.bottom-nav [data-nav="account"]');
 await page.click('[data-go="learning"]');
 await page.waitForSelector('[data-testid="learning-card"]');
 await page.click('[data-testid="learn-now"]');
@@ -256,7 +270,7 @@ await revealAll(); await page.screenshot({ animations: 'disabled', path: join(ou
 console.log('── News tab');
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(300);
-check('bottom bar has 6 tabs including News', (await page.$$('.bottom-nav button')).length === 6 && !!(await page.$('.bottom-nav [data-nav="news"]')));
+check('bottom bar has 6 tabs including News and Me', (await page.$$('.bottom-nav button')).length === 6 && !!(await page.$('.bottom-nav [data-nav="news"]')) && !!(await page.$('.bottom-nav [data-nav="account"]')));
 await page.click('.bottom-nav [data-nav="news"]');
 await page.waitForSelector('[data-testid="news-screen"]', { timeout: 10000 });
 const newsOk = await until(async () => (await page.$$('[data-testid="news-screen"] .news-item')).length > 0, 15000);
@@ -278,6 +292,40 @@ await page.waitForTimeout(400);
 const risingCards = (await page.$$('.stock-card')).length;
 check('Stocks: cards with one-tap filter chips', allCards >= 10 && risingCards > 0 && risingCards <= allCards, `${allCards} → ${risingCards}`);
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-stocks.png') });
+
+console.log('── Me: account, lock');
+await page.click('.bottom-nav [data-nav="account"]');
+await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
+const accText = ((await page.textContent('[data-testid="account"]')) ?? '').replace(/\s+/g, ' ');
+check('Me: profile, practice record, Upstox connection, security, look, alerts, data', ['Alan Joy', 'Your practice record', 'Best trade', 'Upstox connection', 'App lock', 'Look', 'Alerts', 'Your data', 'Copy backup'].every((t) => accText.includes(t)), accText.slice(0, 120));
+await page.click('[data-theme-choice="light"]');
+check('theme switches to light', await until(() => page.evaluate(() => document.documentElement.getAttribute('data-theme') === 'light'), 5000));
+await page.click('[data-theme-choice="dark"]');
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-account.png'), fullPage: true });
+await page.click('[data-testid="lock-now"]');
+await page.waitForSelector('[data-testid="lock-screen"]', { timeout: 5000 });
+check('"Lock now" shows the lock screen and hides the app', ((await page.textContent('[data-testid="lock-screen"]')) ?? '').includes('Welcome back, Alan') && (await page.evaluate(() => getComputedStyle(document.querySelector('.content')).visibility)) === 'hidden');
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-lock.png') });
+for (const d of '1111') await page.click(`.lock-screen [data-key="${d}"]`);
+await page.waitForTimeout(600);
+check('a wrong PIN does not open the app', !!(await page.$('[data-testid="lock-screen"]')));
+for (const d of '2580') await page.click(`.lock-screen [data-key="${d}"]`);
+check('the right PIN opens it', await until(async () => !(await page.$('[data-testid="lock-screen"]')), 8000));
+
+console.log('── Scrolling + navbar');
+await page.click('.bottom-nav [data-nav="today"]');
+await page.waitForSelector('[data-testid="home"]');
+const scrolled = await page.evaluate(async () => {
+  window.scrollTo(0, 600);
+  await new Promise((r) => setTimeout(r, 400));
+  return window.scrollY;
+});
+check('the page scrolls', scrolled > 100, `scrollY ${scrolled}`);
+const shown = await until(() => page.evaluate(() => [...document.querySelectorAll('[data-rv]')].filter((el) => { const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }).every((el) => el.classList.contains('in'))), 4000);
+check('cards scrolled into view appear', shown);
+const pill = await page.evaluate(() => { const n = document.querySelector('.bottom-nav .nav-pill').getBoundingClientRect(); const b = document.querySelector('.bottom-nav [data-nav="today"]').getBoundingClientRect(); return Math.abs((n.left + n.width / 2) - (b.left + b.width / 2)); });
+check('the floating circle sits over the active tab', pill < 4, `${pill.toFixed(1)} px off`);
 
 console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);

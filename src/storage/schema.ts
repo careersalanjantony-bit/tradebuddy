@@ -281,6 +281,8 @@ export interface LocalStore {
   mlModel: import('../ml/learn').MlReport | null;
   /** live signals with the clues only known live (buyers meter, pace, news mood), for future learning */
   mlJournal: Array<{ date: string; key: string; symbol: string; side: 'long' | 'short'; barT: number; entry: number; stop: number; target: number | null; chance: number | null; buyers: string | null; pace: number | null; news: string | null; late: boolean }>;
+  /** the app's own profile and lock (app v1.3); null until set up */
+  account: import('../account/account').AccountState | null;
   /** practice money (app v1.0); null until first used */
   wallet: import('../wallet/wallet').WalletState | null;
 }

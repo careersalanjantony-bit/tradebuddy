@@ -26,6 +26,22 @@ inside the app (see *How it is built*).
 **Updates:** install the newer APK over the old one; data is kept (every build is signed with the
 same key, `android/signing/`). Uninstalling deletes all app data, including practice trades.
 
+## New in 1.3
+
+- **Login to the app:** after the guide you create a profile (name + colour) and an optional
+  **4-digit PIN** and **fingerprint** unlock. The PIN is never stored — only a salted PBKDF2 hash
+  (150,000 rounds); after 5 wrong tries it waits 30 s per try; it locks again after the chosen time
+  away (at once / 1 min / 5 min / never). There is no online account: nothing leaves the phone. The
+  lock hides the screens; it does not encrypt the stored data. "Forgot PIN" can only delete all data.
+- **Me tab (My account):** profile, practice record (value, overall, trades, win %, best/worst trade),
+  Upstox connection status, security (lock, fingerprint, auto-lock, change PIN, lock now), look
+  (dark / light / phone), alert switches, all other screens, your data (copy/restore a backup without
+  keys or tokens, reset practice money, delete all data).
+- **New navbar:** the active tab rises into a floating circle in a curved notch that glides to the
+  tapped tab (CSS `@property` animation); 6 tabs: Home, Day trade, Practice, Stocks, News, Me.
+- **Scrolling fix:** removed a page-wide `overflow-x: hidden` on `html, body` (can stop scrolling in
+  some Android web views) and gave the scroll-in effect a safety net so cards always appear.
+
 ## New in 1.2
 
 - **News tab** (bottom bar): news only for today's buy ideas (highest chance first), stocks rising now,
