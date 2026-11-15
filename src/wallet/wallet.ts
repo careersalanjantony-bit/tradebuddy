@@ -85,6 +85,8 @@ export interface PaperOrder {
   limitPrice?: number;
   /** SL / SL-M: the order wakes up when the price reaches this */
   trigger?: number;
+  /** the live price when it was placed: money is set aside at it when no newer price is known */
+  refPrice?: number;
   /** SL: the trigger was reached; it now waits as a limit order */
   triggered?: boolean;
   validity?: Validity;
@@ -143,6 +145,8 @@ export interface Holding {
   interest?: number;
   /** MTF: interest is counted up to this date */
   interestDate?: string;
+  /** MTF: the interest taken at the last count (on `interestDate`) */
+  interestLast?: number;
 }
 
 export interface Fill {
@@ -183,6 +187,8 @@ export interface WalletState {
   equity?: Array<{ date: string; total: number }>;
   /** sell-first (short) positions, same day only (app v1.4) */
   shorts?: ShortPos[];
+  /** MTF interest taken from the cash today (counted in today's result) */
+  interestToday?: { date: string; amount: number };
 }
 
 /**
@@ -292,17 +298,23 @@ export interface OrderRequest {
   source?: string;
 }
 
+/**
+ * Money set aside for one waiting order, like Upstox blocks margin for an open order: the full value
+ * (Delivery) or the margin (Intraday, MTF) at its price — for a market or SL-M order the live price
+ * (or the price when it was placed) + 1 %, in case it fills a little higher. 0 for a buy-back or a sell.
+ */
+export function orderReserve(o: PaperOrder, quotes: Record<string, WalletQuote | undefined>): number {
+  if (o.status !== 'open') return 0;
+  const blocks = o.side === 'buy' ? !o.covers : !!o.opensShort;
+  if (!blocks) return 0;
+  const live = quotes[o.key]?.ltp;
+  const px = o.type === 'market' ? (live && live > 0 ? live : (o.refPrice ?? 0)) * 1.01 : o.type === 'slm' ? o.trigger! * 1.01 : o.limitPrice!;
+  return px * o.qty * mOf(o);
+}
+
 /** Cash set aside for open orders: the money (or margin) each would need. */
 export function reservedCash(w: WalletState, quotes: Record<string, WalletQuote | undefined>): number {
-  let r = 0;
-  for (const o of w.orders) {
-    if (o.status !== 'open') continue;
-    const blocks = o.side === 'buy' ? !o.covers : !!o.opensShort;
-    if (!blocks) continue;
-    const px = o.type === 'market' ? (quotes[o.key]?.ltp ?? 0) * 1.01 : o.type === 'slm' ? o.trigger! * 1.01 : o.limitPrice!;
-    r += px * o.qty * mOf(o);
-  }
-  return r;
+  return w.orders.reduce((r, o) => r + orderReserve(o, quotes), 0);
 }
 
 export const availableCash = (w: WalletState, quotes: Record<string, WalletQuote | undefined>): number => Math.max(0, w.cash - reservedCash(w, quotes));
@@ -333,9 +345,12 @@ function accrueInterest(w: WalletState, today: string): WalletState {
     const due = days * mtfDailyInterest(funded);
     changed = true;
     cash -= due;
-    return { ...h, interest: round2((h.interest ?? 0) + due), interestDate: today };
+    return { ...h, interest: round2((h.interest ?? 0) + due), interestDate: today, interestLast: due };
   });
-  return changed ? { ...w, cash: round2(cash), holdings } : w;
+  if (!changed) return w;
+  const due = round2(w.cash - cash);
+  const before = w.interestToday?.date === today ? w.interestToday.amount : 0;
+  return { ...w, cash: round2(cash), holdings, interestToday: { date: today, amount: round2(before + due) } };
 }
 
 function applyBuy(w: WalletState, o: PaperOrder, price: number, ctx: MarketCtx, reason: FillReason): { w: WalletState; fill: Fill } {
@@ -415,11 +430,14 @@ function applySell(w: WalletState, o: PaperOrder, price: number, ctx: MarketCtx,
   const proceeds = price * o.qty;
   const buyCost = todayBuy + oldBuy;
   const interest = product === 'mtf' && h.qty > 0 ? round2((h.interest ?? 0) * (o.qty / h.qty)) : 0;
+  // today's interest on the sold shares is now inside this sale's result, not in "today's interest"
+  const soldToday = product === 'mtf' && h.interestDate === ctx.today && h.interestLast ? round2(h.interestLast * (o.qty / h.qty)) : 0;
+  if (soldToday > 0 && w.interestToday?.date === ctx.today) w = { ...w, interestToday: { date: ctx.today, amount: round2(Math.max(0, w.interestToday.amount - soldToday)) } };
   const pnl = round2(proceeds - buyCost - charges - interest);
   const qty = h.qty - o.qty;
   if (qty > 0) {
     const remCost = remaining.reduce((s, l) => s + l.qty * l.price, 0);
-    holdings[i] = { ...h, qty, lots: remaining, avgPrice: round2(remCost / qty), ...(product === 'mtf' ? { interest: round2((h.interest ?? 0) - interest) } : {}) };
+    holdings[i] = { ...h, qty, lots: remaining, avgPrice: round2(remCost / qty), ...(product === 'mtf' ? { interest: round2((h.interest ?? 0) - interest), ...(h.interestLast ? { interestLast: round2(h.interestLast - soldToday) } : {}) } : {}) };
   } else holdings.splice(i, 1);
   // the margin comes back with the gain (or minus the loss); the interest was paid day by day already
   const cash = round2(w.cash + buyCost * m + (proceeds - buyCost) - charges);
@@ -591,6 +609,7 @@ export function placeOrder(w: WalletState, req: OrderRequest, quote: WalletQuote
     type,
     ...(type === 'limit' || type === 'sl' ? { limitPrice: req.limitPrice! } : {}),
     ...(type === 'sl' || type === 'slm' ? { trigger: req.trigger! } : {}),
+    ...(ltp !== null ? { refPrice: ltp } : {}),
     ...(validity === 'ioc' ? { validity } : {}),
     ...(product !== 'delivery' ? { product, marginPct } : {}),
     ...(covers ? { covers } : {}),
@@ -936,8 +955,11 @@ export interface WalletSummary {
   realizedAll: number;
   trades: number;
   wins: number;
-  /** margin in use by open positions, and their full market value */
+  /** used margin like Upstox: the margin in open positions + the money set aside for waiting orders */
   used: number;
+  /** the money set aside for waiting orders (part of `used`) */
+  blocked: number;
+  /** full market value of the open positions */
   exposure: number;
   holdings: HoldingView[];
   /** open sell-first trades at live prices */
@@ -994,12 +1016,14 @@ export function walletSummary(w: WalletState, quotes: Record<string, WalletQuote
     total: round2(total),
     totalPnl: round2(total - w.startCash),
     totalPct: (total / w.startCash - 1) * 100,
-    todayPnl: round2(realizedToday + holdings.reduce((s, h) => s + h.todayPnl, 0) + shortViews.reduce((a, p) => a + p.pnl, 0)),
+    // MTF interest taken today counts (interest paid on shares sold today is already in their result)
+    todayPnl: round2(realizedToday + holdings.reduce((s, h) => s + h.todayPnl, 0) + shortViews.reduce((a, p) => a + p.pnl, 0) - (w.interestToday?.date === today ? w.interestToday.amount : 0)),
     realizedToday: round2(realizedToday),
     realizedAll: round2(sells.reduce((s, f) => s + (f.pnl ?? 0), 0)),
     trades: sells.length,
     wins: sells.filter((f) => (f.pnl ?? 0) > 0).length,
-    used: round2(holdings.reduce((s, h) => s + h.margin, 0) + shortViews.reduce((a, p) => a + p.margin, 0)),
+    used: round2(holdings.reduce((s, h) => s + h.margin, 0) + shortViews.reduce((a, p) => a + p.margin, 0) + reservedCash(w, quotes)),
+    blocked: round2(reservedCash(w, quotes)),
     exposure: round2(holdings.reduce((s, h) => s + h.value, 0) + shortViews.reduce((a, p) => a + (p.ltp ?? p.entry) * p.qty, 0)),
     holdings,
     shorts: shortViews,

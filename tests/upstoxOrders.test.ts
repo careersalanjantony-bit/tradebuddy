@@ -253,3 +253,52 @@ describe('Convert (like Upstox), balances and charges', () => {
     expect(d).toBeCloseTo(deliveryCharges(150_000, 150_000), 1);
   });
 });
+
+describe('your case: an MTF order placed on Sunday for 50 POWERINDIA', () => {
+  const PI = 'NSE_EQ|INE07Y701011';
+  const sunday = ctx({ today: '2026-11-15', open: false, t: 13 * 60 + 31, now: T0 - 86_400_000 + 3 * 3600_000 });
+  const order: OrderRequest = { key: PI, symbol: 'POWERINDIA', side: 'buy', qty: 50, type: 'market', product: 'mtf', marginPct: 0.25 };
+
+  it('waits for Monday’s opening price; the money set aside (25% margin + 1%) counts as used margin, like Upstox', () => {
+    const r = ok(placeOrder(newWallet(sunday.now), order, q(31_595, sunday.now), sunday));
+    expect(r.order).toMatchObject({ status: 'open', atOpen: true, product: 'mtf', refPrice: 31_595 });
+    expect(r.wallet.cash).toBe(WALLET_START);
+    const s = walletSummary(r.wallet, { [PI]: q(31_595, sunday.now) }, '2026-11-15');
+    expect(s.free).toBeCloseTo(WALLET_START - 31_595 * 1.01 * 50 * 0.25, 0); // ₹6,01,113 as on your screen
+    expect(s.blocked).toBeCloseTo(398_887, 0);
+    expect(s.used).toBeCloseTo(398_887, 0);
+    expect(s.value).toBe(0); // nothing bought yet
+    expect(s.total).toBe(WALLET_START);
+    // after an app restart, before any price has loaded, the money stays set aside (price when placed)
+    expect(walletSummary(r.wallet, {}, '2026-11-15').free).toBeCloseTo(s.free, 0);
+  });
+
+  it('buys at Monday’s open: margin used, position shown, interest from Tuesday, sale with charges and interest', () => {
+    const r = ok(placeOrder(newWallet(sunday.now), order, q(31_595, sunday.now), sunday));
+    const mon = processWallet(r.wallet, { [PI]: q(31_800) }, ctx({ t: 555 }));
+    expect(mon.events[0]!.fill).toMatchObject({ side: 'buy', qty: 50, product: 'mtf' });
+    const price = mon.events[0]!.fill.price;
+    const cost = price * 50;
+    expect(mon.wallet.cash).toBeCloseTo(WALLET_START - cost * 0.25, 1);
+    expect(mon.events[0]!.fill.cashAfter).toBe(mon.wallet.cash);
+    const s = walletSummary(mon.wallet, { [PI]: q(31_800) }, '2026-11-16');
+    expect(s.blocked).toBe(0);
+    expect(s.used).toBeCloseTo(cost * 0.25, 1);
+    expect(s.value).toBeCloseTo(cost * 0.25 + (31_800 - price) * 50, 1);
+    expect(s.holdings[0]!.funded).toBeCloseTo(cost * 0.75, 1);
+    const perDay = mtfDailyInterest(cost * 0.75);
+    expect(perDay).toBe(Math.ceil((cost * 0.75) / 40_000) * 20); // ₹600 a day on a ₹11.9 lakh loan
+    const tue = processWallet(mon.wallet, { [PI]: q(32_000) }, ctx({ today: '2026-11-17', now: T0 + 86_400_000 }));
+    expect(tue.wallet.cash).toBeCloseTo(mon.wallet.cash - perDay, 1);
+    const wedCtx = ctx({ today: '2026-11-18', now: T0 + 2 * 86_400_000 });
+    const sell = ok(placeOrder(tue.wallet, { ...order, side: 'sell' }, q(32_500, wedCtx.now), wedCtx));
+    expect(sell.fill!.interest).toBe(2 * perDay);
+    expect(sell.fill!.pnl).toBeCloseTo(sell.fill!.price * 50 - cost - sell.fill!.charges! - 2 * perDay, 1);
+    expect(sell.wallet.cash).toBeCloseTo(WALLET_START + sell.fill!.pnl!, 1);
+    expect(walletSummary(sell.wallet, {}, '2026-11-18').used).toBe(0);
+    // "Today" on Tuesday counts the interest taken that day; a sale the same day does not count it twice
+    const tueSum = walletSummary(tue.wallet, { [PI]: { ...q(32_000), prevClose: 32_000 } }, '2026-11-17');
+    expect(tueSum.todayPnl).toBeCloseTo(-perDay, 1);
+    expect(walletSummary(sell.wallet, {}, '2026-11-18').todayPnl).toBeCloseTo(sell.fill!.pnl!, 1);
+  });
+});

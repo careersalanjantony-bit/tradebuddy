@@ -194,7 +194,11 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
   const value = px && q ? px * q : 0;
   const marginPct = terms.marginPct;
   const needs = (side === 'buy' && !covering) || sellFirst ? orderNeeds(px ?? 0, q, marginPct) : 0;
-  const after = free - needs;
+  // an order that waits (market closed, or a limit / stop-loss) keeps money aside like the Practice tab
+  // shows it: a market or SL-M order + 1 % in case it fills a little higher
+  const waits = !open || type !== 'market';
+  const keptAside = waits && (type === 'market' || type === 'slm') ? needs * 1.01 : needs;
+  const after = free - keptAside;
   const charges = px && q ? estimateCharges(product, q, px) : 0;
   const funded = product === 'mtf' && side === 'buy' ? value - needs : 0;
   const position = stock && side === 'sell' && !sellFirst ? wallet.holdings.find((h) => h.key === stock.key && (h.product ?? 'delivery') === product) : undefined;
@@ -536,9 +540,10 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
                 <b>{formatINR(free, 0)}</b>
               </div>
               <div class={`funds-row big ${after < 0 ? 'err-text' : ''}`} data-testid="balance-after">
-                <span>Balance after this buy</span>
+                <span>{waits ? 'Balance after (kept aside until it buys)' : 'Balance after this buy'}</span>
                 <b>{needs ? formatINR(after, 0) : formatINR(free, 0)}</b>
               </div>
+              {waits && needs > 0 && (type === 'market' || type === 'slm') && <div class="tiny muted">Keeps {formatINR(keptAside, 0)} aside: the margin + 1% in case the price opens higher.</div>}
             </>
           ) : sellFirst ? (
             <>

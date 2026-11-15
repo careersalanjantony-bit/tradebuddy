@@ -1,0 +1,4 @@
+Used margin now includes money kept aside for waiting orders, like Upstox (it showed ₹0 until an order bought).
+Each waiting order shows how much it keeps aside; a market order keeps its margin + 1% in case the price opens higher.
+The Buy window's "Balance after" now matches what the Practice tab shows for an order that waits.
+"Today" now counts MTF interest taken today.

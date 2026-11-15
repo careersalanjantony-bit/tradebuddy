@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { formatINR, formatNumberIN, formatPct, formatTimeIST } from '../../lib/format';
 import { istDate } from '../../lib/time';
 import { callBackground } from '../../shared/messages';
-import { AUTO_SQUARE_OFF_T, newWallet, PRODUCT_LABEL, WALLET_START, walletSummary, type Fill, type PaperOrder, type Product } from '../../wallet/wallet';
+import { AUTO_SQUARE_OFF_T, newWallet, orderReserve, PRODUCT_LABEL, WALLET_START, walletSummary, type Fill, type PaperOrder, type Product } from '../../wallet/wallet';
 import { errorMessage } from '../../lib/serialize';
 import { toast } from '../components/Motion';
 import type { Go } from '../App';
@@ -95,13 +95,22 @@ function MyPractice({ go }: { go: Go }) {
           </div>
           <div>
             <span>Used margin</span>
-            <b>{formatINR(s.used, 0)}</b>
+            <b data-testid="wallet-used">{formatINR(s.used, 0)}</b>
+            {s.blocked > 0.5 && <small>{s.used - s.blocked > 0.5 ? `incl. ${formatINR(s.blocked, 0)} for orders` : `for ${openOrders.length === 1 ? 'your waiting order' : 'waiting orders'}`}</small>}
           </div>
           <div>
             <span>Positions</span>
             <b>{formatINR(s.value, 0)}</b>
+            {s.holdings.length + s.shorts.length === 0 && openOrders.length > 0 && <small>none bought yet</small>}
           </div>
         </div>
+        {s.blocked > 0.5 && s.holdings.length + s.shorts.length === 0 && (
+          <p class="tiny muted funds-note" data-testid="funds-note">
+            {formatINR(s.blocked, 0)} is set aside for your waiting order{openOrders.length === 1 ? '' : 's'} (margin + 1% in case the price opens higher). The shares appear under Positions once
+            {openOrders.length === 1 ? ' it buys' : ' they buy'}
+            {openOrders.some((o) => o.atOpen || o.amo) ? ' — at the next opening price when the market opens' : ''}.
+          </p>
+        )}
         <div class="wallet-split small muted">
           {s.exposure > s.value + 1 ? <>Shares worth {formatINR(s.exposure, 0)} with leverage · </> : null}
           {s.trades} closed trade{s.trades === 1 ? '' : 's'}
@@ -244,7 +253,10 @@ function MyPractice({ go }: { go: Go }) {
             <div class="row small order-row" data-testid="open-order">
               <span class={o.side === 'buy' ? 'ok-text' : 'err-text'}>{o.side === 'buy' ? (o.covers ? 'Buy back' : 'Buy') : o.opensShort ? 'Sell first' : 'Sell'}</span> {o.qty} <b>{o.symbol}</b>
               {productChip(o.product, o.marginPct ? Math.round(10 / o.marginPct) / 10 : undefined)}
-              <span class="muted">{orderWords(o)}</span>
+              <span class="muted">
+                {orderWords(o)}
+                {orderReserve(o, quotes) > 0.5 && <> · keeps {formatINR(orderReserve(o, quotes), 0)} aside</>}
+              </span>
               <span class="spacer" />
               <button class="link-btn small" type="button" onClick={() => void callBackground('wallet:cancel', { id: o.id })}>
                 cancel

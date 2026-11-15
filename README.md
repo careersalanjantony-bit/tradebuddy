@@ -69,6 +69,10 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
   trade**, its charges and MTF interest.
 - The auto-trader keeps trading with its own money only (Delivery, no leverage), so its record stays
   comparable.
+- 1.10.1: **Used margin** includes the money kept aside for waiting orders (like Upstox); each waiting
+  order shows how much it keeps aside (a market order: its margin + 1% in case the price opens higher;
+  the price when it was placed is used until a live price arrives); the Buy window's "Balance after"
+  matches it; "Today" counts MTF interest taken today.
 
 ## New in 1.9
 

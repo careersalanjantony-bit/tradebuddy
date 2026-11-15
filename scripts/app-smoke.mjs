@@ -345,6 +345,8 @@ const slMsg = (await page.textContent('[data-testid="trade-msg"]')) ?? '';
 await page.waitForSelector('[data-testid="open-order"]', { timeout: 8000 }).catch(() => {});
 const ordersText = ((await page.textContent('[data-testid="open-orders"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('a stop-loss (SL) buy waits for its trigger and is listed in plain words', slMsg.includes('Stop-loss order placed') && ordersText.includes('stop-loss: trigger ₹1,450.00 → limit ₹1,455.00'), `${slMsg} | ${ordersText.slice(0, 160)}`);
+const usedText = ((await page.textContent('[data-testid="wallet-funds"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('money kept for a waiting order is shown on the order ("keeps ₹7,275 aside") and counted in Used margin, like Upstox', ordersText.includes('keeps ₹7,275 aside') && usedText.includes('incl. ₹7,275 for orders'), `${ordersText.slice(0, 200)} | ${usedText}`);
 await page.click('[data-testid="open-order"] .link-btn');
 await page.waitForTimeout(300);
 await revealAll();

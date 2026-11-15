@@ -1294,3 +1294,5 @@ body:has(.sheet-backdrop) .alert-banner-body { padding-top: 8px; padding-bottom:
 body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .check-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; margin: 6px 0; cursor: pointer; }
 .check-row input { margin-top: 3px; }
+.funds-strip small { font-size: 10.5px; color: var(--muted); line-height: 1.25; }
+.funds-note { margin: 6px 0 2px; }
