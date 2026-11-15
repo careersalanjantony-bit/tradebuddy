@@ -70,7 +70,7 @@ export interface SessionStore {
   shortIdeas: { at: number; ideas: import('../background/shortJobs').ShortIdea[]; risk: number; scanned?: number; candidates?: number; checked?: number; scored?: number };
   shortAlerted: { date: string; keys: string[] };
   /** the Day Trade scan list in short (app v1.11) */
-  scanUniverse: { at: number; count: number; added: Record<string, number>; scope: 'all' | 'list' };
+  scanUniverse: { at: number; count: number; added: Record<string, number> };
   /** "Breakout today" live ideas (app v1.9) */
   breakouts: { date: string; at: number; scanned: number; total?: number; signals: import('../background/breakoutJobs').BreakoutSignal[] };
   /** rising-fast alerts sent today (app v1.1) */

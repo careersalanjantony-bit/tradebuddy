@@ -30,7 +30,7 @@ import { refreshNews } from './newsJobs';
 import { syncPortfolio } from './portfolioJobs';
 import { announce, checkNewPicks, ensureInstruments, fastPoll, pollAndEvaluate, runEndOfDay, syncAllTracked, syncStock } from './dataJobs';
 import { invalidateStockCache } from '../data/stockData';
-import { ensureUniverse } from '../data/universe';
+import { universeKeys } from '../data/universe';
 import { ensureScanLists } from './scanList';
 import { markAlertsSeen, mutateAlerts, recentAlertLog, updateBadge } from '../alerts/engine';
 import { newId } from '../alerts/rules';
@@ -201,14 +201,15 @@ const handlers: Handlers = {
   },
   'instruments:refresh': async () => ({ count: await ensureInstruments(true) }),
   'universe:refresh': async ({ force }) => {
-    const u = await ensureUniverse(!!force);
-    await ensureScanLists(false).catch((err: unknown) => log.info('Scan lists check skipped', { reason: String(err) }));
+    // app v1.12: the five lists everything studies (NSE, weekly; bundled copy as fallback)
+    const lists = await ensureScanLists(!!force).catch((err: unknown) => (log.info('Scan lists check skipped', { reason: String(err) }), null));
     // download history for any new stocks without blocking the reply
     void syncAllTracked()
       .then(() => setSession('intradayCheckedAt', 0))
       .then(() => ensureIntraday())
       .catch((err: unknown) => log.info('History download for the studied list waits for a login or an Analytics Token', { reason: String(err) }));
-    return { index: u?.index ?? 'watchlist', count: u?.members.length ?? 0, source: u?.source ?? 'none' };
+    const fromNse = lists ? Object.values(lists.lists).filter((l) => l?.source === 'nse').length : 0;
+    return { index: 'all', count: (await universeKeys()).length, source: fromNse === 5 ? 'nse' : fromNse ? `nse (${fromNse} of 5)` : 'bundled' };
   },
   'stock:sync': async ({ key }) => {
     try {

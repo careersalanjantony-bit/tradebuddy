@@ -177,7 +177,7 @@ export function AddPurchaseCard() {
               ))}
             </datalist>
           </label>
-          {sym && !chosen && <p class="small muted">Choose a stock from the list (Nifty 100 or your own stocks).</p>}
+          {sym && !chosen && <p class="small muted">Choose a stock from the list (any of the five indices or your own stocks).</p>}
           {chosen && loading && <p class="small muted">Loading {chosen.symbol}…</p>}
           {chosen && !loading && !snap && <p class="small err-text">No price history for {chosen.symbol} yet — wait for the history download, then try again.</p>}
           {chosen && snap && (

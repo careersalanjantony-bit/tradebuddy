@@ -5,7 +5,7 @@ import { getInstrument } from '../data/instruments';
 import { SCAN_HISTORY_SESSIONS, fetchTodayBars, pool, pruneIntraday, syncIntraday } from '../data/intraday';
 import { getQuotes, pollQuotes } from '../data/quotes';
 import type { Quote } from '../data/quotesParse';
-import { NIFTY100_KEYS, universeKeys } from '../data/universe';
+import { NIFTY100_KEYS, testKeys } from '../data/universe';
 import { scanUniverse } from './scanList';
 import { claimAlert } from './ideaGate';
 import { inTheNews } from '../data/news';
@@ -47,11 +47,8 @@ export async function dayKeys(): Promise<string[]> {
   return (await scanUniverse()).keys;
 }
 
-/** The Stocks-tab list (or your own stocks when no list is chosen) — for the Stocks tab's own studies. */
-export async function listKeys(): Promise<string[]> {
-  const u = await universeKeys();
-  return u.length ? u : ((await getLocal('watchlist')) ?? []);
-}
+/** The stocks of the 5-minute past tests and the learning (Nifty 100 + your stocks; see data/universe.ts testKeys). */
+export const listKeys = testKeys;
 
 // ---------------------------------------------------------------- 5-minute history
 

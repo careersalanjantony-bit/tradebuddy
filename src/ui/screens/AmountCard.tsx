@@ -2,13 +2,15 @@ import { useEffect, useState } from 'preact/hooks';
 import { formatINR } from '../../lib/format';
 import { updateSettings } from '../../storage/local';
 import type { Settings } from '../../storage/schema';
-import { callBackground } from '../../shared/messages';
+import { useStudyKeys } from '../data';
 
 /**
  * Simple mode (v0.6.0): the only number a beginner enters. Everything else uses careful defaults:
  * at most 3 trades at once, each limited so a failed trade loses about 0.5% of the amount.
  */
-export function AmountCard({ risk, universe, newPickAlerts, rankBy }: { risk: Settings['risk']; universe: Settings['scanner']['universe']; newPickAlerts: boolean; rankBy: Settings['scanner']['rankBy'] }) {
+export function AmountCard({ risk, newPickAlerts, rankBy }: { risk: Settings['risk']; newPickAlerts: boolean; rankBy: Settings['scanner']['rankBy'] }) {
+  // app v1.12: always all five indices (no single-index choice)
+  const studied = useStudyKeys().universeKeys.length;
   const [amount, setAmount] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => setAmount(risk.capitalInr ? String(risk.capitalInr) : ''), [risk.capitalInr]);
@@ -64,24 +66,12 @@ export function AmountCard({ risk, universe, newPickAlerts, rankBy }: { risk: Se
             <option value="0">Careful: small positions (lose at most 0.5% per trade)</option>
           </select>
         </label>
-        <label class="field">
+        <div class="field" data-field="universe">
           <span>Companies to study</span>
-          <select
-            value={universe}
-            data-field="universe"
-            onChange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value as Settings['scanner']['universe'];
-              void updateSettings({ scanner: { universe: v } }).then(() => callBackground('universe:refresh', { force: true }).catch(() => undefined));
-            }}
-          >
-            <option value="nifty100">Nifty 100 (recommended)</option>
-            <option value="nifty50">Nifty 50</option>
-            <option value="midcap100">Nifty Midcap 100</option>
-            <option value="smallcap100">Nifty Smallcap 100</option>
-            <option value="nifty500">Nifty 500 (first download takes long)</option>
-            <option value="watchlist">Only my own list</option>
-          </select>
-        </label>
+          <p class="small" style={{ margin: '4px 0 0' }} data-testid="study-all">
+            <b>All five indices</b> — Nifty 50, Nifty 100, Midcap 100, Smallcap 100 and Nifty 500 together ({studied} companies, each once), plus your own stocks. Nothing to choose.
+          </p>
+        </div>
       </div>
       <label class="field" style={{ marginTop: '8px' }}>
         <span>Which picks come first</span>

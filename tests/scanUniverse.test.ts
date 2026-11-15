@@ -8,7 +8,9 @@ import { staleKeys } from '../src/background/dataJobs';
 import { SAME_IDEA_MS, claimAlert, gateAllows } from '../src/background/ideaGate';
 import { MAX_SHORT_CANDIDATES, shortCandidates } from '../src/background/shortJobs';
 import { indexTagOf, priceKeys, resetScanList, scanUniverse } from '../src/background/scanList';
-import { NIFTY100_KEYS } from '../src/data/universe';
+import { NIFTY100_KEYS, testKeys, universeKeys } from '../src/data/universe';
+import { MemoryKV } from '../src/storage/kv';
+import { runLocalMigrations } from '../src/storage/migrations';
 import type { Quote } from '../src/data/quotesParse';
 import { DEFAULT_SETTINGS } from '../src/storage/defaults';
 import { istEpoch } from '../src/lib/time';
@@ -171,16 +173,40 @@ describe('scan list in the background', () => {
     for (const k of u.keys) expect(p).toContain(k);
     expect(new Set(p).size).toBe(p.length);
   });
-  it('"Only my list": just the Stocks-tab list, still tagged', async () => {
+  it('no single-index choice any more: an old "Nifty 50" setting still scans all five indices', async () => {
+    // (the beforeEach stores scanner.universe = 'nifty50', as a phone from before v1.12 could have)
+    expect((await scanUniverse()).keys.length).toBeGreaterThan(450);
+  });
+});
+
+describe('everything studies all five indices (app v1.12)', () => {
+  const OWN = 'NSE_EQ|INE000OWN011';
+  beforeEach(async () => {
     const chrome = installChromeMock();
     resetScanList();
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.dayTrade.enabled = true;
-    settings.scanner.universe = 'nifty50';
-    settings.dayTrade.scanScope = 'list';
-    await chrome.storage.local.set({ settings, watchlist: [] });
-    const u = await scanUniverse();
-    expect(u.keys).toEqual(BUNDLED.nifty50.map(memberKey));
-    expect(new Set(Object.values(u.tag))).toEqual(new Set(['Nifty 50']));
+    await chrome.storage.local.set({ settings: structuredClone(DEFAULT_SETTINGS), watchlist: [OWN] });
+  });
+  it('the default is all five: the studied list is the five indices, each company once', async () => {
+    expect(DEFAULT_SETTINGS.scanner.universe).toBe('all');
+    const keys = await universeKeys();
+    expect(keys).toEqual(buildScan(null).keys);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).not.toContain(OWN); // your own stocks are added next to it, not into it
+  });
+  it('the 5-minute past tests and the learning use the Nifty 100 + your stocks (a phone-sized history)', async () => {
+    const t = await testKeys();
+    expect(t).toEqual([...BUNDLED.nifty100.map(memberKey), OWN]);
+  });
+  it('an install from before v1.12 is moved to all five indices (and the old Day-trade switch is dropped)', async () => {
+    const kv = new MemoryKV();
+    const old = structuredClone(DEFAULT_SETTINGS) as unknown as { scanner: { universe: string }; dayTrade: Record<string, unknown> };
+    old.scanner.universe = 'nifty100';
+    old.dayTrade.scanScope = 'list';
+    await kv.set({ meta: { schemaVersion: 14, installedAt: 1, lastMigratedAt: 1 }, settings: old });
+    const r = await runLocalMigrations(kv, 2);
+    expect(r.applied).toHaveLength(1);
+    const { settings } = (await kv.get(['settings'])) as { settings: typeof old };
+    expect(settings.scanner.universe).toBe('all');
+    expect('scanScope' in settings.dayTrade).toBe(false);
   });
 });

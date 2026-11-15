@@ -59,9 +59,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
   const settings = useSettings();
   const market = useMarketState();
   const now = useNow(5_000);
-  const { universeKeys, listLabel } = useStudyKeys();
-  const watchlist = useLocal('watchlist') ?? [];
-  const keys = universeKeys.length ? universeKeys : watchlist;
+  const { testKeys, testLabel } = useStudyKeys();
   const scan = useScanUniverse();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   if (!settings) return <p class="muted">Loading…</p>;
@@ -73,7 +71,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
   let status: string;
   if (market.phase !== 'open') status = `Market ${market.label}. Signals come on trading days between 9:35 and 11:30 am.`;
   else if (minute < 9 * 60 + 31) status = 'The first 15 minutes (9:15–9:30) are being measured. Signals can start at 9:35.';
-  else if (minute < R.lastSignalT + R.barMinutes) status = `Watching ${formatNumberIN(scan.keys.length, 0)} stocks (${scan.scope === 'all' ? 'all five indices' : listLabel.replace(' + your stocks', '')}) for buy ideas until 11:30 — checked at every 5-minute mark. Falling now and Breakout today keep watching all day.`;
+  else if (minute < R.lastSignalT + R.barMinutes) status = `Watching ${formatNumberIN(scan.keys.length, 0)} stocks (all five indices) for buy ideas until 11:30 — checked at every 5-minute mark. Falling now and Breakout today keep watching all day.`;
   else if (minute < R.exitT) status = 'No new signals after 11:30. Open day trades are watched until 3:10 pm.';
   else status = 'After 3:10 pm: all day trades should be closed now.';
 
@@ -105,8 +103,8 @@ export function DayTradeScreen({ go }: { go: Go }) {
               unusually high volume</b>, tells you to <b>BUY</b> (or <b>SELL short</b>) with a stop and a target, and everything is closed by <b>3:10 pm</b>.
             </p>
             <p class="small">
-              The scanners watch <b>{formatNumberIN(scan.keys.length, 0)} stocks</b> ({scan.scope === 'all' ? 'Nifty 50, 100, Midcap 100, Smallcap 100 and Nifty 500, each once' : 'your Stocks-tab list'}). Turning it on downloads about 6 months of 5-minute prices for the {keys.length} stocks of your Stocks-tab list and the Nifty 100, and about 5 weeks for the rest (usually 10–20 minutes the first time, up to an hour), then{' '}
-              <b>tests the rules on that history</b> before showing any signal.
+              The scanners watch <b>{formatNumberIN(scan.keys.length, 0)} stocks</b> (Nifty 50, 100, Midcap 100, Smallcap 100 and Nifty 500, each once). Turning it on downloads about 6 months of 5-minute prices for the {testKeys.length} stocks of {testLabel} and about 5 weeks for the rest (usually 10–20 minutes the first time, up to an hour), then{' '}
+              <b>tests the rules on {testLabel}</b> before showing any signal.
             </p>
             <button class="btn primary" type="button" data-testid="day-turn-on" onClick={() => void callBackground('daytrade:enable', { enabled: true }).catch((err: unknown) => setMsg({ ok: false, text: errorMessage(err) }))}>
               Turn on day trading
@@ -146,7 +144,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
             <summary>
               <b>How well did these rules do in the past?</b> <span class="small muted">— the past test and how it works</span>
             </summary>
-            <DayTestCard keys={keys} listLabel={listLabel} amount={amount} slots={slots} />
+            <DayTestCard keys={testKeys} listLabel={testLabel} amount={amount} slots={slots} />
             <HowItWorks slots={slots} maxLosses={settings.dayTrade.maxLossesPerDay} />
           </details>
         </>

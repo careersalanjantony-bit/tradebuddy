@@ -1,5 +1,4 @@
 import { buildScan, refreshScanLists, type ScanLists, type ScanUniverse } from '../data/scanUniverse';
-import { universeKeys } from '../data/universe';
 import { trackedKeys } from '../data/quotes';
 import { createLogger } from '../lib/log';
 import { appFetch } from '../platform/http';
@@ -7,9 +6,9 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 
 /**
- * App v1.11: the Day Trade scan list in the background — all five indices, each stock once (or, with
- * "only my Stocks-tab list", that list). Built from the stored NSE lists (refreshed weekly) and kept
- * in memory; the screen gets a short summary (how many stocks, from which index).
+ * The scan list in the background (app v1.11; the only list from v1.12) — all five indices, each stock
+ * once, plus your own stocks. Built from the stored NSE lists (refreshed weekly) and kept in memory;
+ * the screen gets a short summary (how many stocks, from which index).
  */
 
 const log = createLogger('scan-list');
@@ -18,26 +17,14 @@ let memo: { sig: string; u: ScanUniverse } | null = null;
 
 export async function scanUniverse(): Promise<ScanUniverse> {
   if (stored === undefined) stored = (await getLocal('scanLists')) ?? null;
-  const settings = await getSettings();
   const watchlist = (await getLocal('watchlist')) ?? [];
-  const scope = settings.dayTrade.scanScope ?? 'all';
-  const listKeys = scope === 'list' ? await universeKeys() : [];
-  const sig = `${scope}|${stored?.at ?? 0}|${settings.scanner.universe}|${listKeys.length}|${watchlist.join(',')}`;
+  const sig = `${stored?.at ?? 0}|${watchlist.join(',')}`;
   if (memo?.sig === sig) return memo.u;
-  const all = buildScan(stored, watchlist);
-  let u: ScanUniverse;
-  if (scope === 'list') {
-    // only the Stocks-tab list (or your own stocks): same tags, fewer stocks
-    const keys = listKeys.length ? listKeys : watchlist;
-    const tag: Record<string, string> = {};
-    for (const k of keys) tag[k] = all.tag[k] ?? 'Your list';
-    const added: Record<string, number> = {};
-    for (const k of keys) added[tag[k]!] = (added[tag[k]!] ?? 0) + 1;
-    u = { keys, tag, added, perIndex: all.perIndex, sources: all.sources };
-  } else u = all;
+  // all five indices, always (app v1.12: there is no single-index choice any more)
+  const u = buildScan(stored, watchlist);
   memo = { sig, u };
   const prev = await getSession('scanUniverse');
-  if (!prev || prev.count !== u.keys.length || prev.scope !== scope) await setSession('scanUniverse', { at: Date.now(), count: u.keys.length, added: u.added, scope });
+  if (!prev || prev.count !== u.keys.length) await setSession('scanUniverse', { at: Date.now(), count: u.keys.length, added: u.added });
   return u;
 }
 

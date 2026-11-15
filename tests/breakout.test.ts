@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installChromeMock } from './chromeMock';
+import { noIndexLists } from './scanHelpers';
 import { breakoutsIdle, liveBar, resetBreakouts, sameLevel, scanBreakouts, type BreakoutSignal, type LiveCandle } from '../src/background/breakoutJobs';
 import { BO, BREAKOUT_RULES_VERSION as BO_VERSION, checkBreakout, confirmCandle, normalCandleVolume, planBreakout, resistanceOf, runBreakoutTest, simulateBreakoutDay, vwapOf, type Bar, type LiveInput } from '../src/daytrade/breakout';
 import { features, FEATURES, newBrain, STRATEGIES, upgradeBrain, type Brain } from '../src/bot/brain';
@@ -207,9 +208,8 @@ beforeEach(async () => {
   day = { high: 0, low: Infinity };
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.dayTrade.enabled = true;
-  settings.scanner.universe = 'watchlist';
-  settings.dayTrade.scanScope = 'list';
-  await chrome.storage.local.set({ settings, watchlist: [AAA], marketCalendar: null, breakoutAlerted: null, auth: { status: 'logged_out' }, secrets: { upstoxAnalyticsToken: 'analytics-test-token' } });
+  settings.scanner.universe = 'all';
+  await chrome.storage.local.set({ settings, scanLists: noIndexLists(), watchlist: [AAA], marketCalendar: null, breakoutAlerted: null, auth: { status: 'logged_out' }, secrets: { upstoxAnalyticsToken: 'analytics-test-token' } });
   const db = await getDb();
   await db.clear('intraday');
   await db.clear('instruments');

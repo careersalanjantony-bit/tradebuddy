@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installChromeMock } from './chromeMock';
+import { noIndexLists } from './scanHelpers';
 import { dayClose, dayTake, dayTick, monitorDayTrades } from '../src/background/dayJobs';
 import { DAY_RULES_VERSION, DEFAULT_VARIANT } from '../src/daytrade/backtest';
 import { appendBar, completedBars, dayExitAt, liveConfig, marketMove, minutesIST, signalFrom, signalState, slotStart, type LiveStock } from '../src/daytrade/live';
@@ -50,10 +51,10 @@ beforeEach(async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.dayTrade.enabled = true;
   settings.risk.capitalInr = 90_000;
-  settings.scanner.universe = 'watchlist';
-  settings.dayTrade.scanScope = 'list';
+  settings.scanner.universe = 'all';
   await chrome.storage.local.set({
     settings,
+    scanLists: noIndexLists(),
     watchlist: KEYS,
     secrets: { upstoxAnalyticsToken: 'analytics-test-token' },
     auth: { status: 'logged_out' },

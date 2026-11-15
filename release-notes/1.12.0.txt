@@ -1,0 +1,4 @@
+No index to pick any more: the whole app studies Nifty 50, Nifty 100, Midcap 100, Smallcap 100 and Nifty 500 at the same time — about 535 companies, each once.
+Stocks tab: the "List" picker is now "Show only" — it narrows what you see to one index, but every index is still studied and scanned. Each stock shows its index.
+Settings shows "All five indices" instead of a list choice; the Day trade "All five indices" switch is gone (always on).
+Past tests and self-learning use the Nifty 100 + your stocks, so the phone's storage stays small.

@@ -26,7 +26,7 @@ export function SettingsScreen() {
   const simple = settings.ui.mode === 'simple';
   return (
     <>
-      <AmountCard risk={settings.risk} universe={settings.scanner.universe} newPickAlerts={settings.scanner.newPickAlerts} rankBy={settings.scanner.rankBy} />
+      <AmountCard risk={settings.risk} newPickAlerts={settings.scanner.newPickAlerts} rankBy={settings.scanner.rankBy} />
       <AlertSettings settings={settings} />
       {simple ? (
         <details class="card">

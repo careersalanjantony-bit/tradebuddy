@@ -4,8 +4,8 @@ import type { Quote } from '../data/quotesParse';
 import { invalidateStockCache, loadStockData, type StockData } from '../data/stockData';
 import { getAllInstruments } from '../data/instruments';
 import { useLocal, useNow, useSessionValue, useSettings } from './hooks';
-import { BUNDLED } from '../data/indexLists';
-import { INDEX_LABEL, memberKey } from '../data/universeParse';
+import { memberKey } from '../data/universeParse';
+import { buildScan, membersOf } from '../data/scanUniverse';
 
 /** Must match background/dataJobs.ts DATA_CHANNEL (not imported, to keep SW code out of pages). */
 const DATA_CHANNEL = 'swing-data';
@@ -111,17 +111,35 @@ export function useStockData(key: string | null): { data: StockData | null; load
   return { data: key ? (data.get(key) ?? null) : null, loading };
 }
 
-/** The companies the extension studies by itself (Nifty 50/100) plus your own stocks. */
-export function useStudyKeys(): { keys: string[]; universeKeys: string[]; listLabel: string } {
-  const settings = useSettings();
-  const universe = useLocal('universe');
+export interface StudyKeys {
+  /** everything studied: the companies plus your own stocks */
+  keys: string[];
+  /** the companies studied by themselves (without your own stocks) */
+  universeKeys: string[];
+  listLabel: string;
+  /** the stocks of the 5-minute past test (with all five indices: the Nifty 100 + your stocks) */
+  testKeys: string[];
+  testLabel: string;
+}
+
+/**
+ * The companies the app studies by itself plus your own stocks. App v1.12: all five indices together
+ * (Nifty 50, 100, Midcap 100, Smallcap 100, Nifty 500), each company once — same as the background.
+ */
+export function useStudyKeys(): StudyKeys {
+  const scanLists = useLocal('scanLists');
   const watchlist = useLocal('watchlist') ?? [];
   return useMemo(() => {
-    const index = settings?.scanner.universe ?? 'nifty100';
-    if (index === 'watchlist') return { keys: watchlist, universeKeys: [], listLabel: 'your stocks' };
-    const members = universe && universe.index === index ? universe.members : (BUNDLED[index] ?? BUNDLED.nifty100);
-    const universeKeys = members.map(memberKey);
-    const keys = [...new Set([...universeKeys, ...watchlist])];
-    return { keys, universeKeys, listLabel: `${INDEX_LABEL[index]}${watchlist.some((k) => !universeKeys.includes(k)) ? ' + your stocks' : ''}` };
-  }, [settings?.scanner.universe, universe, watchlist.join(',')]);
+    // same as background data/universe.ts: always all five indices (no single-index choice)
+    const own = (u: string[]) => (watchlist.some((k) => !u.includes(k)) ? ' + your stocks' : '');
+    const universeKeys = buildScan(scanLists).keys;
+    const n100 = membersOf('nifty100', scanLists).map(memberKey);
+    return {
+      keys: [...new Set([...universeKeys, ...watchlist])],
+      universeKeys,
+      listLabel: `all five indices${own(universeKeys)}`,
+      testKeys: [...new Set([...n100, ...watchlist])],
+      testLabel: `the Nifty 100${own(n100)}`,
+    };
+  }, [scanLists?.at, watchlist.join(',')]);
 }

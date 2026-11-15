@@ -14,6 +14,7 @@ export function StockRow({
   actions,
   badge,
   signal,
+  indexTag,
 }: {
   symbol: string;
   data: StockData | undefined;
@@ -22,6 +23,8 @@ export function StockRow({
   badge?: string;
   /** today's day-trade signal for this stock */
   signal?: { side: 'long' | 'short'; time: string };
+  /** the narrowest index the stock is in ("Nifty 50", "Midcap 100"…; app v1.12) */
+  indexTag?: string;
 }) {
   const s = data?.snapshot;
   const q = data?.quote;
@@ -37,6 +40,11 @@ export function StockRow({
         <div class="line1">
           <b>{symbol}</b>
           <span class="exch" title="National Stock Exchange — all prices here are NSE prices">NSE</span>
+          {indexTag && (
+            <span class={`chip index-tag ${indexTag.replace(/\s+/g, '').toLowerCase()}`} data-testid="row-index" title={`In ${indexTag}`}>
+              {indexTag}
+            </span>
+          )}
           {signal && (
             <span class={`chip day ${signal.side === 'long' ? 'buy' : 'sell'}`} title="Day-trade signal (buy and sell the same day) — see the Day trade tab">
               {signal.side === 'long' ? '▲ BUY today' : '▼ SELL today'} {signal.time}

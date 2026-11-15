@@ -419,6 +419,19 @@ await page.waitForTimeout(400);
 const risingCards = (await page.$$('.stock-card')).length;
 check('Stocks: cards with one-tap filter chips', allCards >= 10 && risingCards > 0 && risingCards <= allCards, `${allCards} → ${risingCards}`);
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-stocks.png') });
+// app v1.12: no index to pick — all five are studied; "Show only" just narrows the view
+await page.click('.filter-chip[data-filter="all"]');
+const listInfo = async () => ((await page.textContent('[data-testid="list-info"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const studied = Number((/of ([\d,]+) stocks/.exec(await listInfo())?.[1] ?? '0').replace(/,/g, ''));
+const viewOpts = await page.$$eval('select[data-field="index-view"] option', (els) => els.map((e) => e.textContent.trim()));
+const tagged = await page.$$eval('.stock-card [data-testid="row-index"]', (els) => els.length);
+await page.selectOption('select[data-field="index-view"]', 'nifty50');
+const n50 = await until(async () => /^\d+ of /.test(await listInfo()) && Number(/^(\d+) of/.exec(await listInfo())[1]) <= 60, 6000);
+const n50Text = await listInfo();
+const n50Tags = await page.$$eval('.stock-card [data-testid="row-index"]', (els) => [...new Set(els.map((e) => e.textContent.trim()))]);
+await page.selectOption('select[data-field="index-view"]', 'all');
+const segText = ((await page.textContent('.segmented').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Stocks tab studies all five indices at once (no index to choose); "Show only" narrows the view to one index', studied > 450 && viewOpts.length === 6 && viewOpts[0].startsWith('All five (') && segText.includes('All five indices') && tagged > 0 && n50 && n50Tags.length === 1 && n50Tags[0] === 'Nifty 50' && !(await page.$('select[data-field="list"]')), `${studied} studied · ${viewOpts.join(' | ')} · Nifty 50 view: ${n50Text.slice(0, 40)} ${JSON.stringify(n50Tags)}`);
 
 console.log('── Breadth + sell-first');
 await page.click('.bottom-nav [data-nav="daytrade"]');
@@ -438,7 +451,7 @@ check('Falling now: the falling stock appears with a score, sell price, buy-back
 const scanText = ((await page.textContent('[data-testid="scan-coverage"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 const scanN = Number((/Scanning ([\d,]+) stocks/.exec(scanText)?.[1] ?? '0').replace(/,/g, ''));
 const scanDb = await page.evaluate(async () => (await chrome.storage.session.get('scanUniverse')).scanUniverse);
-check('Day trade scans all five indices, each stock once (Nifty 50, 100, Midcap 100, Smallcap 100, Nifty 500)', scanN > 450 && scanDb?.count === scanN && scanDb?.scope === 'all' && ['Nifty 50', 'Nifty 100', 'Midcap 100', 'Smallcap 100', 'Nifty 500'].every((w) => scanText.includes(w)) && !/\d\.00/.test(scanText), scanText.slice(0, 200));
+check('Day trade scans all five indices, each stock once (Nifty 50, 100, Midcap 100, Smallcap 100, Nifty 500)', scanN > 450 && scanDb?.count === scanN && !(await page.$('[data-testid="scan-scope-switch"]')) && ['Nifty 50', 'Nifty 100', 'Midcap 100', 'Smallcap 100', 'Nifty 500'].every((w) => scanText.includes(w)) && !/\d\.00/.test(scanText), scanText.slice(0, 200));
 const fallTag = ((await page.textContent(`.short-idea[data-symbol="${FALL}"] [data-testid="index-tag"]`).catch(() => '')) ?? '').trim();
 check('the Falling-now idea shows which index the stock is in', fallTag === 'Nifty 50', fallTag || 'no tag');
 const fallStatus = ((await page.textContent('[data-testid="falling-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
@@ -525,12 +538,6 @@ const boWant = await page.evaluate(async () => {
   return has('nifty50') ? 'Nifty 50' : has('nifty100') ? 'Nifty 100' : '?';
 });
 check('the breakout shows its index, and the alert is recorded once across the three scanners', boTag === boWant && gate.filter((x) => x.key === 'NSE_EQ|INE423A01024' && x.side === 'buy').length === 1, `${boTag || 'no tag'} (expected ${boWant}) · ${JSON.stringify(gate.map((x) => `${x.src}:${x.side}`))}`);
-// "All five indices" off → only the Stocks-tab list; back on → all again
-await page.click('[data-testid="scan-scope-switch"]');
-const listOnly = await until(async () => /Scanning 50 stocks/.test((await page.textContent('[data-testid="scan-count"]').catch(() => '')) ?? ''), 8000);
-await page.click('[data-testid="scan-scope-switch"]');
-const allAgain = await until(async () => Number(((/Scanning ([\d,]+) stocks/.exec((await page.textContent('[data-testid="scan-count"]').catch(() => '')) ?? '')?.[1]) ?? '0').replace(/,/g, '')) > 450, 8000);
-check('"All five indices" can be switched off (only the Stocks-tab list) and on again', listOnly && allAgain, `${listOnly} ${allAgain}`);
 mock.breakPrice = 200.3;
 
 console.log('── In-app updates');
@@ -755,6 +762,8 @@ check('Alerts card: day-trade BUY / SELL ideas, breakouts, rising fast, sell-fir
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });
+const studyText = ((await page.textContent('[data-testid="study-all"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Settings: "Companies to study" is all five indices — nothing to choose', /All five indices — Nifty 50, Nifty 100, Midcap 100, Smallcap 100 and Nifty 500 together \(\d+ companies, each once\)/.test(studyText) && !(await page.$('select[data-field="universe"]')), studyText);
 const tones = await page.$$eval('[data-testid="tone-settings"] .tone-row', (els) => els.map((e) => e.getAttribute('data-tone')));
 check('Notification tone: several money sounds (+ the phone’s own), "Cash register" chosen at first', tones.length >= 7 && tones.includes('coins') && tones.includes('jackpot') && (await page.getAttribute('[data-tone="cash"] .tone-pick', 'aria-checked')) === 'true', tones.join(', '));
 await page.click('[data-tone="coins"] .tone-pick');

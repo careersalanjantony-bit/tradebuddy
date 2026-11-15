@@ -146,6 +146,18 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (ideaAlerts === undefined) await kv.set({ ideaAlerts: null });
     },
   },
+  {
+    to: 15,
+    description: 'app v1.12: the app studies all five indices at once (no single-index choice)',
+    async up(kv) {
+      const { settings } = (await kv.get(['settings'])) as { settings?: { scanner?: Record<string, unknown>; dayTrade?: Record<string, unknown> } };
+      if (!settings) return;
+      const next = structuredClone(settings);
+      if (next.scanner) next.scanner.universe = 'all';
+      if (next.dayTrade) delete next.dayTrade.scanScope;
+      await kv.set({ settings: next });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

@@ -3,7 +3,7 @@ import { searchInstruments } from '../../data/instrumentsParse';
 import { formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
 import { callBackground } from '../../shared/messages';
-import { setLocal, updateSettings } from '../../storage/local';
+import { setLocal } from '../../storage/local';
 import type { Go } from '../App';
 import { StockRow } from '../components/StockRow';
 import { useInstrumentMap, useInstruments, useStocksData } from '../data';
@@ -13,7 +13,8 @@ import { PriceRange } from '../components/PriceRange';
 import { DownloadNote } from '../components/DownloadNote';
 import { suggestBuys } from '../../advisor/suggest';
 import { explainSnapshot } from '../../advisor/explain';
-import { INDEX_LABEL, INDEX_ORDER, inPriceRange, type UniverseIndex } from '../../data/universeParse';
+import { INDEX_ORDER, inPriceRange, type UniverseIndex } from '../../data/universeParse';
+import { INDEX_VIEW_LABEL, useIndexMembers, useScanUniverse, type IndexView } from '../components/ScanList';
 import { istDate } from '../../lib/time';
 import { ShortSellList } from '../components/ShortSell';
 import { usePersistentState } from '../persist';
@@ -23,7 +24,7 @@ const SETUP_ORDER = ['Breakout', 'Pullback in uptrend', 'Clean uptrend', 'Recove
 
 export function WatchlistScreen({ go }: { go: Go }) {
   const settings = useSettings();
-  const { universeKeys, listLabel } = useStudyKeys();
+  const { universeKeys } = useStudyKeys();
   const [view, setView] = usePersistentState<'auto' | 'mine'>('stocks.view', 'auto');
   const auto = view === 'auto' && universeKeys.length > 0;
   return (
@@ -31,7 +32,7 @@ export function WatchlistScreen({ go }: { go: Go }) {
       {universeKeys.length > 0 && (
         <div class="segmented" role="tablist">
           <button type="button" aria-selected={auto} onClick={() => setView('auto')}>
-            {listLabel.replace(' + your stocks', '')} — ranked for you
+            All five indices — ranked for you
           </button>
           <button type="button" aria-selected={!auto} onClick={() => setView('mine')}>
             My stocks
@@ -85,7 +86,11 @@ const FILTERS: Array<[Filter, string]> = [
 ];
 const PAGE = 120;
 
-/** The studied list (Nifty 50 … Nifty 500), ranked: buy picks first (in the chosen order), then Good / Wait / others. */
+/**
+ * The studied list — all five indices together (app v1.12), each company once — ranked: buy picks first
+ * (in the chosen order), then Good / Wait / others. "Show only" narrows what is shown to one index; it
+ * does not change what is studied or scanned.
+ */
 function AutoList({ go, keys }: { go: Go; keys: string[] }) {
   const settings = useSettings(); // null for a moment while loading
   const plans = useLocal('plans') ?? [];
@@ -98,6 +103,9 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
   const [q, setQ] = usePersistentState('stocks.q', '');
   const [filter, setFilter] = usePersistentState<Filter>('stocks.filter', 'all');
   const [limit, setLimit] = usePersistentState('stocks.limit', PAGE);
+  const [indexView, setIndexView] = usePersistentState<IndexView>('stocks.index', 'all');
+  const members = useIndexMembers();
+  const { tag } = useScanUniverse();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const safety = (settings?.scanner.rankBy ?? 'safety') === 'safety';
@@ -110,7 +118,9 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
     const res = suggestBuys(stocks, settings, plans, istDate(Date.now()), { priceMin: 0, priceMax: null });
     const pickRank = new Map([...res.suggestions, ...res.more].map((s, i) => [s.key, { i, pct: s.expectedPct, won: s.record.profitable, of: s.record.samples }]));
     const text = q.trim().toUpperCase();
+    const only = indexView === 'all' ? null : (members[indexView] ?? null);
     return stocks
+      .filter((s) => !only || only.has(s.key))
       .filter((s) => !text || s.symbol.includes(text) || (byKey.get(s.key)?.name ?? '').toUpperCase().includes(text))
       .filter((s) => inPriceRange(s.data?.snapshot?.price ?? null, settings.ui.priceMin, settings.ui.priceMax))
       .map((s) => ({ ...s, pick: pickRank.get(s.key), signal: signalOf.get(s.key), verdict: s.data?.snapshot ? explainSnapshot(s.symbol, s.data.snapshot).verdict : 'No setup' }))
@@ -159,7 +169,7 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
         if (a.pick || b.pick) return a.pick ? -1 : 1;
         return VERDICT_ORDER.indexOf(a.verdict) - VERDICT_ORDER.indexOf(b.verdict);
       });
-  }, [keys.join(','), data, byKey, settings, plans, q, filter, signalOf]);
+  }, [keys.join(','), data, byKey, settings, plans, q, filter, signalOf, indexView, members]);
 
   const refresh = async () => {
     setBusy(true);
@@ -173,25 +183,23 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
       setBusy(false);
     }
   };
-  const index = settings?.scanner.universe ?? 'nifty100';
-
   return (
     <>
       <section class="card">
         <div class="grid2">
           <label class="field">
-            <span>List</span>
+            <span>Show only</span>
             <select
-              value={index}
-              data-field="list"
-              onChange={(e) => {
-                const v = (e.currentTarget as HTMLSelectElement).value as UniverseIndex;
-                setLimit(PAGE);
-                void updateSettings({ scanner: { universe: v } }).then(() => callBackground('universe:refresh', { force: true }).catch(() => undefined));
-              }}
+              value={indexView}
+              data-field="index-view"
+              title="All five indices are always studied and scanned — this only hides the others from this list"
+              onChange={(e) => (setIndexView((e.currentTarget as HTMLSelectElement).value as IndexView), setLimit(PAGE))}
             >
-              {INDEX_ORDER.map((i) => (
-                <option value={i}>{INDEX_LABEL[i]}</option>
+              {(['all', ...INDEX_ORDER] as IndexView[]).map((i) => (
+                <option value={i}>
+                  {INDEX_VIEW_LABEL[i]}
+                  {i === 'all' ? ` (${keys.length})` : ` (${members[i as UniverseIndex]?.size ?? 0})`}
+                </option>
               ))}
             </select>
           </label>
@@ -270,6 +278,7 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
             symbol={r.symbol}
             data={r.data}
             onOpen={() => go('stock', r.key)}
+            {...(tag[r.key] ? { indexTag: tag[r.key] } : {})}
             {...(r.signal ? { signal: { side: r.signal.side, time: formatTimeIST(r.signal.at).slice(0, 5) } } : {})}
             {...(r.pick ? { badge: safety ? `#${r.pick.i + 1} pick · made money ${r.pick.won} of ${r.pick.of} times` : `#${r.pick.i + 1} pick · past avg ${r.pick.pct >= 0 ? '+' : ''}${r.pick.pct.toFixed(1)}%` } : {})}
           />

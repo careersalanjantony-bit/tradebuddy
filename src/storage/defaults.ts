@@ -45,10 +45,10 @@ export const DEFAULT_SETTINGS: Settings = {
     trailAtrMultiple: 2,
     timeStopSessions: 15,
   },
-  scanner: { eveningEnabled: true, morningEnabled: true, fundamentalFilter: false, universe: 'nifty100', newPickAlerts: true, rankBy: 'safety' },
+  scanner: { eveningEnabled: true, morningEnabled: true, fundamentalFilter: false, universe: 'all', newPickAlerts: true, rankBy: 'safety' },
   alerts: { cooldownMinutes: 15, hysteresisPct: 0.1, staleSeconds: 60 },
   portfolio: { autoSync: true },
-  dayTrade: { shortRiskInr: 50, breakoutRiskInr: 100, scanScope: 'all', enabled: true, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
+  dayTrade: { shortRiskInr: 50, breakoutRiskInr: 100, enabled: true, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
   claude: {
     reportModel: 'claude-opus-5-5',
     extractModel: 'claude-haiku-5-5',

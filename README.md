@@ -38,14 +38,31 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.12
+
+- **Everything studies all five indices at once — there is no index to pick any more.** Nifty 50,
+  Nifty 100, Nifty Midcap 100, Nifty Smallcap 100 and Nifty 500 are watched together (about 535
+  companies, each once), by the Day Trade scanners, the Stocks tab, the top picks, prices and alerts.
+  Phones that had one index chosen are moved to all five when they update (an old choice from a
+  restored backup is ignored too).
+- **Stocks tab:** the "List" picker is now **Show only** — All five / Nifty 50 / Nifty 100 / Midcap 100 /
+  Smallcap 100 / Nifty 500. It only hides rows from the list; nothing stops being studied or scanned.
+  Each stock shows its index ("Nifty 50", "Midcap 100"…).
+- **Settings:** "Companies to study" is a plain line (all five indices) instead of a choice. The Day
+  trade tab's "All five indices" switch from 1.11 is gone (it is always all five).
+- **Past tests and the self-learning** use the Nifty 100 plus your own stocks: about 6 months of
+  5-minute prices for every one of the ~535 companies would be too much for a phone. The other
+  companies keep about 5 weeks of 5-minute prices (enough for the live scanners) and their full daily
+  history (for the Stocks tab and top picks — one download per company, a few minutes the first time).
+
 ## New in 1.11
 
 - **All three Day Trade scanners — Today's buy ideas, Falling now and Breakout today — watch every
   stock of Nifty 50, Nifty 100, Nifty Midcap 100, Nifty Smallcap 100 and Nifty 500 together**
   (about 500–540 stocks; the lists overlap, so each stock is counted and scanned **once**). The
   lists come from NSE once a week, with the copy bundled in the app as the fallback. Your own stocks
-  outside these lists are scanned too. The Stocks-tab list no longer limits the scanners; a switch
-  on the Day trade tab ("All five indices") goes back to scanning only the Stocks-tab list.
+  outside these lists are scanned too. The Stocks-tab list no longer limits the scanners (from 1.12
+  there is no list to pick at all).
 - **Every idea card shows the stock's index** — the narrowest one it belongs to: "Nifty 50" for
   Reliance, "Midcap 100", "Smallcap 100", "Nifty 500", or "Your list". When two scanners find the same
   stock, both cards show it ("also in Breakout today") but **you get one alert**, not two: a stock
@@ -67,7 +84,7 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
   history filled in. The closed-app breakout check covers the whole scan list too.
 - **Mobile data:** live details for ~500 stocks are a lot of data (roughly 250–650 MB an hour on a busy
   day). On mobile data, turn on **Save mobile data** (prices only, about 125 MB an hour; volume checked
-  every ~10 seconds) or switch "All five indices" off.
+  every ~10 seconds).
 - Risk controls are unchanged: the past tests, "practice only" until they pass, two losing day trades
   a day stop new trades, the risk-per-trade choices, the 3:10 pm close. The app still never places,
   changes or cancels an order.

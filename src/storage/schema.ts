@@ -93,7 +93,8 @@ export interface Settings {
     morningEnabled: boolean;
     fundamentalFilter: boolean;
     /** which companies the extension studies by itself */
-    universe: 'nifty50' | 'nifty100' | 'midcap100' | 'smallcap100' | 'nifty500' | 'watchlist';
+    /** what is studied: 'all' = Nifty 50, 100, Midcap 100, Smallcap 100 and Nifty 500 together (app v1.12; the only choice offered) */
+    universe: 'all' | 'nifty50' | 'nifty100' | 'midcap100' | 'smallcap100' | 'nifty500' | 'watchlist';
     /** notify when a stock newly becomes a top pick during market hours */
     newPickAlerts: boolean;
     /** order of the top picks (v0.8.0): most often made money in similar past cases, or highest past average */
@@ -124,7 +125,6 @@ export interface Settings {
     /** most you want to lose on one breakout (buy-first) trade, ₹ (app v1.9) */
     breakoutRiskInr?: number;
     /** app v1.11: what the three Day Trade scanners watch — all five indices, or only the Stocks-tab list */
-    scanScope?: 'all' | 'list';
     /** notification + sound for new signals */
     alerts: boolean;
   };

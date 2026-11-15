@@ -1,11 +1,8 @@
-import { createLogger } from '../lib/log';
-import { getLocal, getSettings, setLocal } from '../storage/local';
-import { BUNDLED, BUNDLED_AS_OF } from './indexLists';
-import { INDEX_CSV_URLS, INDEX_LABEL, INDEX_MIN_ROWS, memberKey, parseIndexCsv, type IndexMember, type UniverseIndex } from './universeParse';
-import { appFetch } from '../platform/http';
+import { getLocal } from '../storage/local';
+import { BUNDLED } from './indexLists';
+import { buildScan, membersOf } from './scanUniverse';
+import { memberKey, type IndexMember, type UniverseIndex } from './universeParse';
 
-const log = createLogger('universe');
-const WEEK = 7 * 24 * 3600_000;
 
 export interface UniverseState {
   index: UniverseIndex;
@@ -14,46 +11,26 @@ export interface UniverseState {
   source: 'nse' | 'bundled';
 }
 
-const bundled = (index: UniverseIndex): IndexMember[] => BUNDLED[index] ?? BUNDLED.nifty100;
-
 /** ISINs of the Nifty 100 companies (large, liquid): the only ones the day-trade mode suggests selling short. */
 export const NIFTY100_KEYS: ReadonlySet<string> = new Set(BUNDLED.nifty100.map(memberKey));
 
 /**
- * The list of companies the extension studies by itself (Nifty 50 / 100 / Midcap 100 / Smallcap 100 /
- * Nifty 500). Downloaded from NSE weekly; falls back to the bundled copy if NSE cannot be reached.
+ * The companies the app studies by itself (app v1.12): Nifty 50, Nifty 100, Nifty Midcap 100, Nifty
+ * Smallcap 100 and Nifty 500 together, each company once, Nifty 50 first — always. There is no
+ * single-index choice any more; an old `scanner.universe` value (e.g. from a restored backup) is
+ * ignored. The five lists come from NSE weekly (background/scanList.ts ensureScanLists), with the
+ * bundled copy as the fallback. Your own stocks are added next to this list, not into it.
  */
-export async function ensureUniverse(force = false, now = Date.now()): Promise<UniverseState | null> {
-  const settings = await getSettings();
-  const index = settings.scanner.universe;
-  if (index === 'watchlist') return null;
-  const prev = await getLocal('universe');
-  if (!force && prev && prev.index === index && prev.source === 'nse' && now - prev.fetchedAt < WEEK) return prev;
-  try {
-    const res = await appFetch(INDEX_CSV_URLS[index], { timeoutMs: 30_000 });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const members = parseIndexCsv(await res.text());
-    if (members.length < INDEX_MIN_ROWS[index]) throw new Error(`only ${members.length} companies in the list`);
-    const state: UniverseState = { index, members, fetchedAt: now, source: 'nse' };
-    await setLocal('universe', state);
-    log.info(`${INDEX_LABEL[index]} list updated from NSE: ${members.length} companies`);
-    return state;
-  } catch (err) {
-    if (prev && prev.index === index) {
-      log.warn(`Could not refresh the ${INDEX_LABEL[index]} list from NSE; keeping the stored one`, { error: err });
-      return prev;
-    }
-    const state: UniverseState = { index, members: bundled(index), fetchedAt: Date.parse(`${BUNDLED_AS_OF}T00:00:00+05:30`), source: 'bundled' };
-    await setLocal('universe', state);
-    log.warn(`NSE not reachable; using the ${INDEX_LABEL[index]} list bundled on ${BUNDLED_AS_OF}`, { error: err });
-    return state;
-  }
+export async function universeKeys(): Promise<string[]> {
+  return buildScan(await getLocal('scanLists')).keys;
 }
 
-export async function universeKeys(): Promise<string[]> {
-  const settings = await getSettings();
-  if (settings.scanner.universe === 'watchlist') return [];
-  const u = await getLocal('universe');
-  if (!u || u.index !== settings.scanner.universe) return bundled(settings.scanner.universe).map(memberKey);
-  return u.members.map(memberKey);
+/**
+ * The stocks the 5-minute past tests and the self-learning study: the Nifty 100 plus your own stocks.
+ * About 6 months of 5-minute prices for all ~535 stocks would be too big for a phone (the other stocks
+ * keep about 5 weeks — enough for the live scanners).
+ */
+export async function testKeys(): Promise<string[]> {
+  const watchlist = (await getLocal('watchlist')) ?? [];
+  return [...new Set([...membersOf('nifty100', await getLocal('scanLists')).map(memberKey), ...watchlist])];
 }

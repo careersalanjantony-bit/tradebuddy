@@ -17,7 +17,7 @@ import { openTrade } from './TradeSheet';
 
 const pct = (x: number | null) => (x === null ? '—' : `${Math.round(x * 100)}%`);
 
-/** Today's top picks (v0.7.0): the extension studies Nifty 50/100 by itself and ranks what to buy. */
+/** Today's top picks (v0.7.0): the app studies all five indices by itself (v1.12) and ranks what to buy. */
 export function TodaySuggestions({ go }: { go: Go }) {
   const settings = useSettings();
   const plans = useLocal('plans') ?? [];
