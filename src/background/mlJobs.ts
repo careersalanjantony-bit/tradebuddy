@@ -11,7 +11,7 @@ import { learn, ML_VERSION, type MlReport } from '../ml/learn';
 import { predictEnsemble } from '../ml/models';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { setSession } from '../storage/session';
-import { dayKeys } from './dayJobs';
+import { listKeys } from './dayJobs';
 import { testShorts } from './shortJobs';
 import { testBreakouts } from './breakoutJobs';
 
@@ -26,7 +26,8 @@ let running: Promise<MlReport | null> | null = null;
 export function learnNow(now = Date.now()): Promise<MlReport | null> {
   running ??= (async () => {
     const settings = await getSettings();
-    const keys = await dayKeys();
+    // the self-learning studies the Stocks-tab list (it has the full 5-minute history)
+    const keys = await listKeys();
     const refs = await Promise.all(keys.map(async (k) => ({ key: k, symbol: (await getInstrument(k))?.trading_symbol ?? k, shortAllowed: NIFTY100_KEYS.has(k), tick: (await getInstrument(k))?.tick ?? 0.05 })));
     const amount = settings.risk.capitalInr && settings.risk.capitalInr > 0 ? settings.risk.capitalInr : 100_000;
     const slots = Math.max(1, Math.min(5, Math.round(settings.risk.sizing === 'split' ? settings.risk.splitInto : settings.risk.maxOpenTrades)));

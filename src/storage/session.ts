@@ -51,7 +51,9 @@ export interface SessionStore {
   /** last read of the Upstox positions (v0.12.0) */
   portfolioStatus: { at: number; ok: boolean; positions: number; error?: string };
   /** instant price feed (WebSocket) state */
-  feedStatus: { connected: boolean; lastTickAt: number; at: number; keys: number; error?: string };
+  feedStatus: { connected: boolean; lastTickAt: number; at: number; keys: number; full?: number; ltpc?: number; overflow?: number; error?: string };
+  /** app v1.11: stocks whose price was missing or older than 15 s, checked over the price API */
+  priceFill: { at: number; count: number };
   /** latest headlines for the stocks that matter today (owned, signalled, top picks) */
   news: { at: number; items: NewsItem[]; error?: string; targets?: Record<string, import('../background/newsJobs').NewsReason> };
   /** today's day-trade signals (v0.11.0) */
@@ -65,10 +67,12 @@ export interface SessionStore {
   /** market breadth: Nifty 500 up vs down (app v1.4) */
   breadth: { at: number; list: string; advanced: number; declined: number; unchanged: number; total: number };
   /** "Falling now" sell-first ideas (app v1.4) */
-  shortIdeas: { at: number; ideas: import('../background/shortJobs').ShortIdea[]; risk: number };
+  shortIdeas: { at: number; ideas: import('../background/shortJobs').ShortIdea[]; risk: number; scanned?: number; candidates?: number; checked?: number; scored?: number };
   shortAlerted: { date: string; keys: string[] };
+  /** the Day Trade scan list in short (app v1.11) */
+  scanUniverse: { at: number; count: number; added: Record<string, number>; scope: 'all' | 'list' };
   /** "Breakout today" live ideas (app v1.9) */
-  breakouts: { date: string; at: number; scanned: number; signals: import('../background/breakoutJobs').BreakoutSignal[] };
+  breakouts: { date: string; at: number; scanned: number; total?: number; signals: import('../background/breakoutJobs').BreakoutSignal[] };
   /** rising-fast alerts sent today (app v1.1) */
   risingAlerted: { date: string; keys: string[] };
   /** self-learning in progress (app v1.0) */

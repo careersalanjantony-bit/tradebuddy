@@ -123,6 +123,8 @@ export interface Settings {
     shortRiskInr?: number;
     /** most you want to lose on one breakout (buy-first) trade, ₹ (app v1.9) */
     breakoutRiskInr?: number;
+    /** app v1.11: what the three Day Trade scanners watch — all five indices, or only the Stocks-tab list */
+    scanScope?: 'all' | 'list';
     /** notification + sound for new signals */
     alerts: boolean;
   };
@@ -307,6 +309,10 @@ export interface LocalStore {
   breakoutTest: (import('../daytrade/breakout').BreakoutTestReport & { at: number }) | null;
   /** breakout alerts already sent today (kept across app restarts: never the same alert twice) */
   breakoutAlerted: { date: string; ids: string[] } | null;
+  /** app v1.11: Nifty 50 / 100 / Midcap 100 / Smallcap 100 / 500 lists for the Day Trade scanners */
+  scanLists: import('../data/scanUniverse').ScanLists | null;
+  /** app v1.11: today's idea alerts of all three scanners (one alert per stock and direction) */
+  ideaAlerts: { date: string; items: Array<{ key: string; side: 'buy' | 'sell'; src: string; at: number }> } | null;
   /** the app's own profile and lock (app v1.3); null until set up */
   account: import('../account/account').AccountState | null;
   /** practice money (app v1.0); null until first used */

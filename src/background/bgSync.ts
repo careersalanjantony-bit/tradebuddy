@@ -2,6 +2,7 @@ import { getCalendar } from '../data/calendarSync';
 import { istDate } from '../lib/time';
 import { createLogger } from '../lib/log';
 import { getRecentCandles } from '../data/candles';
+import { getIntradayDays } from '../data/intraday';
 import { alertChannel } from '../notify/toneList';
 import { AUTO_SQUARE_OFF_T, DAY_EXIT_T } from '../wallet/wallet';
 import { drainBackground, syncBackground } from '../platform/backgroundChecker';
@@ -21,7 +22,14 @@ export async function breakoutLevels(keys: string[], today: string): Promise<Rec
   if (levelsFor?.date === today && levelsFor.count === keys.length) return levelsFor.levels;
   const levels: Record<string, { ph: number; av: number }> = {};
   for (const key of keys) {
-    const days = (await getRecentCandles(key, 25).catch(() => [])).filter((c) => c.date < today && !c.partial && !c.special);
+    let days: { high: number; volume: number }[] = (await getRecentCandles(key, 25).catch(() => [])).filter((c) => c.date < today && !c.partial && !c.special);
+    if (!days.length) {
+      // app v1.11: scan-list stocks outside the Stocks tab have only the 5-minute history — use its days
+      days = (await getIntradayDays(key).catch(() => []))
+        .filter((d) => d.date < today && d.h.length)
+        .sort((a, b) => (a.date < b.date ? -1 : 1))
+        .map((d) => ({ high: Math.max(...d.h), volume: d.v.reduce((a, b) => a + b, 0) }));
+    }
     const last = days[days.length - 1];
     const recent = days.slice(-20);
     const av = recent.length ? recent.reduce((s, c) => s + c.volume, 0) / recent.length : 0;
@@ -34,7 +42,8 @@ export async function breakoutLevels(keys: string[], today: string): Promise<Rec
 /** Hands the background checker its data; also tells it the app is running (so it stays quiet). */
 export async function syncBackgroundChecker(now = Date.now()): Promise<void> {
   const [settings, secrets, wallet, cal, keys] = await Promise.all([getSettings(), getSecrets(), getLocal('wallet'), getCalendar(), dayKeys()]);
-  const universe = keys.slice(0, 500);
+  // the whole scan list (the checker asks Upstox in batches of 500, so no stock is left out)
+  const universe = keys;
   await syncBackground({
     enabled: settings.notifications.background,
     rising: settings.notifications.rising,

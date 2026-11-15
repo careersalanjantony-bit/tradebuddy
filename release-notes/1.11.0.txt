@@ -1,0 +1,6 @@
+All three Day Trade scanners (Today's buy ideas, Falling now, Breakout today) now watch every stock of Nifty 50, Nifty 100, Midcap 100, Smallcap 100 and Nifty 500 — about 535 stocks, each once.
+Every idea card shows the stock's index (Nifty 50, Midcap 100, Smallcap 100…).
+The same stock found by two scanners gives one alert, not two; Breakout today shows one card per stock.
+Upstox's live-feed limits are handled: stocks over the limit, or without a tick for 15 s, get a price check every 3 seconds. The Day trade tab shows how many stocks are covered and how.
+Stocks that fail to load are tried again every 5 minutes instead of being dropped for the day.
+A switch "All five indices" lets you go back to scanning only your Stocks-tab list (less mobile data).

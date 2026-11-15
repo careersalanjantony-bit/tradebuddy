@@ -8,6 +8,7 @@ import type { ShortIdea } from '../../background/shortJobs';
 import { useQuotes } from '../data';
 import { useLocal, useMarketState, useSessionValue, useSettings } from '../hooks';
 import { Icon } from './Icon';
+import { AlsoIn, IndexTag } from './ScanList';
 import { AnimatedNumber, buzz, toast } from './Motion';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
@@ -96,6 +97,13 @@ export function FallingNowCard() {
         ))}
       </div>
       {rising && <div class="banner warn small">Most stocks are rising today — sell-first ideas go against the market. Be extra careful.</div>}
+      {market.phase === 'open' && data?.scanned ? (
+        <p class="tiny muted" data-testid="falling-status" style={{ margin: '4px 0' }}>
+          Checked {formatNumberIN(data.scanned, 0)} stocks at {formatTimeIST(data.at).slice(0, 5)}: {formatNumberIN(data.candidates ?? 0, 0)} falling below today's open
+          {data.candidates && data.checked !== undefined && data.checked < data.candidates ? `, the ${formatNumberIN(data.checked, 0)} falling most were scored in depth` : data.checked ? ', all scored in depth' : ''}
+          {data.scored !== undefined ? ` → ${formatNumberIN(ideas.length, 0)} idea${ideas.length === 1 ? '' : 's'}` : ''}.
+        </p>
+      ) : null}
       {ideas.length === 0 ? (
         <p class="small muted">{market.phase === 'open' ? 'No stock is falling clearly enough right now (score 60 or more). Checked every 5 minutes.' : 'Ideas appear during market hours, 9:35 – 2:30.'}</p>
       ) : (
@@ -127,9 +135,11 @@ function ShortIdeaCard({ x }: { x: ShortIdea }) {
         <div class="sig-title">
           <span class="chip day sell">▼ SELL first</span>
           <h3>{x.symbol}</h3>
+          <IndexTag index={x.index} k={x.key} />
           <span class="muted small">
             {formatPct(x.changePct, 1)} today · {formatTimeIST(x.at).slice(0, 5)}
           </span>
+          <AlsoIn k={x.key} here="falling" />
           {moved && <span class="chip flag">price moved — skip</span>}
         </div>
         <span class={`ring ${x.score >= 75 ? 'lo' : 'mid'} score-ring`} title={`Bearish score ${x.score}`}>

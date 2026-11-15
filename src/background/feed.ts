@@ -2,7 +2,8 @@ import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { decodeFeedResponse, subscribeMessage, type FeedTick } from '../data/feedProto';
 import { INDEX_KEYS } from '../data/indices';
-import { getQuotes, trackedKeys } from '../data/quotes';
+import { getQuotes } from '../data/quotes';
+import { priceKeys } from './scanList';
 import { mergeTicks } from '../data/quotesParse';
 import { chunk } from '../lib/chunk';
 import { createLogger } from '../lib/log';
@@ -63,7 +64,7 @@ async function status(force = false): Promise<void> {
   const now = Date.now();
   if (!force && now - lastStatusAt < 5_000) return;
   lastStatusAt = now;
-  await setSession('feedStatus', { connected: !!ws && ws.readyState === WebSocket.OPEN, lastTickAt, at: now, keys: subscribed.size, ...(lastError ? { error: lastError } : {}) });
+  await setSession('feedStatus', { connected: !!ws && ws.readyState === WebSocket.OPEN, lastTickAt, at: now, keys: subscribed.size, full: fullKeys.size, ltpc: subscribed.size - fullKeys.size, overflow: overflowKeys.length, ...(lastError ? { error: lastError } : {}) });
 }
 
 export function closeFeed(reason: string): void {
@@ -81,25 +82,42 @@ export function closeFeed(reason: string): void {
 }
 
 /**
- * App v1.9: the first FULL_KEYS stocks are asked for in "full" mode (adds VWAP, today's volume, the
- * waiting buy / sell quantities and 1-minute candles — needed for live breakout alerts); the rest
- * in "ltpc" mode (price only). Upstox allows fewer keys in full mode than in ltpc mode.
+ * Upstox Market Data Feed V3 limits per user (docs, checked 15 Nov 2026): "full" 2000 keys alone or
+ * 1500 when mixed with other modes; "ltpc" 5000 alone or 2000 when mixed; 2 connections. The app
+ * stays inside the mixed limits.
  */
-export const FULL_KEYS = 1500;
+export const FEED_LIMITS = { fullMixed: 1500, mixedTotal: 2000, ltpcOnly: 5000 } as const;
 
-/** stocks asked for in "full" mode right now, and how many may be ("Save mobile data" → none) */
+/**
+ * Which stocks get "full" (price + volume + VWAP + 1-minute candles), which "ltpc" (price only), and
+ * which do not fit at all (`overflow`) — those are never dropped: the app checks their price over the
+ * normal Upstox price API every few seconds instead. Keys come most important first. Pure.
+ */
+export function planSubscription(keys: string[], saveData: boolean): { full: string[]; ltpc: string[]; overflow: string[] } {
+  const uniq = [...new Set(keys)];
+  if (saveData) return { full: [], ltpc: uniq.slice(0, FEED_LIMITS.ltpcOnly), overflow: uniq.slice(FEED_LIMITS.ltpcOnly) };
+  return { full: uniq.slice(0, FEED_LIMITS.fullMixed), ltpc: uniq.slice(FEED_LIMITS.fullMixed, FEED_LIMITS.mixedTotal), overflow: uniq.slice(FEED_LIMITS.mixedTotal) };
+}
+
+/** stocks asked for in "full" mode right now; those over the limits; "Save mobile data" */
 let fullKeys = new Set<string>();
-let fullRoom = FULL_KEYS;
+let overflowKeys: string[] = [];
+let saveData = false;
 
 /**
  * Brings the subscription in line with `keys`: new stocks are added, old ones removed, and a stock
  * whose mode should change (the "Save mobile data" switch) is moved with Upstox's change_mode.
  */
 function resubscribe(sock: WebSocket, keys: string[]): void {
-  const want = new Set(keys);
+  const plan = planSubscription(keys, saveData);
+  if (plan.overflow.length && plan.overflow.length !== overflowKeys.length) log.info(`${plan.overflow.length} stocks are over Upstox's live-feed limit — their prices come from the price API every few seconds`);
+  overflowKeys = plan.overflow;
+  const wantList = [...plan.full, ...plan.ltpc];
+  const want = new Set(wantList);
   const remove = [...subscribed].filter((k) => !want.has(k));
   for (const part of chunk(remove, 500)) sock.send(subscribeMessage(part, 'unsub'));
-  const wantFull = new Set(keys.slice(0, fullRoom));
+  const wantFull = new Set(plan.full);
+  keys = wantList;
   const add = keys.filter((k) => !subscribed.has(k));
   const addFull = add.filter((k) => wantFull.has(k));
   const addPlain = add.filter((k) => !wantFull.has(k));
@@ -185,10 +203,10 @@ export async function ensureFeed(now = Date.now(), force = false): Promise<strin
     closeFeed('market closed');
     return 'market closed';
   }
-  const keys = [...(await trackedKeys()), ...INDEX_KEYS];
+  const keys = [...(await priceKeys()), ...INDEX_KEYS];
   watched = new Set(keys);
   // full details (volume, VWAP, 1-minute candles) for breakout alerts, unless "Save mobile data" is on
-  fullRoom = settings.data.saveData ? 0 : FULL_KEYS;
+  saveData = !!settings.data.saveData;
   if (ws && ws.readyState === WebSocket.OPEN) {
     resubscribe(ws, keys);
     return 'connected';

@@ -51,6 +51,7 @@ beforeEach(async () => {
   settings.dayTrade.enabled = true;
   settings.risk.capitalInr = 90_000;
   settings.scanner.universe = 'watchlist';
+  settings.dayTrade.scanScope = 'list';
   await chrome.storage.local.set({
     settings,
     watchlist: KEYS,
@@ -249,6 +250,24 @@ describe('live day-trade engine (service worker)', () => {
     await loaded();
     const st = (await chrome.storage.session.get('dayLive')).dayLive as { stocks: Record<string, LiveStock> };
     expect(st.stocks[HDFC]!.bars.t).toEqual([555, 560, 565]);
+  });
+
+  it('a stock whose candles are not in at 09:31 is tried again at the next 5-minute mark (counted, not dropped)', async () => {
+    const aaa = todayCandles[AAA]!;
+    delete todayCandles[AAA];
+    expect((await dayTick(at('09:31', 10))).state).toBe('loading');
+    await loaded();
+    let st = (await chrome.storage.session.get('dayLive')).dayLive as { stocks: Record<string, LiveStock>; coverage: { total: number; loaded: number; noCandles: number; failed: number } };
+    expect(st.stocks[AAA]).toBeUndefined();
+    expect(st.coverage).toMatchObject({ total: 3, loaded: 2, noCandles: 1, failed: 0 });
+    // by 09:35 Upstox has AAA's candles (with the 09:30 one)
+    todayCandles[AAA] = [...aaa, ['09:30', 100.3, 100.5, 100.2, 100.4, 5_000]];
+    await quotes([[HDFC, 801, 800], [AAA, 100.4, 100], [BBB, 501, 500]], at('09:35', 3));
+    await dayTick(at('09:35', 5));
+    st = (await chrome.storage.session.get('dayLive')).dayLive as typeof st;
+    expect(st.stocks[AAA]!.bars.t).toEqual([555, 560, 565, 570]);
+    expect(st.stocks[AAA]!.rvol).toBe(3);
+    expect(st.coverage).toMatchObject({ total: 3, loaded: 3, noCandles: 0, failed: 0 });
   });
 
   it('off = no signals', async () => {

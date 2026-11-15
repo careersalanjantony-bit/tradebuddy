@@ -13,7 +13,8 @@ const log = createLogger('quotes');
 /** Instruments we keep prices for: the studied list (Nifty 50/100) + watchlist + planned/open trades + active alerts. */
 export async function trackedKeys(): Promise<string[]> {
   const [watchlist, plans, alerts, universe, dayTrades] = await Promise.all([getLocal('watchlist'), getLocal('plans'), getLocal('alerts'), universeKeys(), getLocal('dayTrades')]);
-  const keys = new Set<string>([...(watchlist ?? []), ...universe]);
+  // app v1.11: what you hold or trade first (the live feed serves these first), then your stocks and list
+  const keys = new Set<string>();
   for (const t of dayTrades ?? []) if (t.status === 'open') keys.add(t.key);
   for (const p of plans ?? []) if (p.status === 'planned' || p.status === 'open') keys.add(p.key);
   for (const a of alerts ?? []) if (a.active) keys.add(a.key);
@@ -24,6 +25,8 @@ export async function trackedKeys(): Promise<string[]> {
   // the auto-trader's open trades (app v1.6)
   const bot = await getLocal('bot');
   for (const t of bot?.trades ?? []) if (t.status === 'open') keys.add(t.key);
+  for (const k of watchlist ?? []) keys.add(k);
+  for (const k of universe) keys.add(k);
   return [...keys];
 }
 

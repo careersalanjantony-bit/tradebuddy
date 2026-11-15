@@ -2,10 +2,12 @@ import { newId } from '../alerts/rules';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { getInstrument } from '../data/instruments';
-import { fetchTodayBars, pool, pruneIntraday, syncIntraday } from '../data/intraday';
+import { SCAN_HISTORY_SESSIONS, fetchTodayBars, pool, pruneIntraday, syncIntraday } from '../data/intraday';
 import { getQuotes, pollQuotes } from '../data/quotes';
 import type { Quote } from '../data/quotesParse';
 import { NIFTY100_KEYS, universeKeys } from '../data/universe';
+import { scanUniverse } from './scanList';
+import { claimAlert } from './ideaGate';
 import { inTheNews } from '../data/news';
 import { marketMood } from '../advisor/mood';
 import { newsFor } from './newsJobs';
@@ -36,8 +38,17 @@ const log = createLogger('daytrade');
 const R = DEFAULT_RULES;
 const rs = (x: number) => `₹${x.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** The stocks the day-trade mode watches: the studied list (or your own stocks if no list is chosen). */
+/**
+ * The stocks the three Day Trade scanners watch (app v1.11): every company of Nifty 50, 100, Midcap
+ * 100, Smallcap 100 and Nifty 500, each once, plus your own stocks — or only the Stocks-tab list when
+ * "only my list" is chosen. See background/scanList.ts.
+ */
 export async function dayKeys(): Promise<string[]> {
+  return (await scanUniverse()).keys;
+}
+
+/** The Stocks-tab list (or your own stocks when no list is chosen) — for the Stocks tab's own studies. */
+export async function listKeys(): Promise<string[]> {
   const u = await universeKeys();
   return u.length ? u : ((await getLocal('watchlist')) ?? []);
 }
@@ -49,8 +60,12 @@ let intradayRunning: Promise<{ ok: number; failed: number }> | null = null;
 /** Downloads missing 5-minute history for every watched stock (4 at a time). One run at a time. */
 export function syncIntradayAll(now = Date.now()): Promise<{ ok: number; failed: number }> {
   intradayRunning ??= (async () => {
-    const [settings, keys] = await Promise.all([getSettings(), dayKeys()]);
-    const sessions = settings.dayTrade.testSessions;
+    const [settings, scan, list] = await Promise.all([getSettings(), dayKeys(), listKeys()]);
+    // the Stocks-tab list and the Nifty 100 (the sell-first past test) keep the full past-test window;
+    // the rest of the scan list a short one (enough for the live scanners). Stocks-tab stocks first.
+    const long = new Set([...list, ...scan.filter((k) => NIFTY100_KEYS.has(k))]);
+    const keys = [...new Set([...list, ...scan])];
+    const sessionsOf = (k: string) => (long.has(k) ? settings.dayTrade.testSessions : Math.min(SCAN_HISTORY_SESSIONS, settings.dayTrade.testSessions));
     let ok = 0;
     let failed = 0;
     let fatal: string | undefined;
@@ -59,8 +74,8 @@ export function syncIntradayAll(now = Date.now()): Promise<{ ok: number; failed:
       await pool(keys, 4, async (key) => {
         if (fatal) return;
         try {
-          const n = await syncIntraday(key, sessions, now);
-          if (n > 20) await pruneIntraday(key, sessions, now);
+          const n = await syncIntraday(key, sessionsOf(key), now);
+          if (n > 20) await pruneIntraday(key, sessionsOf(key), now);
           ok++;
         } catch (err) {
           if (err instanceof UpstoxError && (err.kind === 'not_logged_in' || err.kind === 'auth')) fatal = errorMessage(err);
@@ -140,7 +155,10 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   const mood = marketMood(await getQuotes(), await dayKeys());
   const newsItems = await newsFor(add.map((s) => s.key), now).catch(() => []);
   const flow = await getSession('flow');
+  const scan = await scanUniverse();
   for (const s of add) {
+    const tag = scan.tag[s.key];
+    if (tag) s.index = tag;
     if (recent.has(s.key)) s.inNews = true;
     if (mood.caution) s.caution = mood.caution;
     const f = flow?.stocks[s.key];
@@ -165,6 +183,11 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
   // trade slots, or after the losing-trades limit, still alert, with a note.
   for (const s of add) {
     if (s.late || !settings.dayTrade.alerts) continue;
+    // one alert per stock and direction across the three scanners (app v1.11)
+    if (!(await claimAlert(s.key, s.side === 'long' ? 'buy' : 'sell', 'day', now))) {
+      log.info(`${s.symbol}: already announced by another scanner — listed, no second alert`);
+      continue;
+    }
     s.announced = true;
     announced++;
     const extra = stopped ? ' You reached your losing-trades limit today — practice only.' : announced > slots ? ` (Idea ${announced} today — you planned at most ${slots} day trades.)` : '';
@@ -207,20 +230,34 @@ async function scoredSignal(date: string, key: string, s: LiveStock, bo: Breakou
   return sig;
 }
 
-/** Loads today's finished 5-minute bars for every watched stock from Upstox and looks for breakouts so far. */
-async function loadToday(date: string, now: number): Promise<void> {
-  const [settings, keys, quotes, test] = await Promise.all([getSettings(), dayKeys(), getQuotes(), getLocal('dayTest')]);
-  const cfg = liveConfig(test?.report, settings.ui.priceMin, settings.ui.priceMax);
-  const st = await emptyState(date);
+/** Most stocks loaded again at one 5-minute mark (failed downloads, stocks new in the scan list). */
+const RETRY_PER_STEP = 120;
+
+type LoadedStock = DayLive['stocks'][string];
+
+/**
+ * Today's finished 5-minute bars (and the usual opening volume) of each stock, 6 at a time. Stocks
+ * with no candle yet (not traded) and failed downloads are counted, not hidden — they are tried again
+ * at the next 5-minute mark.
+ */
+async function loadStocks(keys: string[], date: string, now: number, quotes: Record<string, Quote>): Promise<{ stocks: Record<string, LoadedStock>; failed: number; noCandles: number }> {
+  const stocks: Record<string, LoadedStock> = {};
   let failed = 0;
+  let noCandles = 0;
   await pool(keys, 6, async (key) => {
     try {
       const [inst, bars, prevVols] = await Promise.all([getInstrument(key), fetchTodayBars(key, now), recentOpeningVolumes(key, R.rvolDays, date)]);
-      if (!bars) return;
+      if (!bars) {
+        noCandles++;
+        return;
+      }
       const done = completedBars(bars, minutesIST(now), R);
       const or = openingRange(done, R);
-      if (!or || done.t.length <= or.endIdx) return;
-      st.stocks[key] = {
+      if (!or || done.t.length <= or.endIdx) {
+        noCandles++;
+        return;
+      }
+      stocks[key] = {
         symbol: inst?.trading_symbol ?? key,
         bars: done,
         rvol: relativeVolume(or.vol, prevVols, R),
@@ -234,6 +271,17 @@ async function loadToday(date: string, now: number): Promise<void> {
       if (failed <= 3) log.warn(`Today's 5-minute bars failed for ${key}`, { error: errorMessage(err) });
     }
   });
+  return { stocks, failed, noCandles };
+}
+
+/** Loads today's finished 5-minute bars for every watched stock from Upstox and looks for breakouts so far. */
+async function loadToday(date: string, now: number): Promise<void> {
+  const [settings, keys, quotes, test] = await Promise.all([getSettings(), dayKeys(), getQuotes(), getLocal('dayTest')]);
+  const cfg = liveConfig(test?.report, settings.ui.priceMin, settings.ui.priceMax);
+  const st = await emptyState(date);
+  const r = await loadStocks(keys, date, now, quotes);
+  Object.assign(st.stocks, r.stocks);
+  const { failed, noCandles } = r;
   // Right after 09:30 the last candle of the first 15 minutes may not be published yet: try again shortly.
   const loadedStocks = Object.values(st.stocks);
   const lastOrT = OPEN_T + R.orMinutes - R.barMinutes;
@@ -245,6 +293,8 @@ async function loadToday(date: string, now: number): Promise<void> {
   }
   st.lastSlotT = slotStart(minutesIST(now));
   st.loadedAt = now;
+  const loaded = Object.values(st.stocks);
+  st.coverage = { total: keys.length, loaded: loaded.length, noHistory: loaded.filter((s) => s.rvol === null).length, noCandles, failed };
   // breakouts that already happened: a signal only if it is on the bar that just finished, else "late"
   const market = marketMove(await getQuotes(), keys);
   const fresh: DaySignal[] = [];
@@ -310,6 +360,36 @@ export async function dayTick(now = Date.now()): Promise<{ signals: number; stat
       if (!bo || !q) continue;
       const sig = await scoredSignal(date, key, s, bo, q.ltp, market, cfg, now);
       if (sig) fresh.push(sig);
+    }
+  }
+  if (barT + R.barMinutes <= R.lastSignalT) {
+    // app v1.11: stocks not loaded yet (a failed download, not traded yet, or new in the scan list)
+    // are tried again at every 5-minute mark — none is dropped for the day
+    const missing = keys.filter((k) => !st.stocks[k]);
+    if (missing.length) {
+      const r = await loadStocks(missing.slice(0, RETRY_PER_STEP), date, now, quotes);
+      for (const [key, s] of Object.entries(r.stocks)) {
+        st.stocks[key] = s;
+        const bo = findBreakout(s.bars, R);
+        if (!bo) continue;
+        s.done = true;
+        const late = bo.barCloseT < slotT;
+        const sig = await scoredSignal(date, key, s, bo, late ? bo.close : (quotes[key]?.ltp ?? bo.close), market, cfg, now, late);
+        if (sig) fresh.push(sig);
+      }
+      st.coverage = { total: keys.length, loaded: 0, noHistory: 0, noCandles: r.noCandles, failed: r.failed + Math.max(0, missing.length - RETRY_PER_STEP) };
+    } else if (st.coverage) st.coverage = { ...st.coverage, total: keys.length, noCandles: 0, failed: 0 };
+    // the usual opening volume of stocks whose history arrived during the day
+    let n = 0;
+    for (const [key, s] of Object.entries(st.stocks)) {
+      if (s.rvol !== null || n >= RETRY_PER_STEP) continue;
+      n++;
+      const or = openingRange(s.bars, R);
+      if (or) s.rvol = relativeVolume(or.vol, await recentOpeningVolumes(key, R.rvolDays, date), R);
+    }
+    if (st.coverage) {
+      const loaded = Object.values(st.stocks);
+      st.coverage = { ...st.coverage, loaded: loaded.length, noHistory: loaded.filter((s) => s.rvol === null).length };
     }
   }
   st.lastSlotT = slotT;

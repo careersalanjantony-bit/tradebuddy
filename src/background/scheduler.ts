@@ -9,6 +9,7 @@ import { markSessionExpired } from '../upstox/session';
 import { isSessionExpiredByTime } from '../upstox/token';
 import { ensureInstruments, eodDue, keysWithoutHistory, morningDue, pollAndEvaluate, runEndOfDay, syncAllTracked } from './dataJobs';
 import { ensureUniverse } from '../data/universe';
+import { ensureScanLists } from './scanList';
 import { ensureIntraday } from './dayJobs';
 import { loginReminderDue, nextRun, type JobName } from './schedule';
 import { learnIfDue } from './mlJobs';
@@ -144,6 +145,8 @@ export async function catchUp(now = Date.now()): Promise<void> {
   }
   try {
     await ensureUniverse(false, now);
+    // app v1.11: the five lists the Day Trade scanners watch (NSE, weekly; bundled copy as fallback)
+    await ensureScanLists(false, now).catch((err: unknown) => log.info('Scan lists check skipped', { reason: String(err) }));
     const missing = await keysWithoutHistory();
     if (missing.length) {
       log.info(`${missing.length} studied stock(s) have no history yet — downloading in the background`);

@@ -18,7 +18,10 @@ import { playSound } from '../notify/sound';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { upstoxRequest } from '../upstox/client';
-import { dayKeys } from './dayJobs';
+import { dayKeys, listKeys } from './dayJobs';
+import { scanUniverse } from './scanList';
+import { claimAlert } from './ideaGate';
+import type { Quote } from '../data/quotesParse';
 import { SHORT_MODEL_VERSION } from '../advisor/shortModel';
 import { trainShortModelAsync } from '../advisor/shortModelRun';
 import { loadStockData } from '../data/stockData';
@@ -35,6 +38,8 @@ const rs = (x: number) => `₹${x.toLocaleString('en-IN', { minimumFractionDigit
 export interface ShortIdea {
   key: string;
   symbol: string;
+  /** narrowest index of the stock: "Nifty 50", "Midcap 100"… (app v1.11) */
+  index?: string;
   score: number;
   reasons: Reason[];
   plan: ShortPlan;
@@ -73,7 +78,28 @@ export async function refreshBreadth(now = Date.now(), force = false): Promise<v
 
 let scanRunning = false;
 
-/** Every 5 minutes in the morning-to-2:30 window (and on request). */
+/** Most candidates scored in one scan (one Upstox candle request each); the biggest falls go first. */
+export const MAX_SHORT_CANDIDATES = 150;
+/** Seconds after each 5-minute mark before the scan, so Upstox has published the candle that just closed. */
+export const SHORT_SCAN_DELAY_MS = 15_000;
+
+/**
+ * App v1.11: every stock of the scan list that is falling today, below its opening price and easy to
+ * sell first (a Nifty 100 company, or ₹20 crore traded today), biggest fall first. No fixed top-15:
+ * all of them are scored, up to MAX_SHORT_CANDIDATES (the count of any left over is shown). Pure.
+ */
+export function shortCandidates(keys: string[], quotes: Record<string, Quote>, max = MAX_SHORT_CANDIDATES): { picked: Array<{ k: string; q: Quote }>; total: number } {
+  const all = [...new Set(keys)]
+    .map((k) => ({ k, q: quotes[k] }))
+    .filter((x): x is { k: string; q: Quote } => {
+      const q = x.q;
+      return !!q && !!q.prevClose && !!q.open && q.ltp < q.open && q.ltp / q.prevClose - 1 < -0.003 && (NIFTY100_KEYS.has(x.k) || (q.volume ?? 0) * q.ltp >= 20e7);
+    })
+    .sort((a, b) => a.q.ltp / a.q.prevClose! - b.q.ltp / b.q.prevClose!);
+  return { picked: all.slice(0, max), total: all.length };
+}
+
+/** Every 5 minutes (15 s after each mark) in the morning-to-2:30 window, and on request. */
 export async function scanShorts(now = Date.now(), force = false): Promise<number> {
   if (scanRunning) return 0;
   const settings = await getSettings();
@@ -83,36 +109,37 @@ export async function scanShorts(now = Date.now(), force = false): Promise<numbe
   const prev = await getSession('shortIdeas');
   const slot = Math.floor(t / 5);
   if (!force && prev && istDate(prev.at) === istDate(now) && Math.floor(minutesIST(prev.at) / 5) === slot) return prev.ideas.length;
+  // the IST day starts on a 5-minute mark, so this is the time since the candle closed
+  if (!force && now % 300_000 < SHORT_SCAN_DELAY_MS) return prev?.ideas.length ?? 0;
   scanRunning = true;
   try {
     const quotes = await getQuotes();
-    const keys = await dayKeys();
+    const scan = await scanUniverse();
+    const keys = scan.keys;
     // candidates: falling today, below the opening price, liquid enough to sell first
-    const cands = keys
-      .map((k) => ({ k, q: quotes[k] }))
-      .filter(({ k, q }) => q && q.prevClose && q.open && q.ltp < q.open && q.ltp / q.prevClose - 1 < -0.003 && (NIFTY100_KEYS.has(k) || (q.volume ?? 0) * q.ltp >= 20e7))
-      .sort((a, b) => a.q!.ltp / a.q!.prevClose! - b.q!.ltp / b.q!.prevClose!)
-      .slice(0, 15);
+    const { picked: cands, total } = shortCandidates(keys, quotes);
     const risk = settings.dayTrade.shortRiskInr ?? 50;
     const ideas: ShortIdea[] = [];
-    await pool(cands, 4, async ({ k, q }) => {
+    let scored = 0;
+    await pool(cands, 6, async ({ k, q }) => {
       try {
         const bars = await fetchTodayBars(k, now);
         if (!bars) return;
         const i = lastClosedIndex(bars, t);
         if (i < 4) return;
+        scored++;
         const s = bearishScore(bars, i, q!.prevClose);
         if (!s || s.score < MIN_SCORE) return;
         const inst = await getInstrument(k);
         const plan = planShort(bars, i, q!.ltp, s.vwap, risk, inst?.tick ?? 0.05);
         if (!plan) return;
-        ideas.push({ key: k, symbol: inst?.trading_symbol ?? k, score: s.score, reasons: s.reasons, plan, changePct: (q!.ltp / q!.prevClose! - 1) * 100, candleT: bars.t[i]!, at: now });
+        ideas.push({ key: k, symbol: inst?.trading_symbol ?? k, ...(scan.tag[k] ? { index: scan.tag[k] } : {}), score: s.score, reasons: s.reasons, plan, changePct: (q!.ltp / q!.prevClose! - 1) * 100, candleT: bars.t[i]!, at: now });
       } catch (err) {
         log.debug(`Short scan skipped ${k}`, { error: errorMessage(err) });
       }
     });
     ideas.sort((a, b) => b.score - a.score);
-    await setSession('shortIdeas', { at: now, ideas, risk });
+    await setSession('shortIdeas', { at: now, ideas, risk, scanned: keys.length, candidates: total, checked: cands.length, scored });
     await alertShorts(ideas, now);
     return ideas.length;
   } finally {
@@ -133,7 +160,10 @@ async function alertShorts(ideas: ShortIdea[], now: number): Promise<void> {
   const date = istDate(now);
   const prev = await getSession('shortAlerted');
   const sent = prev?.date === date ? [...prev.keys] : [];
-  const fresh = ideas.filter((x) => x.score >= MIN_SCORE && !sent.includes(x.key)).slice(0, Math.max(0, MAX_SHORT_ALERTS - sent.length));
+  const room = ideas.filter((x) => x.score >= MIN_SCORE && !sent.includes(x.key)).slice(0, Math.max(0, MAX_SHORT_ALERTS - sent.length));
+  // one alert per stock and direction across the three scanners (app v1.11)
+  const fresh: ShortIdea[] = [];
+  for (const x of room) if (await claimAlert(x.key, 'sell', 'falling', now)) fresh.push(x);
   if (!fresh.length) return;
   const breadth = await getSession('breadth');
   const against = breadth && breadth.advanced > breadth.declined * 2;
@@ -182,7 +212,8 @@ let modelRunning = false;
 export async function trainShortModelIfDue(now = Date.now(), force = false): Promise<boolean> {
   if (modelRunning) return false;
   const today = istDate(now);
-  const keys = await dayKeys();
+  // the per-stock model belongs to the Stocks tab's "For short selling" list: that list's stocks
+  const keys = await listKeys();
   const have = await getLocal('shortModel');
   if (!force && have && have.v === SHORT_MODEL_VERSION && have.date === today) return false;
   modelRunning = true;

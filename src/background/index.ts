@@ -31,6 +31,7 @@ import { syncPortfolio } from './portfolioJobs';
 import { announce, checkNewPicks, ensureInstruments, fastPoll, pollAndEvaluate, runEndOfDay, syncAllTracked, syncStock } from './dataJobs';
 import { invalidateStockCache } from '../data/stockData';
 import { ensureUniverse } from '../data/universe';
+import { ensureScanLists } from './scanList';
 import { markAlertsSeen, mutateAlerts, recentAlertLog, updateBadge } from '../alerts/engine';
 import { newId } from '../alerts/rules';
 import { ignoreGap } from '../data/corporateActions';
@@ -201,6 +202,7 @@ const handlers: Handlers = {
   'instruments:refresh': async () => ({ count: await ensureInstruments(true) }),
   'universe:refresh': async ({ force }) => {
     const u = await ensureUniverse(!!force);
+    await ensureScanLists(false).catch((err: unknown) => log.info('Scan lists check skipped', { reason: String(err) }));
     // download history for any new stocks without blocking the reply
     void syncAllTracked()
       .then(() => setSession('intradayCheckedAt', 0))

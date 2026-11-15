@@ -30,6 +30,12 @@ export interface DayLive {
   /** start (minutes since midnight IST) of the bar now forming */
   lastSlotT: number;
   stocks: Record<string, LiveStock>;
+  /**
+   * App v1.11: what happened to every stock of the scan list when today's candles were loaded — so
+   * none is left out without saying so: loaded (and of those, waiting for 10 days of 5-minute history),
+   * no candles from Upstox yet, or the download failed.
+   */
+  coverage?: { total: number; loaded: number; noHistory: number; noCandles: number; failed: number };
 }
 
 export const minutesIST = (ts: number): number => {

@@ -22,6 +22,8 @@ export interface DaySignal {
   id: string;
   key: string;
   symbol: string;
+  /** narrowest index of the stock: "Nifty 50", "Midcap 100"… (app v1.11) */
+  index?: string;
   side: Side;
   /** when the signal fired (ms) */
   at: number;

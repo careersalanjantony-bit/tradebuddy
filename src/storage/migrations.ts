@@ -137,6 +137,15 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (breakoutAlerted === undefined) await kv.set({ breakoutAlerted: null });
     },
   },
+  {
+    to: 14,
+    description: 'app v1.11: Day Trade scanners watch all five indices',
+    async up(kv) {
+      const { scanLists, ideaAlerts } = await kv.get(['scanLists', 'ideaAlerts']);
+      if (scanLists === undefined) await kv.set({ scanLists: null });
+      if (ideaAlerts === undefined) await kv.set({ ideaAlerts: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

@@ -30,6 +30,8 @@ import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 import { refreshBreadth, scanShorts } from './shortJobs';
 import { scanBreakouts } from './breakoutJobs';
+import { priceKeys } from './scanList';
+import type { Quote } from '../data/quotesParse';
 import { runBot } from './botJobs';
 
 const log = createLogger('data');
@@ -116,7 +118,7 @@ export async function pollAndEvaluate(force = false, now = Date.now(), light = f
   const cal = await getCalendar();
   const m = marketState(now, cal);
   if (!force && !pollDue(now, cal, await getSession('lastPoll'))) return { polled: 0, skipped: 'market closed' };
-  const keys = await trackedKeys();
+  const keys = await priceKeys();
   if (!keys.length) return { polled: 0, skipped: 'nothing to track' };
   try {
     void ensureFeed(now).catch(() => undefined);
@@ -173,6 +175,8 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
 let lastFeedChecksAt = 0;
 // live-feed prices are stored every second; the checks above run on them at most every 2 seconds
 setFeedListener(async (now) => {
+  // stocks the feed does not cover get their price checked too (also with the app in the background)
+  if ((await getSession('feedStatus'))?.connected) void fillStale(now)?.catch(() => undefined);
   // breakouts are checked on EVERY live price update (about each second), not every 2 seconds:
   // the alert must come the moment the price crosses the resistance with a volume surge
   void scanBreakouts(now).catch(() => undefined);
@@ -185,6 +189,41 @@ setFeedListener(async (now) => {
 });
 
 let fastInFlight: Promise<{ polled: number; skipped?: string }> | null = null;
+let lastFillAt = 0;
+/** a price older than this is checked again over the price API, even while the live feed runs */
+export const STALE_PRICE_MS = 15_000;
+
+let fillInFlight = false;
+/**
+ * App v1.11: the live feed serves most stocks; any it does not (over Upstox's limit, or silent for
+ * 15 s) get a quick check over the price API, at most every 3 seconds — no stock is skipped. Returns
+ * null when nothing is due.
+ */
+function fillStale(now: number): Promise<{ polled: number }> | null {
+  if (fillInFlight || now - lastFillAt < 3_000) return null;
+  lastFillAt = now;
+  fillInFlight = true;
+  return (async () => {
+    try {
+      const stale = staleKeys(await priceKeys(), await getQuotes(), now);
+      await setSession('priceFill', { at: now, count: stale.length });
+      if (!stale.length) return { polled: 0 };
+      const q = await pollLtp(stale, now);
+      await afterQuotes(now);
+      return { polled: Object.keys(q).length };
+    } finally {
+      fillInFlight = false;
+    }
+  })();
+}
+
+/** Stocks whose price is missing or older than STALE_PRICE_MS — none is left without a fresh price. Pure. */
+export function staleKeys(keys: string[], quotes: Record<string, Quote>, now: number, staleMs = STALE_PRICE_MS): string[] {
+  return keys.filter((k) => {
+    const q = quotes[k];
+    return !q || !(q.ltp > 0) || now - q.fetchedAt > staleMs;
+  });
+}
 let lastFullPollAt = 0;
 /** Seconds between fast polls: 2 s per 500 stocks, so one group of requests stays well under Upstox's limits. */
 export const fastIntervalMs = (keyCount: number): number => 2_000 * Math.max(1, Math.ceil(keyCount / 500));
@@ -202,9 +241,17 @@ export async function fastPoll(now = Date.now()): Promise<{ polled: number; skip
   // and none at all while the instant feed is delivering them
   const light = now - lastFullPollAt < 10_000;
   if (light) {
-    if (feedFresh(now)) return { polled: 0, skipped: 'instant feed' };
+    if (feedFresh(now)) {
+      if (m.phase !== 'open') return { polled: 0, skipped: 'instant feed' };
+      const r = fillStale(now);
+      if (!r) return { polled: 0, skipped: 'instant feed' };
+      fastInFlight = r.finally(() => {
+        fastInFlight = null;
+      });
+      return fastInFlight;
+    }
     const last = await getSession('lastPoll');
-    const every = fastIntervalMs((await trackedKeys()).length);
+    const every = fastIntervalMs((await priceKeys()).length);
     if (last && now - last.at < every - 300) return { polled: 0, skipped: 'recent' };
   }
   fastInFlight = pollAndEvaluate(false, now, light).finally(() => {

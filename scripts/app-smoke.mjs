@@ -429,10 +429,20 @@ mock.fallPrice = mock.fallLast ?? BASE[FALL] * 0.988;
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
 await page.waitForTimeout(800);
 await page.click('[data-testid="shorts-refresh"]');
-const idea = await until(async () => !!(await page.$(`[data-testid="falling-now"] .short-idea[data-symbol="${FALL}"]`)), 20000);
+// app v1.11: Falling now checks the whole scan list (~535 stocks), so the scan can take a little longer
+const idea = await until(async () => !!(await page.$(`[data-testid="falling-now"] .short-idea[data-symbol="${FALL}"]`)), 45000);
 const ideaText = ((await page.textContent(`[data-testid="falling-now"] .short-idea[data-symbol="${FALL}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
 const si = await page.evaluate(async () => (await chrome.storage.session.get('shortIdeas')).shortIdeas?.ideas?.[0]);
-check('Falling now: the falling stock appears with a score, sell price, buy-back price, two targets and quantity for ₹50 risk', idea && si?.plan?.risk <= 50 && si.plan.stop > si.plan.entry && si.plan.t2 < si.plan.t1 && ideaText.includes('Target 2') && ideaText.includes('after charges'), si ? `score ${si.score}, ${si.plan.qty} @ ${si.plan.entry} stop ${si.plan.stop} t1 ${si.plan.t1} t2 ${si.plan.t2}, risk ${si.plan.risk}` : 'none');
+check('Falling now: the falling stock appears with a score, sell price, buy-back price, two targets and quantity for ₹50 risk', idea && si?.plan?.risk <= 50 && si.plan.stop > si.plan.entry && si.plan.t2 < si.plan.t1 && ideaText.includes('Target 2') && ideaText.includes('after charges'), si ? `${idea ? '' : 'card not shown; '}score ${si.score}, ${si.plan.qty} @ ${si.plan.entry} stop ${si.plan.stop} t1 ${si.plan.t1} t2 ${si.plan.t2}, risk ${si.plan.risk}` : 'none');
+// app v1.11: all five indices, each stock once, with the index on every card
+const scanText = ((await page.textContent('[data-testid="scan-coverage"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const scanN = Number((/Scanning ([\d,]+) stocks/.exec(scanText)?.[1] ?? '0').replace(/,/g, ''));
+const scanDb = await page.evaluate(async () => (await chrome.storage.session.get('scanUniverse')).scanUniverse);
+check('Day trade scans all five indices, each stock once (Nifty 50, 100, Midcap 100, Smallcap 100, Nifty 500)', scanN > 450 && scanDb?.count === scanN && scanDb?.scope === 'all' && ['Nifty 50', 'Nifty 100', 'Midcap 100', 'Smallcap 100', 'Nifty 500'].every((w) => scanText.includes(w)) && !/\d\.00/.test(scanText), scanText.slice(0, 200));
+const fallTag = ((await page.textContent(`.short-idea[data-symbol="${FALL}"] [data-testid="index-tag"]`).catch(() => '')) ?? '').trim();
+check('the Falling-now idea shows which index the stock is in', fallTag === 'Nifty 50', fallTag || 'no tag');
+const fallStatus = ((await page.textContent('[data-testid="falling-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('Falling now says how many stocks it checked (none skipped silently)', /Checked [\d,]+ stocks at \d\d:\d\d: [\d,]+ falling below today's open/.test(fallStatus) && !/\d\.00/.test(fallStatus), fallStatus);
 check('each idea says why in plain words', (await page.$$(`.short-idea[data-symbol="${FALL}"] .reason-pill`)).length >= 2);
 await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-shorts.png'), fullPage: true });
@@ -506,6 +516,21 @@ await page.keyboard.press('Escape').catch(() => {});
 await page.click('.sheet-backdrop', { position: { x: 10, y: 10 } }).catch(() => {});
 const sentOnce = await page.evaluate(async () => (await chrome.storage.local.get('breakoutAlerted')).breakoutAlerted?.ids ?? []);
 check('each breakout alert is sent once (remembered even if the app restarts)', sentOnce.length === 1 && sentOnce[0].endsWith('-early'), JSON.stringify(sentOnce));
+const boTag = ((await page.textContent(`.bo-idea[data-symbol="${BREAK_SYM}"] [data-testid="index-tag"]`).catch(() => '')) ?? '').trim();
+const gate = await page.evaluate(async () => (await chrome.storage.local.get('ideaAlerts')).ideaAlerts?.items ?? []);
+// the narrowest of the lists the app downloaded (the fake NSE Nifty 50 file here has no ADANIENT, so: Nifty 100)
+const boWant = await page.evaluate(async () => {
+  const l = (await chrome.storage.local.get('scanLists')).scanLists?.lists ?? {};
+  const has = (i) => (l[i]?.members ?? []).some((m) => m.isin === 'INE423A01024');
+  return has('nifty50') ? 'Nifty 50' : has('nifty100') ? 'Nifty 100' : '?';
+});
+check('the breakout shows its index, and the alert is recorded once across the three scanners', boTag === boWant && gate.filter((x) => x.key === 'NSE_EQ|INE423A01024' && x.side === 'buy').length === 1, `${boTag || 'no tag'} (expected ${boWant}) · ${JSON.stringify(gate.map((x) => `${x.src}:${x.side}`))}`);
+// "All five indices" off → only the Stocks-tab list; back on → all again
+await page.click('[data-testid="scan-scope-switch"]');
+const listOnly = await until(async () => /Scanning 50 stocks/.test((await page.textContent('[data-testid="scan-count"]').catch(() => '')) ?? ''), 8000);
+await page.click('[data-testid="scan-scope-switch"]');
+const allAgain = await until(async () => Number(((/Scanning ([\d,]+) stocks/.exec((await page.textContent('[data-testid="scan-count"]').catch(() => '')) ?? '')?.[1]) ?? '0').replace(/,/g, '')) > 450, 8000);
+check('"All five indices" can be switched off (only the Stocks-tab list) and on again', listOnly && allAgain, `${listOnly} ${allAgain}`);
 mock.breakPrice = 200.3;
 
 console.log('── In-app updates');

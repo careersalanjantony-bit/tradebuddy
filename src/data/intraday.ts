@@ -19,6 +19,14 @@ const FIRST_T = 9 * 60 + 15;
 const LAST_T = 15 * 60 + 30;
 /** days per history request (the limit is "1 month") */
 const CHUNK_DAYS = 28;
+/**
+ * App v1.11: trading days of 5-minute history kept for scan-list stocks outside the Stocks tab —
+ * enough for the live scanners (usual opening volume of the last 10 days, yesterday's high), small
+ * enough for a phone. Stocks-tab stocks keep the full past-test window.
+ */
+export const SCAN_HISTORY_SESSIONS = 25;
+/** stocks whose older history was already filled in during this run (so it is asked once) */
+const backfilled = new Set<string>();
 
 /** Groups a candles response by IST date; bars sorted by time, market hours only. */
 export function parseIntraday(data: unknown): Map<string, Bars> {
@@ -66,6 +74,11 @@ export async function countIntradayDays(key: string): Promise<number> {
   return (await getDb()).count('intraday', range(key));
 }
 
+async function firstIntradayDate(key: string): Promise<string | null> {
+  const cur = await (await getDb()).transaction('intraday').store.openCursor(range(key), 'next');
+  return cur ? cur.value.date : null;
+}
+
 async function lastIntradayDate(key: string): Promise<string | null> {
   const cur = await (await getDb()).transaction('intraday').store.openCursor(range(key), 'prev');
   return cur ? cur.value.date : null;
@@ -92,14 +105,25 @@ export async function syncIntraday(key: string, sessions: number, now = Date.now
   const earliest = addDays(today, -calendarDaysFor(sessions));
   let from = last && last >= earliest ? addDays(last, 1) : earliest;
   let stored = 0;
-  while (from <= end) {
-    const to = addDays(from, CHUNK_DAYS - 1) < end ? addDays(from, CHUNK_DAYS - 1) : end;
-    const data = await upstoxRequest<unknown>(`/v3/historical-candle/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}/${to}/${from}`, { tokenKind: 'market' });
-    const days = parseIntraday(data);
-    await store(key, days);
-    stored += days.size;
-    from = addDays(to, 1);
+  const download = async (start: string, stop: string) => {
+    let f = start;
+    while (f <= stop) {
+      const to = addDays(f, CHUNK_DAYS - 1) < stop ? addDays(f, CHUNK_DAYS - 1) : stop;
+      const data = await upstoxRequest<unknown>(`/v3/historical-candle/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}/${to}/${f}`, { tokenKind: 'market' });
+      const days = parseIntraday(data);
+      await store(key, days);
+      stored += days.size;
+      f = addDays(to, 1);
+    }
+  };
+  // a stock that had only the short scan history and now needs the longer window (it joined the
+  // Stocks-tab list): fill in the older days once
+  if (from !== earliest && !backfilled.has(`${key}|${sessions}`)) {
+    backfilled.add(`${key}|${sessions}`);
+    const first = await firstIntradayDate(key);
+    if (first && first > addDays(earliest, 10)) await download(earliest, addDays(first, -1));
   }
+  await download(from, end);
   if (stored) log.debug(`Intraday ${key}: ${stored} day(s) stored`);
   return stored;
 }

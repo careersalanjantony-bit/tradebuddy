@@ -21,6 +21,7 @@ import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
 import { BreadthCard, FallingNowCard } from '../components/Shorts';
 import { BreakoutCard } from '../components/Breakouts';
+import { AlsoIn, IndexTag, ScanCoverage, useScanUniverse } from '../components/ScanList';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -61,6 +62,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
   const { universeKeys, listLabel } = useStudyKeys();
   const watchlist = useLocal('watchlist') ?? [];
   const keys = universeKeys.length ? universeKeys : watchlist;
+  const scan = useScanUniverse();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   if (!settings) return <p class="muted">Loading…</p>;
   const on = settings.dayTrade.enabled;
@@ -71,7 +73,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
   let status: string;
   if (market.phase !== 'open') status = `Market ${market.label}. Signals come on trading days between 9:35 and 11:30 am.`;
   else if (minute < 9 * 60 + 31) status = 'The first 15 minutes (9:15–9:30) are being measured. Signals can start at 9:35.';
-  else if (minute < R.lastSignalT + R.barMinutes) status = `Watching ${keys.length} stocks (${listLabel.replace(' + your stocks', '')}) for breakouts until 11:30. Checked at every 5-minute mark.`;
+  else if (minute < R.lastSignalT + R.barMinutes) status = `Watching ${formatNumberIN(scan.keys.length, 0)} stocks (${scan.scope === 'all' ? 'all five indices' : listLabel.replace(' + your stocks', '')}) for buy ideas until 11:30 — checked at every 5-minute mark. Falling now and Breakout today keep watching all day.`;
   else if (minute < R.exitT) status = 'No new signals after 11:30. Open day trades are watched until 3:10 pm.';
   else status = 'After 3:10 pm: all day trades should be closed now.';
 
@@ -103,7 +105,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
               unusually high volume</b>, tells you to <b>BUY</b> (or <b>SELL short</b>) with a stop and a target, and everything is closed by <b>3:10 pm</b>.
             </p>
             <p class="small">
-              Turning it on downloads about 6 months of 5-minute prices for the {keys.length} stocks of your list ({keys.length <= 120 ? 'a few minutes' : 'this can take an hour for big lists'}), then{' '}
+              The scanners watch <b>{formatNumberIN(scan.keys.length, 0)} stocks</b> ({scan.scope === 'all' ? 'Nifty 50, 100, Midcap 100, Smallcap 100 and Nifty 500, each once' : 'your Stocks-tab list'}). Turning it on downloads about 6 months of 5-minute prices for the {keys.length} stocks of your Stocks-tab list and the Nifty 100, and about 5 weeks for the rest (usually 10–20 minutes the first time, up to an hour), then{' '}
               <b>tests the rules on that history</b> before showing any signal.
             </p>
             <button class="btn primary" type="button" data-testid="day-turn-on" onClick={() => void callBackground('daytrade:enable', { enabled: true }).catch((err: unknown) => setMsg({ ok: false, text: errorMessage(err) }))}>
@@ -111,9 +113,12 @@ export function DayTradeScreen({ go }: { go: Go }) {
             </button>
           </>
         ) : (
-          <p class="small" data-testid="day-status">
-            {status}
-          </p>
+          <>
+            <p class="small" data-testid="day-status">
+              {status}
+            </p>
+            <ScanCoverage />
+          </>
         )}
         {msg && <p class={`small ${msg.ok ? 'ok-text' : 'err-text'}`}>{msg.text}</p>}
         {!amount && on && (
@@ -161,7 +166,11 @@ function SignalsCard({ amount, slots }: { amount: number; slots: number }) {
   const now = useNow(5_000);
   const today = istDate(now);
   // signals of the current session (never an earlier day's)
-  const signals = (stored && stored.date >= today ? stored.signals : []).slice().sort((a, b) => b.at - a.at);
+  // newest first, each stock and direction once
+  const signals = (stored && stored.date >= today ? stored.signals : [])
+    .slice()
+    .sort((a, b) => b.at - a.at)
+    .filter((s, i, all) => all.findIndex((x) => x.key === s.key && x.side === s.side) === i);
   const passed = !!test?.report && test.report.rulesVersion === DAY_RULES_VERSION && test.report.passed;
   const lost = (practice: boolean) => trades.filter((t) => t.date === today && t.practice === practice && t.status === 'closed' && t.exitPrice !== undefined && dayTradePnl(t.side, t.qty, t.entry, t.exitPrice).pnl < 0).length;
   const maxLosses = settings?.dayTrade.maxLossesPerDay ?? 2;
@@ -240,7 +249,9 @@ function SignalCard({ s, ltp, now, alloc, canTake, limitReached, slots, taken }:
         <div class="sig-title">
           <span class={`chip day ${long ? 'buy' : 'sell'}`}>{long ? '▲ BUY' : '▼ SELL first'}</span>
           <h3>{s.symbol}</h3>
+          <IndexTag index={s.index} k={s.key} />
           <span class="muted small">at {formatTimeIST(s.at).slice(0, 5)} · NSE</span>
+          <AlsoIn k={s.key} here="buy" />
           {state === 'fresh' ? <span class="chip setup good">act now</span> : <span class="chip flag">{s.late ? 'happened earlier — skip' : state === 'moved' ? 'price moved — skip' : 'too late — skip'}</span>}
         </div>
         {s.chance !== undefined && <ChanceRing value={s.chance} />}

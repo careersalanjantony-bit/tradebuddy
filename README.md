@@ -38,6 +38,40 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.11
+
+- **All three Day Trade scanners — Today's buy ideas, Falling now and Breakout today — watch every
+  stock of Nifty 50, Nifty 100, Nifty Midcap 100, Nifty Smallcap 100 and Nifty 500 together**
+  (about 500–540 stocks; the lists overlap, so each stock is counted and scanned **once**). The
+  lists come from NSE once a week, with the copy bundled in the app as the fallback. Your own stocks
+  outside these lists are scanned too. The Stocks-tab list no longer limits the scanners; a switch
+  on the Day trade tab ("All five indices") goes back to scanning only the Stocks-tab list.
+- **Every idea card shows the stock's index** — the narrowest one it belongs to: "Nifty 50" for
+  Reliance, "Midcap 100", "Smallcap 100", "Nifty 500", or "Your list". When two scanners find the same
+  stock, both cards show it ("also in Breakout today") but **you get one alert**, not two: a stock
+  already announced as a BUY (or SELL) by one scanner is not announced again in the same direction by
+  another for 30 minutes. One card per stock in Breakout today (earlier breakouts are counted on it).
+- **Upstox's live-feed limits, handled openly.** The feed takes up to 1,500 stocks with full details
+  plus 500 more prices-only on one connection (5,000 prices-only with "Save mobile data"). The most
+  important stocks go first (your trades and holdings, then your stocks, then the scan list). Any
+  stock over the limit, or one without a tick for 15 seconds, gets its price by a normal price request
+  every 3 seconds — also with the app in the background. The Day trade tab says how many stocks are
+  on the feed and how many are checked by price request. No stock is skipped silently.
+- **Nothing dropped for the day:** a stock whose 5-minute candles fail to load (or that joins the
+  list during the day) is tried again at every 5-minute mark; the tab shows "N of M loaded", and how
+  many have no past volume yet. Falling now says how many stocks it checked, how many are falling
+  below today's open, and how many were scored in depth (the 150 falling most, when more fall).
+- **History stays small on the phone:** the Stocks-tab list and the Nifty 100 keep about 6 months of
+  5-minute prices (the past tests and the self-learning use them); the other scan stocks keep about
+  5 weeks — enough for the live scanners. A stock that joins the Stocks-tab list gets its older
+  history filled in. The closed-app breakout check covers the whole scan list too.
+- **Mobile data:** live details for ~500 stocks are a lot of data (roughly 250–650 MB an hour on a busy
+  day). On mobile data, turn on **Save mobile data** (prices only, about 125 MB an hour; volume checked
+  every ~10 seconds) or switch "All five indices" off.
+- Risk controls are unchanged: the past tests, "practice only" until they pass, two losing day trades
+  a day stop new trades, the risk-per-trade choices, the 3:10 pm close. The app still never places,
+  changes or cancels an order.
+
 ## New in 1.10
 
 - **Practice Buy / Sell works like the Upstox order window.**

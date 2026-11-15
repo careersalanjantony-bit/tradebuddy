@@ -15,7 +15,13 @@ import { notify } from '../notify/chrome';
 import { playSound } from '../notify/sound';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
-import { dayKeys } from './dayJobs';
+import { listKeys } from './dayJobs';
+import { scanUniverse } from './scanList';
+import { claimAlert } from './ideaGate';
+
+/** the scan list's size and each stock's index tag, from the last scan (app v1.11) */
+let scanTotal = 0;
+let scanTags: Record<string, string> = {};
 
 /**
  * App v1.9 — "🚀 Breakout Today", live. On every price update (each second with the Upstox
@@ -39,6 +45,8 @@ export interface BreakoutSignal {
   id: string;
   key: string;
   symbol: string;
+  /** narrowest index of the stock: "Nifty 50", "Midcap 100"… (app v1.11) */
+  index?: string;
   level: number;
   kind: 'day-high' | 'prev-day-high';
   /** when the breakout was first seen (ms) */
@@ -199,6 +207,8 @@ async function firstTime(id: string, today: string): Promise<boolean> {
 
 async function alertEarly(sig: BreakoutSignal): Promise<void> {
   if (!(await firstTime(`${sig.id}-early`, istDate(sig.at)))) return;
+  // one alert per stock and direction across the three scanners (app v1.11)
+  if (!(await claimAlert(sig.key, 'buy', 'breakout', sig.at))) return;
   const p = sig.plan;
   await notify(`alert:bo-${sig.key}-${sig.level.toFixed(2)}-early`, {
     title: `🚀 Breakout: ${sig.symbol} ${rs(sig.price)} above ${rs(sig.level)} · ${sig.volX.toFixed(1)}× volume`,
@@ -210,6 +220,7 @@ async function alertEarly(sig: BreakoutSignal): Promise<void> {
 
 async function alertConfirmed(sig: BreakoutSignal): Promise<void> {
   if (!(await firstTime(`${sig.id}-ok`, istDate(sig.confirmedAt ?? sig.at)))) return;
+  if (!(await claimAlert(sig.key, 'buy', 'breakout', sig.confirmedAt ?? sig.at))) return;
   const p = sig.plan;
   await notify(`alert:bo-${sig.key}-${sig.level.toFixed(2)}-ok`, {
     title: `✅ Confirmed breakout: ${sig.symbol} closed above ${rs(sig.level)}`,
@@ -288,6 +299,7 @@ async function finishCandle(s: StockLive, now: number, alertsOn: boolean, risk: 
           id: `${s.key}-${level.toFixed(2)}`,
           key: s.key,
           symbol: s.symbol,
+          ...(scanTags[s.key] ? { index: scanTags[s.key] } : {}),
           level,
           kind: before.length >= BO.minBars ? 'day-high' : 'prev-day-high',
           at: now,
@@ -384,7 +396,7 @@ function ageSignals(quotes: Record<string, Quote>, now: number): void {
 async function saveState(today: string, now: number): Promise<void> {
   state.dirty = false;
   state.lastSave = now;
-  await setSession('breakouts', { date: today, at: now, scanned: state.stocks.size, signals: state.signals });
+  await setSession('breakouts', { date: today, at: now, scanned: state.stocks.size, total: scanTotal, signals: state.signals });
 }
 
 let scanning = false;
@@ -412,7 +424,10 @@ export async function scanBreakouts(now = Date.now()): Promise<number> {
     const m = marketState(now, await getCalendar());
     const t = minutesIST(now);
     if (m.phase !== 'open' || t < 9 * 60 + 15 || t >= 15 * 60 + 30) return 0;
-    const keys = await dayKeys();
+    const scan = await scanUniverse();
+    const keys = scan.keys;
+    scanTotal = keys.length;
+    scanTags = scan.tag;
     // stocks are scanned as soon as their candles are in (the rest are still loading)
     ensureLoaded(keys, today, now);
     const settings = await getSettings();
@@ -475,6 +490,7 @@ export async function scanBreakouts(now = Date.now()): Promise<number> {
         id: `${key}-${c.level.toFixed(2)}`,
         key,
         symbol: s.symbol,
+        ...(scanTags[key] ? { index: scanTags[key] } : {}),
         level: c.level,
         kind: c.kind,
         at: now,
@@ -552,7 +568,8 @@ export async function scanBreakouts(now = Date.now()): Promise<number> {
 /** The confirmed-breakout rule on the stored 5-minute history (after the day-trade history downloads). */
 export async function testBreakouts(now = Date.now()): Promise<void> {
   const settings = await getSettings();
-  const keys = await dayKeys();
+  // the past test uses the Stocks-tab list (the scan-only stocks keep a short history)
+  const keys = await listKeys();
   const days: Array<{ date: string; bars: Bar[]; prevDayHigh: number | null }> = [];
   for (const k of keys) {
     const list = (await getIntradayDays(k)).sort((a, b) => (a.date < b.date ? -1 : 1));

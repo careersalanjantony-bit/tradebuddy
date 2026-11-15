@@ -208,6 +208,7 @@ beforeEach(async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.dayTrade.enabled = true;
   settings.scanner.universe = 'watchlist';
+  settings.dayTrade.scanScope = 'list';
   await chrome.storage.local.set({ settings, watchlist: [AAA], marketCalendar: null, breakoutAlerted: null, auth: { status: 'logged_out' }, secrets: { upstoxAnalyticsToken: 'analytics-test-token' } });
   const db = await getDb();
   await db.clear('intraday');

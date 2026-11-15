@@ -7,6 +7,7 @@ import { updateSettings } from '../../storage/local';
 import { useQuotes } from '../data';
 import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '../hooks';
 import { openTrade } from './TradeSheet';
+import { AlsoIn, IndexTag } from './ScanList';
 
 /**
  * App v1.9 — "🚀 Breakout Today — buy-first ideas" (Day trade tab, below "Falling now"). The live
@@ -39,7 +40,14 @@ export function BreakoutCard() {
   const today = data && data.date === new Date(now + 5.5 * 3600_000).toISOString().slice(0, 10);
   const signals = today ? data.signals : [];
   const order = (s: BreakoutSignal) => (ACTIVE.includes(s.status) ? 0 : 1);
-  const list = [...signals].sort((a, b) => order(a) - order(b) || b.at - a.at);
+  // app v1.11: one card per stock — the live idea (or the newest one); earlier ones are counted on it
+  const sorted = [...signals].sort((a, b) => order(a) - order(b) || b.at - a.at);
+  const earlier = new Map<string, number>();
+  const list = sorted.filter((s, i) => {
+    const first = sorted.findIndex((x) => x.key === s.key) === i;
+    if (!first) earlier.set(s.key, (earlier.get(s.key) ?? 0) + 1);
+    return first;
+  });
   const active = list.filter((s) => ACTIVE.includes(s.status));
   const live = !!feed?.connected && now - feed.lastTickAt < 15_000;
   const t = minutesIST(now);
@@ -48,7 +56,11 @@ export function BreakoutCard() {
   if (!open) status = `Market ${market.label}. Live breakout scanning runs on trading days, 9:15 am – 3:30 pm (alerts from 9:20 to 3:00).`;
   else if (t < BO.firstT) status = 'Building the first 5-minute candle (9:15–9:20). Breakout alerts can start at 9:20.';
   else if (t > BO.lastT) status = 'No new breakout ideas after 3:00 pm (same-day trades close by 3:10).';
-  else status = `Checking ${data?.scanned ?? 0} stocks on every live price${live ? ' (Upstox live feed)' : ' (about every 2 seconds)'} — updated ${data ? formatTimeIST(data.at) : '—'}.`;
+  else {
+    const total = data?.total ?? data?.scanned ?? 0;
+    const loading = total > (data?.scanned ?? 0) ? ` (${formatNumberIN(data?.scanned ?? 0, 0)} of ${formatNumberIN(total, 0)} loaded — the rest join as their candles come in)` : '';
+    status = `Checking ${formatNumberIN(total, 0)} stocks on every live price${live ? ' (Upstox live feed)' : ' (about every 2 seconds)'}${loading} — updated ${data ? formatTimeIST(data.at) : '—'}.`;
+  }
   return (
     <section class="card breakout-card" data-testid="breakouts">
       <div class="row">
@@ -74,14 +86,14 @@ export function BreakoutCard() {
       <p class="small muted" data-testid="breakout-status" style={{ margin: '6px 0' }}>
         {status}
       </p>
-      <DataSaver n={data?.scanned ?? 0} on={!!settings.data.saveData} />
+      <DataSaver n={data?.total ?? data?.scanned ?? 0} on={!!settings.data.saveData} />
       {active.length === 0 && (
         <p class="small muted" data-testid="breakout-empty">
           {open && t >= BO.firstT && t <= BO.lastT ? 'No stock is breaking out right now. You get an alert with sound the moment one does.' : 'Ideas appear here during market hours.'}
         </p>
       )}
       {list.map((s) => (
-        <BreakoutIdea s={s} key={s.id} now={now} />
+        <BreakoutIdea s={s} key={s.id} now={now} earlier={earlier.get(s.key) ?? 0} />
       ))}
       <BreakoutTestLine test={test} />
     </section>
@@ -110,7 +122,7 @@ function DataSaver({ n, on }: { n: number; on: boolean }) {
   );
 }
 
-function BreakoutIdea({ s, now }: { s: BreakoutSignal; now: number }) {
+function BreakoutIdea({ s, now, earlier }: { s: BreakoutSignal; now: number; earlier: number }) {
   const quotes = useQuotes();
   const [how, setHow] = useState(false);
   const q = quotes[s.key];
@@ -129,9 +141,12 @@ function BreakoutIdea({ s, now }: { s: BreakoutSignal; now: number }) {
         <div class="sig-title">
           <span class={`chip bo-chip ${st.cls}`}>{st.label}</span>
           <h3>{s.symbol}</h3>
+          <IndexTag index={s.index} k={s.key} />
           <span class="muted small">
             {formatTimeIST(s.at)} · {ageMin < 1 ? 'just now' : `${ageMin} min ago`}
+            {earlier ? ` · ${earlier} earlier breakout${earlier === 1 ? '' : 's'} today` : ''}
           </span>
+          <AlsoIn k={s.key} here="breakout" />
         </div>
         <span class={`ring ${s.score >= 75 ? 'hi' : 'mid'} score-ring`} title={`Breakout score ${s.score}`}>
           <svg viewBox="0 0 36 36" width={54} height={54} aria-hidden="true">
