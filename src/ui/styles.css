@@ -1258,3 +1258,39 @@ body::before {
 .tone-play .eq i:nth-child(2) { animation-delay: 0.15s; } .tone-play .eq i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes eq { from { height: 3px; } to { height: 14px; } }
 @media (prefers-reduced-motion: reduce) { .breakout-card::before, .live-pill.on i, .bo-chip.go, .tone-play .eq i { animation: none; } .alert-banner, .bo-idea { animation-duration: 0.01s; } }
+
+/* ---------------------------------------------------------------- app v1.10: Upstox-style order window */
+.order-sheet .order-label { margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+.product-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.product-tab { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 6px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); cursor: pointer; transition: border-color 0.2s, background 0.2s, transform 0.12s var(--ease); }
+.product-tab .tiny { color: var(--muted); }
+.product-tab.on { border-color: var(--red); background: color-mix(in srgb, var(--red) 16%, var(--surface-2)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+.product-tab.on .tiny { color: var(--red-text, var(--fg)); }
+.product-tab:active { transform: scale(0.97); }
+.product-tab:disabled { opacity: 0.4; cursor: not-allowed; }
+.product-help { margin: 4px 0 2px; }
+.type-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.validity { gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0 8px; }
+.square-off-note { align-items: flex-start; margin: 4px 0 8px; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--warn) 10%, var(--surface-2)); }
+.square-off-note input { margin-top: 3px; }
+.funds-box { margin: 10px 0; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
+.funds-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.funds-row b { font-variant-numeric: tabular-nums; }
+.funds-row.big { font-size: 15px; padding-top: 6px; margin-top: 2px; border-top: 1px dashed var(--border); }
+.funds-row.big b { font-size: 17px; }
+.funds-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 10px 0 4px; }
+.funds-strip div { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.funds-strip span { font-size: 11px; color: var(--muted); }
+.funds-strip b { font-size: 14px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.product-chip { font-size: 11px; font-weight: 700; padding: 0 8px; line-height: 18px; border-radius: 999px; }
+.chip.product-chip.delivery { color: var(--muted); }
+.chip.product-chip.intraday { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.chip.product-chip.mtf { color: #a78bfa; border-color: color-mix(in srgb, #a78bfa 55%, var(--border)); background: color-mix(in srgb, #a78bfa 12%, transparent); }
+.tiny-chip { font-size: 10.5px; padding: 0 6px; line-height: 16px; }
+.balance-after { margin-top: 2px; }
+/* while the order window is open, alert banners shrink to one line so they do not cover it */
+body:has(.sheet-backdrop) .alert-banner-text span { display: none; }
+body:has(.sheet-backdrop) .alert-banner-body { padding-top: 8px; padding-bottom: 9px; }
+body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.check-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; margin: 6px 0; cursor: pointer; }
+.check-row input { margin-top: 3px; }

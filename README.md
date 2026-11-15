@@ -38,6 +38,38 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.10
+
+- **Practice Buy / Sell works like the Upstox order window.**
+  - **Product:** **Delivery** (pay the full price, keep the shares as long as you like), **Intraday**
+    (pay only a margin — up to **5×** leverage for the biggest companies, 4× for the rest of the
+    Nifty 500, 2× for others — and close the same day) and **MTF** (pay a margin — up to **4×**, 2.5× for
+    the rest of the Nifty 500, not offered for small stocks — Upstox lends the rest at **₹20 a day for
+    every ₹40,000** lent, every calendar day; the shares are pledged and unpledged for ₹20 + GST each).
+    Upstox's exact leverage differs per stock and day; the order window says so.
+  - **Order type:** Market, Limit (your price or better; slippage never crosses the limit), **SL**
+    (when the price reaches the trigger, a limit order) and **SL-M** (at the trigger, a market order) —
+    a stop-loss buy waits for the price to rise to its trigger, a sell for it to fall. **Validity:**
+    Day or **IOC** (fills at once or is cancelled). Orders placed while the market is closed are
+    **after-market orders (AMO)** that work from the next opening.
+  - **Intraday rules:** no new Intraday trades after 3:15 pm; an Intraday trade still open at
+    **3:20 pm is squared off by "Upstox" with a ₹59 charge** (₹50 + GST; Upstox's own time since
+    22 June 2026) unless you tick "Close by itself at 3:10 pm"; a loss that eats 80% of the margin
+    closes it (margin shortfall). Selling a stock you do not hold = Intraday **sell first** with the
+    same margin; an Intraday buy buys it back.
+  - **MTF rules:** interest taken from the cash every day; a big fall that leaves too little of your
+    own money in it is shown as a margin shortfall and sells it for you if it gets worse.
+  - **Money:** the window shows the order value, the margin you pay, what Upstox lends and its
+    interest a day (MTF), **what is free now and the balance after this buy**, and the charges for
+    buying and selling. The confirmation says the balance left.
+- **Practice tab:** Available / Used margin / Positions at the top; each position has its product
+  (Delivery, Intraday 5×, MTF 4×) with its margin, loan and interest; **Convert** like Upstox
+  (Intraday → Delivery to keep it overnight, or Delivery bought today → Intraday); waiting orders in
+  plain words (limit, stop-loss trigger → limit, AMO, IOC); **History shows the balance after every
+  trade**, its charges and MTF interest.
+- The auto-trader keeps trading with its own money only (Delivery, no leverage), so its record stays
+  comparable.
+
 ## New in 1.9
 
 - **🚀 Breakout Today — buy-first ideas** (Day trade tab, right below "Falling now"). From 9:15 the

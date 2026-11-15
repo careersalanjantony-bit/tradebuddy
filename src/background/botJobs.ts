@@ -213,7 +213,7 @@ async function catchUp(bot: BotState, ctx: MarketCtx): Promise<BotState> {
       const s = (w.shorts ?? []).find((x) => x.key === t.key);
       if (!h && !s) break;
       const at = ctx.now - (ctx.t - bt - 5) * 60_000;
-      const steps = t.side === 'long' ? [bars.o[i]!, bars.l[i]!, h?.target != null && bars.h[i]! >= h.target ? h.target : bars.h[i]!, bars.c[i]!] : [bars.o[i]!, bars.h[i]!, s && bars.l[i]! <= s.t2 ? s.t2 : s && bars.l[i]! <= s.t1 ? s.t1 : bars.l[i]!, bars.c[i]!];
+      const steps = t.side === 'long' ? [bars.o[i]!, bars.l[i]!, h?.target != null && bars.h[i]! >= h.target ? h.target : bars.h[i]!, bars.c[i]!] : [bars.o[i]!, bars.h[i]!, s && s.t2 !== null && bars.l[i]! <= s.t2 ? s.t2 : s && s.t1 !== null && bars.l[i]! <= s.t1 ? s.t1 : bars.l[i]!, bars.c[i]!];
       for (const p of steps) {
         const r = processWallet(w, { [t.key]: { ltp: p, prevClose: null, fetchedAt: at } }, { now: at, today: ctx.today, t: bt + 5, open: true });
         w = r.wallet;

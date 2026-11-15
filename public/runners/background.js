@@ -194,11 +194,14 @@ async function check(now) {
   // 1. practice shares
   var hits = kvGet('hits', []);
   var done = {};
+  var idOf = function (h) {
+    return h.key + '|' + (h.product || 'delivery');
+  };
   hits.forEach(function (h) {
-    done[h.key] = true;
+    done[idOf(h)] = true;
   });
   var holdings = (cfg.holdings || []).filter(function (h) {
-    return !done[h.key];
+    return !done[idOf(h)];
   });
   if (holdings.length) {
     var prices = await lastPrices(
@@ -211,13 +214,15 @@ async function check(now) {
       var ltp = prices[h.key];
       if (!ltp) return;
       var reason = null;
+      // the day's exit: 3:10 pm for a day-trade plan, Upstox's 3:20 pm square-off for an Intraday position
+      var exitT = h.exitT !== undefined && h.exitT !== null ? h.exitT : h.sellByClose ? 15 * 60 + 10 : null;
       if (h.stop && ltp <= h.stop) reason = 'stop';
       else if (h.target && ltp >= h.target) reason = 'target';
-      else if (h.sellByClose && p.t >= 15 * 60 + 10) reason = 'day-end';
+      else if (exitT && p.t >= exitT) reason = exitT >= 15 * 60 + 20 ? 'square-off' : 'day-end';
       if (!reason) return;
-      hits.push({ key: h.key, price: ltp, at: now, reason: reason });
+      hits.push({ key: h.key, price: ltp, at: now, reason: reason, product: h.product || 'delivery' });
       var pnl = (ltp - h.avgPrice) * h.qty;
-      var what = reason === 'stop' ? 'fell to your sell-if-falls price' : reason === 'target' ? 'reached your take-profit price' : 'day trade closed at 3:10 pm';
+      var what = reason === 'stop' ? 'fell to your sell-if-falls price' : reason === 'target' ? 'reached your take-profit price' : reason === 'square-off' ? 'Intraday trade squared off by Upstox at 3:20 pm (₹59 charge)' : 'day trade closed at 3:10 pm';
       notify('bg-hit-' + h.key + '-' + p.date, 'Practice: ' + h.symbol + ' ' + what, 'Sold ' + h.qty + ' at about ' + rupees(ltp) + ' (' + (pnl >= 0 ? '+' : '−') + rupees(Math.abs(pnl)) + ' before charges). Pretend money — open TradeBuddy to see it.');
     });
     kvSet('hits', hits);

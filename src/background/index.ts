@@ -37,7 +37,7 @@ import { ignoreGap } from '../data/corporateActions';
 import { deletePlan, savePlan, updatePlan } from '../planner/plans';
 import { getSettings, updateSettings } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
-import { walletCancel, walletOrder, walletReset, walletUpdate } from './walletJobs';
+import { walletCancel, walletConvert, walletOrder, walletReset, walletUpdate } from './walletJobs';
 import { WALLET_START } from '../wallet/wallet';
 import { learnIfDue, learnNow } from './mlJobs';
 import { walletCover, walletShort } from './walletJobs';
@@ -311,8 +311,12 @@ const handlers: Handlers = {
     await walletCancel(id);
     return { done: true };
   },
-  'wallet:update': async ({ key, patch }) => {
-    await walletUpdate(key, patch);
+  'wallet:convert': async ({ key, from, to }) => {
+    await walletConvert(key, from, to);
+    return { done: true };
+  },
+  'wallet:update': async ({ key, patch, product }) => {
+    await walletUpdate(key, patch, product);
     return { done: true };
   },
   'wallet:reset': async ({ startCash }) => {

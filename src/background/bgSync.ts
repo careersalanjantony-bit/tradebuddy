@@ -3,6 +3,7 @@ import { istDate } from '../lib/time';
 import { createLogger } from '../lib/log';
 import { getRecentCandles } from '../data/candles';
 import { alertChannel } from '../notify/toneList';
+import { AUTO_SQUARE_OFF_T, DAY_EXIT_T } from '../wallet/wallet';
 import { drainBackground, syncBackground } from '../platform/backgroundChecker';
 import { getLocal, getSecrets, getSettings } from '../storage/local';
 import { dayKeys } from './dayJobs';
@@ -44,7 +45,18 @@ export async function syncBackgroundChecker(now = Date.now()): Promise<void> {
     token: secrets.upstoxAnalyticsToken ?? null,
     holidays: (cal?.holidays ?? []).map((h) => h.date),
     universe,
-    holdings: (wallet?.holdings ?? []).map((h) => ({ key: h.key, symbol: h.symbol, qty: h.qty, avgPrice: h.avgPrice, stop: h.stop, target: h.target, sellByClose: h.sellByClose })),
+    holdings: (wallet?.holdings ?? []).map((h) => ({
+      key: h.key,
+      symbol: h.symbol,
+      qty: h.qty,
+      avgPrice: h.avgPrice,
+      stop: h.stop,
+      target: h.target,
+      sellByClose: h.sellByClose,
+      product: h.product ?? 'delivery',
+      // when it is closed for the day: 3:10 pm (the plan) or Upstox's 3:20 pm Intraday square-off
+      exitT: h.sellByClose ? DAY_EXIT_T : h.product === 'intraday' ? AUTO_SQUARE_OFF_T : null,
+    })),
     appActiveAt: now,
     lastOpenDate: istDate(now),
   });

@@ -21,7 +21,7 @@ export interface BackgroundConfig {
   token: string | null;
   holidays: string[];
   universe: string[];
-  holdings: Array<{ key: string; symbol: string; qty: number; avgPrice: number; stop: number | null; target: number | null; sellByClose: boolean }>;
+  holdings: Array<{ key: string; symbol: string; qty: number; avgPrice: number; stop: number | null; target: number | null; sellByClose: boolean; product?: string; exitT?: number | null }>;
   appActiveAt: number;
   lastOpenDate: string;
 }
@@ -37,10 +37,10 @@ export async function syncBackground(cfg: BackgroundConfig): Promise<boolean> {
   }
 }
 
-export async function drainBackground(): Promise<Array<{ key: string; price: number; at: number; reason: string }>> {
+export async function drainBackground(): Promise<Array<{ key: string; price: number; at: number; reason: string; product?: string }>> {
   if (!isNative()) return [];
   try {
-    const r = await BackgroundRunner.dispatchEvent<{ hits?: Array<{ key: string; price: number; at: number; reason: string }> }>({ label: RUNNER_LABEL, event: 'drain', details: {} });
+    const r = await BackgroundRunner.dispatchEvent<{ hits?: Array<{ key: string; price: number; at: number; reason: string; product?: string }> }>({ label: RUNNER_LABEL, event: 'drain', details: {} });
     return Array.isArray(r?.hits) ? r.hits : [];
   } catch {
     return [];

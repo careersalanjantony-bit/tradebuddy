@@ -67,7 +67,9 @@ export interface ApiMap {
   /** self-learning: learn now from the stored 5-minute history */
   'ml:learn': { req: undefined; res: { samples: number; passed: boolean } };
   /** practice money (app v1.0) */
-  'wallet:order': { req: import('../wallet/wallet').OrderRequest; res: { order: import('../wallet/wallet').PaperOrder; filledAt?: number } };
+  'wallet:order': { req: import('../wallet/wallet').OrderRequest; res: { order: import('../wallet/wallet').PaperOrder; filledAt?: number; cashAfter?: number; free: number } };
+  /** Upstox-style convert of today's position (app v1.10) */
+  'wallet:convert': { req: { key: string; from: import('../wallet/wallet').Product; to: import('../wallet/wallet').Product }; res: { done: true } };
   'wallet:cancel': { req: { id: string }; res: { done: true } };
   /** practice sell-first (app v1.4) */
   'wallet:short': { req: import('../wallet/wallet').ShortRequest; res: { price: number } };
@@ -82,7 +84,7 @@ export interface ApiMap {
   'shorts:model': { req: undefined; res: { trained: boolean } };
   'bot:enable': { req: { enabled: boolean }; res: { ok: boolean } };
   'bot:reset': { req: { forget: boolean; startCash?: number }; res: { ok: boolean } };
-  'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>> }; res: { done: true } };
+  'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>>; product?: import('../wallet/wallet').Product }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };
   /** day-trade mode (v0.11.0): buy and sell the same day */

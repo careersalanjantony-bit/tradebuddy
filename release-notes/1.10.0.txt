@@ -1,0 +1,5 @@
+Practice Buy and Sell now work like the Upstox order window: choose Delivery, Intraday (up to 5× leverage) or MTF (up to 4×, Upstox lends the rest).
+Order types Market, Limit, SL and SL-M, validity Day or IOC, and after-market orders when the market is closed.
+Intraday trades still open at 3:20 pm are squared off with Upstox's ₹59 charge — or tick "Close by itself at 3:10 pm". MTF charges ₹20 a day interest per ₹40,000 lent.
+The window shows the margin, what is free and your balance after the buy; History shows the balance after every trade.
+Convert a position like Upstox: Intraday to Delivery to keep it overnight, or today's Delivery to Intraday.
