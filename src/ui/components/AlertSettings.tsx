@@ -27,6 +27,13 @@ export function AlertSettings({ settings }: { settings: Settings }) {
       set: (v) => updateSettings({ notifications: { breakouts: v } }),
     },
     {
+      id: 'bot',
+      on: settings.notifications.bot !== false,
+      title: '🤖 Auto-trader trades',
+      about: 'Each time the auto-trader buys, sells half, sells, or stops for the day — with the exact steps to copy it in Upstox.',
+      set: (v) => updateSettings({ notifications: { bot: v } }),
+    },
+    {
       id: 'rising',
       on: settings.notifications.rising,
       title: 'Stocks rising fast',

@@ -204,7 +204,7 @@ describe('everything studies all five indices (app v1.12)', () => {
     old.dayTrade.scanScope = 'list';
     await kv.set({ meta: { schemaVersion: 14, installedAt: 1, lastMigratedAt: 1 }, settings: old });
     const r = await runLocalMigrations(kv, 2);
-    expect(r.applied).toHaveLength(1);
+    expect(r.applied.length).toBeGreaterThanOrEqual(1); // v1.12 and any later step
     const { settings } = (await kv.get(['settings'])) as { settings: typeof old };
     expect(settings.scanner.universe).toBe('all');
     expect('scanScope' in settings.dayTrade).toBe(false);

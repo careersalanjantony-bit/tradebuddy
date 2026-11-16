@@ -158,6 +158,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       await kv.set({ settings: next });
     },
   },
+  {
+    to: 16,
+    description: "app v1.13: the auto-trader's money protection and its past test",
+    async up(kv) {
+      const { botProtectTest } = await kv.get(['botProtectTest']);
+      if (botProtectTest === undefined) await kv.set({ botProtectTest: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

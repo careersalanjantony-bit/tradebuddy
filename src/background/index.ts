@@ -46,7 +46,8 @@ import { scanShorts } from './shortJobs';
 import { scanBreakouts, testBreakouts } from './breakoutJobs';
 import { testBreakoutsIfDue } from './breakoutJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
-import { botReset, botSetEnabled, runBot, suggestIdeas } from './botJobs';
+import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas } from './botJobs';
+import { testProtect } from './botTest';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -92,6 +93,8 @@ ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up f
 ready.then(() => setTimeout(() => void learnIfDue().catch(() => undefined), 60_000)).catch(() => undefined);
 // app v1.9: the breakout rule's past test (also redone after each learning run)
 ready.then(() => setTimeout(() => void testBreakoutsIfDue().catch(() => undefined), 90_000)).catch(() => undefined);
+// app v1.13: the auto-trader's money protection on past days (once a day)
+ready.then(() => setTimeout(() => void testProtect().catch(() => undefined), 120_000)).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
@@ -310,6 +313,20 @@ const handlers: Handlers = {
   'shorts:model': async () => ({ trained: await trainShortModelIfDue(Date.now(), true) }),
   'bot:enable': async ({ enabled }) => (await botSetEnabled(enabled), { ok: true }),
   'bot:reset': async ({ forget, startCash }) => (await botReset(forget, startCash), { ok: true }),
+  'bot:amount': async ({ amount }) => {
+    const r = await botSetAmount(amount);
+    void testProtect().catch(() => undefined);
+    return r;
+  },
+  'bot:rules': async ({ rules }) => {
+    const r = await botSetRules(rules);
+    void testProtect().catch(() => undefined);
+    return r;
+  },
+  'bot:test': async () => {
+    const r = await testProtect(Date.now(), true);
+    return { ok: !!r, days: r?.days ?? 0 };
+  },
   'wallet:cancel': async ({ id }) => {
     await walletCancel(id);
     return { done: true };

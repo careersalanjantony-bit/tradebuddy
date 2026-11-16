@@ -568,11 +568,15 @@ const heroText = ((await page.textContent('[data-testid="bot-hero"]').catch(() =
 check('Auto-trader: ₹50 lakh of pretend money, trading by itself in market hours', botState?.wallet?.startCash === 5000000 && heroText.includes('Trading by itself'), heroText.slice(0, 120));
 const openBot = (botState?.trades ?? []).filter((t) => t.status === 'open');
 check(
-  'it opened trades by itself — each with a safety net, a target, reasons; no fixed limits: any amount up to all its cash (no borrowing), at most 3% of its money at risk per trade',
-  botTraded && openBot.length > 0 && openBot.reduce((sum, t) => sum + t.qty * t.entry, 0) <= 5e6 + 1 && openBot.every((t) => t.riskRupees <= 0.03 * 5e6 + 100 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy),
+  'it opened trades by itself — each with a safety net, a target, reasons; protected: at most 10 stocks for ₹50 lakh, each at most 15% of the money, same-day buys as Intraday (no borrowing), at most 3% at risk per trade',
+  botTraded && openBot.length > 0 && openBot.length <= 10 && openBot.reduce((sum, t) => sum + t.qty * t.entry, 0) <= 5e6 + 1 && openBot.every((t) => t.qty * t.entry <= 0.15 * 5e6 * 1.01 && t.riskRupees <= 0.03 * 5e6 + 100 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy && (t.strategy === 'swing' || t.side === 'short' || t.product === 'intraday')),
   openBot.map((t) => `${t.side} ${t.qty} ${t.symbol} @${t.entry} (${t.strategy}, ${Math.round(t.chance * 100)}%, risk ₹${t.riskRupees})`).join('; '),
 );
 check('each open trade moves live on a bar: safety net ← price → target', !!(await page.$('[data-testid="bot-trade"] .trade-track .mark.now')));
+const copyBtn = await page.$('[data-testid="bot-copy"]');
+if (copyBtn) await copyBtn.click();
+const copyText = ((await page.textContent('[data-testid="bot-copy-steps"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('each open auto-trade has "Copy in Upstox" with the exact order steps (you place it yourself)', !!copyBtn && /Upstox → .+ → (Buy|Sell) → (Intraday|Delivery) → \d+ shares → Limit ₹/.test(copyText) && copyText.includes('Stop-loss') && copyText.includes('never sends orders'), copyText.slice(0, 200));
 // make one trade finish: the falling stock drops to its 2nd target, or the others jump up
 const botShort = openBot.find((t) => t.side === 'short' && t.symbol === FALL);
 if (botShort) mock.fallPrice = botShort.target - 1;
@@ -591,6 +595,27 @@ await page.waitForTimeout(600);
 const learnedText = ((await page.textContent('[data-testid="bot-learned"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('"What it has learned" shows its record and each kind of trade', learnedText.includes('finished trades') && learnedText.includes('Rising today') && learnedText.includes('Top picks'), learnedText.slice(0, 160));
 check('"What it did" lists its decisions with times', (await page.$$('[data-testid="bot-log"] .timeline li')).length >= 2);
+// app v1.13: protection, past test, amount, copy in Upstox
+const protText = ((await page.textContent('[data-testid="bot-protect"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check(
+  '"Protect my money" is on: keep the profit from +0.4%, daily loss limit −1%, few-days picks at most 30%, quick exit after 45 min, with today’s levels and the past test',
+  (await page.isChecked('[data-testid="bot-protect-switch"]')) && ['Keep the profit from', 'Daily loss limit', 'Few-days picks at most', 'going nowhere'].every((w) => protText.includes(w)) && !!(await page.$('[data-protect="dayLossPct-1"].on')) && /Keeps the profit once the day is up|Today's best|Stopped for today/.test(protText) && /Past test/i.test(protText),
+  protText.slice(0, 260),
+);
+await page.click('[data-protect="dayLossPct-2"]');
+check('a protection level can be changed (daily loss limit −2%)', await until(() => page.evaluate(async () => (await chrome.storage.local.get('bot')).bot?.rules?.dayLossPct === 2), 5000));
+await page.click('[data-protect="dayLossPct-1"]');
+const totalNow = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot.wallet.startCash);
+const newAmount = Math.round(totalNow / 1000) * 1000 + 100000;
+await page.fill('[data-field="bot-set-amount"]', String(newAmount));
+await page.click('[data-testid="bot-set-amount"]');
+const amountMsg = await until(async () => /Done — it now trades with/.test((await page.textContent('[data-testid="bot-amount-msg"]').catch(() => '')) ?? ''), 8000);
+const botAmt = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
+const amtText = ((await page.textContent('[data-testid="bot-amount-msg"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"Amount to auto-trade": set to a new amount — the money changes, open trades and learning are kept', amountMsg && botAmt.trades.length >= (botAfter?.trades?.length ?? 0) && botAmt.brain.n >= 1 && botAmt.log.some((l) => /Amount set to/.test(l.text)), amtText);
+await page.click('[data-testid="bot-upstox-funds"]');
+const fundsMsg = await until(async () => /Log in to Upstox|available to trade/.test((await page.textContent('[data-testid="bot-amount-msg"]').catch(() => '')) ?? ''), 8000);
+check('"Use my Upstox balance" reads the balance (read only) — or says to log in first', fundsMsg, ((await page.textContent('[data-testid="bot-amount-msg"]').catch(() => '')) ?? '').slice(0, 120));
 await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot.png'), fullPage: true });
 mock.move = 0;
@@ -758,7 +783,7 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: day-trade BUY / SELL ideas, breakouts, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 7 && switches.every(Boolean), JSON.stringify(switches));
+check('Alerts card: day-trade BUY / SELL ideas, breakouts, auto-trader trades, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 8 && switches.every(Boolean) && !!(await page.$('[data-alert="bot"]')), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });

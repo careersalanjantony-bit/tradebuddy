@@ -1,4 +1,5 @@
 import { features, predict, strategyFocus, type Brain, type IdeaContext, type Strategy } from './brain';
+import { maxOpenFor, maxPositionFor, skipIdea, type ProtectRules } from './protect';
 
 /**
  * The auto-trader's rules: which ideas to take and how much pretend money to put in. Pure functions.
@@ -14,6 +15,11 @@ import { features, predict, strategyFocus, type Brain, type IdeaContext, type St
  * - About 1 in 8 decisions is a small "test trade" on an idea it is unsure about, so it keeps
  *   learning about kinds of trades it would otherwise never try.
  * - Same-day trades are opened until 2:30 pm (they must be closed by 3:10); top picks until 3:15.
+ *
+ * App v1.13: with the money protection on (`book.rules`, see bot/protect.ts) it also stops for the day
+ * once the day's profit is kept or the daily loss limit is reached, holds at most `maxOpenFor(money)`
+ * trades (each at most a fair share of the money), keeps "hold a few days" picks to their share, and
+ * skips ideas with news against them or with the whole market going the other way.
  */
 
 export const BOT_START = 5_000_000;
@@ -90,6 +96,12 @@ export interface Book {
   todayPnl: number;
   /** minutes since midnight IST */
   t: number;
+  /** app v1.13: the money protection (undefined = off, as before) */
+  rules?: ProtectRules;
+  /** stopped for the day by the protection */
+  halted?: 'lock' | 'loss' | null;
+  /** money now in "hold a few days" picks */
+  swingValue?: number;
 }
 
 export interface Decision {
@@ -119,18 +131,31 @@ const pctText = (x: number) => `${Math.round(x * 10000) / 100}%`;
 
 export function decide(brain: Brain, ideas: Idea[], book: Book, seed: string): Plan {
   if (book.t < FIRST_ENTRY_T) return { decisions: [], note: 'Waits until 9:30 am — the first minutes are too jumpy.' };
+  const protect = book.rules?.on ? book.rules : null;
+  if (protect && book.halted) return { decisions: [], note: book.halted === 'lock' ? "Stopped for today: it kept today's profit (sold what it bought today). Back tomorrow at 9:30." : 'Stopped for today: the daily loss limit was reached (sold what it bought today). Back tomorrow at 9:30.' };
+  const slots = protect ? maxOpenFor(book.equity) - book.openCount : Infinity;
+  if (slots <= 0) return { decisions: [], note: `Holding ${book.openCount} trades — the most for ${formatRs(book.equity)}. It waits for one to finish.` };
   const seen = new Set(book.openKeys);
+  let skipped = 0;
   const scored = ideas
     .filter((i) => !seen.has(i.key))
+    .filter((i) => {
+      const why = protect ? skipIdea(i.ctx, protect) : null;
+      if (why) skipped++;
+      return !why;
+    })
     .filter((i) => (i.strategy === 'swing' ? book.t <= LAST_SWING_ENTRY_T : book.t <= LAST_DAY_ENTRY_T))
     .map((i) => scoreIdea(brain, i))
     .filter((s): s is Scored => !!s)
     .sort((a, b) => b.ev - a.ev);
-  if (!scored.length) return { decisions: [], note: book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : 'No idea right now — waiting for one.' };
+  if (!scored.length) return { decisions: [], note: book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : skipped ? `Skipped ${skipped} idea${skipped === 1 ? '' : 's'} (news against it, or the whole market going the other way) — waiting for a better one.` : 'No idea right now — waiting for one.' };
   if (book.free < MIN_POSITION) return { decisions: [], note: 'All its money is in open trades — it waits for one to finish.' };
 
-  const good = scored.filter((s) => s.ev > 0.05 && strategyFocus(brain.by[s.strategy]) !== 'paused');
-  const explore = good.length === 0 || hash01(seed) < EXPLORE_RATE ? scored.find((s) => !good.includes(s) && s.ev > -0.4) : undefined;
+  const good = scored.filter((s) => s.ev > 0.05 && strategyFocus(brain.by[s.strategy]) !== 'paused').slice(0, slots);
+  const explore = good.length < slots && (good.length === 0 || hash01(seed) < EXPLORE_RATE) ? scored.find((s) => !good.includes(s) && s.ev > -0.4) : undefined;
+  // protection: each trade at most a fair share of the money; "hold a few days" picks within their share
+  const perTrade = protect ? maxPositionFor(book.equity) : Infinity;
+  let swingRoom = protect ? Math.max(0, (book.equity * protect.swingSharePct) / 100 - (book.swingValue ?? 0)) : Infinity;
   // the free cash is shared among the good ideas by how good each one is
   const weight = good.reduce((sum, s) => sum + s.ev, 0);
   const decisions: Decision[] = [];
@@ -142,10 +167,11 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, seed: string): P
     let qty = Math.floor((book.equity * fraction) / perShare);
     // the fill can be a little worse than the live price (slippage, 5-paise ticks): keep a margin
     const fillPrice = idea.price * 1.002;
-    const cash = Math.min(cashShare, free * 0.995);
+    const cash = Math.min(cashShare, free * 0.995, perTrade, idea.strategy === 'swing' ? swingRoom : Infinity);
     if (qty * fillPrice > cash) qty = Math.floor(cash / fillPrice);
     if (qty < 1 || qty * idea.price < MIN_POSITION) return;
     free -= qty * fillPrice;
+    if (idea.strategy === 'swing') swingRoom -= qty * fillPrice;
     const riskRupees = Math.round(qty * perShare);
     const atRisk = riskRupees / book.equity;
     decisions.push({

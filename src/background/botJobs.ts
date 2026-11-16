@@ -3,7 +3,10 @@ import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
 import { stockChance } from '../advisor/shortModel';
 import { dailyShortPlan, type DailyShortPlan } from '../advisor/shortPlan';
 import { newBrain, learnFrom, upgradeBrain, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
-import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, trailStop, type Idea } from '../bot/policy';
+import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, type Idea } from '../bot/policy';
+import { checkDay, manageTrade, protectRules, type DayGuard, type ProtectRules } from '../bot/protect';
+import { notify } from '../notify/chrome';
+import { copyLine } from '../bot/copy';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { buyersMeter } from '../data/flow';
@@ -20,7 +23,7 @@ import { errorMessage } from '../lib/serialize';
 import { istDate } from '../lib/time';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession } from '../storage/session';
-import { newWallet, openShort, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type MarketCtx, type WalletQuote, type WalletState } from '../wallet/wallet';
+import { coverShort, newWallet, openShort, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type MarketCtx, type WalletQuote, type WalletState } from '../wallet/wallet';
 
 /**
  * App v1.6 — the auto-trader. ₹50 lakh of pretend money that trades by itself during market hours:
@@ -67,6 +70,14 @@ export interface BotTrade {
   r?: number;
   exitWhy?: string;
   lesson?: string | null;
+  /** app v1.13: half already sold at 1× the risk */
+  halfDone?: boolean;
+  /** app v1.13: shares still open after the half was sold */
+  left?: number;
+  /** app v1.13: why the protection closed it (overrides the fill's reason in the record) */
+  closeWhy?: string;
+  /** app v1.13: Upstox product it was opened with (same-day buys: Intraday) */
+  product?: 'intraday' | 'delivery';
 }
 
 export interface BotLogEntry {
@@ -92,6 +103,12 @@ export interface BotState {
   /** ideas looked at in the last decision */
   looked: number;
   equity: Array<{ date: string; total: number }>;
+  /** app v1.13: the money protection (missing values = the defaults, on) */
+  rules?: Partial<ProtectRules>;
+  /** app v1.13: today's best result and whether it stopped for the day */
+  guard?: DayGuard;
+  /** app v1.13: the last time it could not run during market hours (app closed / phone asleep) */
+  lastGap?: { from: number; to: number };
 }
 
 export function newBot(now: number, brain: Brain = newBrain(), startCash = BOT_START): BotState {
@@ -146,33 +163,107 @@ export function settleClosed(bot: BotState, now: number): BotState {
     const pnl = Math.round(fills.reduce((s, f) => s + (f.pnl ?? 0), 0) * 100) / 100;
     const last = fills[fills.length - 1]!;
     const r = t.riskRupees > 0 ? Math.round((pnl / t.riskRupees) * 100) / 100 : 0;
-    const why = last.reason === 'stop' ? (t.stop === t.entry ? 'came back to the buy price (no loss)' : 'safety net hit') : last.reason === 'target' ? 'target reached' : last.reason === 'day-end' ? (t.strategy === 'swing' ? 'time limit reached' : 'closed at 3:10 pm') : last.reason === 't1' ? 'target 1' : 'closed';
+    const why =
+      t.closeWhy ??
+      (last.reason === 'stop'
+        ? t.stop === t.entry
+          ? 'came back to the buy price (no loss)'
+          : (t.side === 'long' ? t.stop > t.entry : t.stop < t.entry)
+            ? 'safety net followed the price up — profit kept'
+            : 'safety net hit'
+        : last.reason === 'target'
+          ? 'target reached'
+          : last.reason === 'day-end'
+            ? t.strategy === 'swing'
+              ? 'time limit reached'
+              : 'closed at 3:10 pm'
+            : last.reason === 't1'
+              ? 'target 1'
+              : 'closed');
     const lesson = learnFrom(b.brain, t.x, pnl > 0, r, pnl, t.strategy);
     const closed: BotTrade = { ...t, status: 'closed', closedAt: last.at, exitPrice: last.price, pnl, r, exitWhy: why, lesson: lesson.text };
     b = { ...b, brain: lesson.brain, trades: b.trades.map((x) => (x.id === t.id ? closed : x)) };
     b = addLog(b, last.at, 'close', `${t.side === 'long' ? 'Sold' : 'Bought back'} ${t.symbol} at ${px(last.price)} — ${why}: ${signedRs(pnl)} (${r >= 0 ? '+' : ''}${r.toFixed(1)} R).`);
+    // the day's stop sends one summary instead of an alert per trade
+    if (!t.closeWhy || !/daily loss limit|today's profit/.test(t.closeWhy)) void alertClose(closed, last.price).catch(() => undefined);
     b = addLog(b, now, 'learn', `${lesson.text ?? 'Learned a little.'} Its chance for a trade like this: ${Math.round(lesson.before * 100)}% → ${Math.round(lesson.after * 100)}%.`);
   }
   return b;
 }
 
-/** Moves safety nets to the buy price once 1 R up; tracks best/worst prices for the progress bars. */
-function manageOpen(bot: BotState, quotes: Record<string, Quote>): BotState {
+/**
+ * Each open trade at the live price (app v1.13, see bot/protect.ts): the safety net moves to the buy
+ * price early and then follows the best price; half is sold at 1× the risk; a same-day trade that
+ * goes nowhere is closed. Also tracks best/worst prices for the progress bars.
+ */
+function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx): BotState {
+  const rules = protectRules(bot.rules);
   let w = bot.wallet;
   const trades = bot.trades.map((t) => {
     if (t.status !== 'open') return t;
     const q = quotes[t.key];
-    if (!q) return t;
+    if (!q || !(q.ltp > 0)) return t;
     const best = t.side === 'long' ? Math.max(t.best ?? t.entry, q.ltp) : Math.min(t.best ?? t.entry, q.ltp);
     const worst = t.side === 'long' ? Math.min(t.worst ?? t.entry, q.ltp) : Math.max(t.worst ?? t.entry, q.ltp);
-    const stop = trailStop(t.side, t.entry, t.stop, q.ltp);
-    if (stop !== t.stop) {
-      if (t.side === 'long') w = updateHolding(w, t.key, { stop });
-      else w = { ...w, shorts: (w.shorts ?? []).map((s) => (s.key === t.key ? { ...s, stop } : s)) };
+    const fresh = ctx.open && ctx.now - q.fetchedAt < 2 * 60_000;
+    const a = manageTrade({ side: t.side, entry: t.entry, stop: t.stop, stop0: t.stop0, target: t.target, best, sameDay: t.strategy !== 'swing', openedAt: t.openedAt, ...(t.halfDone ? { halfDone: true } : {}) }, q.ltp, ctx.now, rules);
+    let next: BotTrade = { ...t, best, worst };
+    if (a.stop !== t.stop) {
+      if (t.side === 'long') w = updateHolding(w, t.key, { stop: a.stop });
+      else w = { ...w, shorts: (w.shorts ?? []).map((s) => (s.key === t.key ? { ...s, stop: a.stop } : s)) };
+      next = { ...next, stop: a.stop };
     }
-    return { ...t, best, worst, stop };
+    if (!fresh) return next;
+    if (a.exit === 'quick') {
+      w = closePosition(w, t, q.ltp, ctx);
+      const losing = (q.ltp - t.entry) * (t.side === 'long' ? 1 : -1) < 0;
+      return { ...next, closeWhy: losing ? `not working after ${rules.quickExitMin} minutes — closed early to cut the loss` : `went nowhere for ${rules.quickExitMin} minutes — closed to free the money` };
+    }
+    if (a.sellHalf) {
+      const h = w.holdings.find((x) => x.key === t.key);
+      const half = h ? Math.floor(h.qty / 2) : 0;
+      if (h && half >= 1) {
+        const r = placeOrder(w, { key: t.key, symbol: t.symbol, side: 'sell', qty: half, type: 'market', source: 'Auto-trader · half at target 1', ...(h.product ? { product: h.product, ...(h.marginPct !== undefined ? { marginPct: h.marginPct } : {}) } : {}) }, wq(q), ctx);
+        if (r.ok && r.fill) {
+          w = r.wallet;
+          void alertHalf(t, half, r.fill.price).catch(() => undefined);
+          return { ...next, halfDone: true, left: h.qty - half };
+        }
+      }
+    }
+    return next;
   });
   return { ...bot, wallet: w, trades };
+}
+
+/** Sells (or buys back) the whole position of a trade at `price`. */
+function closePosition(w: WalletState, t: BotTrade, price: number, ctx: MarketCtx): WalletState {
+  return t.side === 'long' ? sellFromBackground(w, t.key, price, ctx, 'stop').wallet : coverShort(w, t.key, price, ctx, 'stop').wallet;
+}
+
+/**
+ * The day (app v1.13): keeps the day's profit once it is big enough, and stops at the daily loss limit
+ * — both sell everything bought today and stop new trades until tomorrow.
+ */
+function guardDay(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx): BotState {
+  const rules = protectRules(bot.rules);
+  const sum = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx.today);
+  const money = sum.total - sum.todayPnl;
+  const { guard, justHalted } = checkDay(bot.guard, ctx.today, sum.todayPnl, money, rules, ctx.now);
+  let b: BotState = { ...bot, guard };
+  if (!justHalted || !ctx.open) return b;
+  let w = b.wallet;
+  const why = justHalted === 'lock' ? `kept today's profit (the day was up ${signedRs(guard.best)}, came back to ${signedRs(sum.todayPnl)})` : `daily loss limit (${rules.dayLossPct}% of the money) reached`;
+  const trades = b.trades.map((t) => {
+    if (t.status !== 'open' || t.date !== ctx.today) return t;
+    const p = quotes[t.key]?.ltp;
+    if (!(p && p > 0)) return t;
+    w = closePosition(w, t, p, ctx);
+    return { ...t, closeWhy: justHalted === 'lock' ? "sold to keep today's profit" : 'sold at the daily loss limit' };
+  });
+  b = addLog({ ...b, wallet: w, trades }, ctx.now, 'info', `Stopped for today: ${why}. Sold what it bought today; it starts again tomorrow at 9:30.`);
+  void alertHalt(justHalted, sum.todayPnl, trades.filter((t) => t.closeWhy && t.date === ctx.today && t.status === 'open').length).catch(() => undefined);
+  return b;
 }
 
 /** Same-day trades left open after the close (app was closed at 3:10) and top picks past their time limit. */
@@ -506,10 +597,13 @@ export function runBot(now = Date.now(), force = false): Promise<BotState | null
     const quotes = await getQuotes();
     const before = JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
 
+    if (ctx.open && bot.lastRun && now - bot.lastRun > 4 * 60_000 && istDate(bot.lastRun) === ctx.today) bot = { ...bot, lastGap: { from: bot.lastRun, to: now } };
     if (ctx.open) bot = await catchUp(bot, ctx);
-    bot = manageOpen(bot, quotes);
+    bot = manageOpen(bot, quotes, ctx);
     bot = timeExits(bot, quotes, ctx);
     bot = { ...bot, wallet: processWallet(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx).wallet };
+    bot = settleClosed(bot, now);
+    bot = guardDay(bot, quotes, ctx);
     bot = settleClosed(bot, now);
 
     if (bot.day.date !== ctx.today) bot = { ...bot, day: { date: ctx.today, opened: 0 } };
@@ -519,13 +613,21 @@ export function runBot(now = Date.now(), force = false): Promise<BotState | null
       await refreshStudies(now, sum.total);
       const ideas = await gatherIdeas(now, quotes);
       const openTrades = bot.trades.filter((t) => t.status === 'open');
-      const plan = decide(bot.brain, ideas, { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t }, `${ctx.today}-${ctx.t}`);
+      const rules = protectRules(bot.rules);
+      const swingValue = openTrades.filter((t) => t.strategy === 'swing').reduce((a, t) => a + t.qty * (quotes[t.key]?.ltp ?? t.entry), 0);
+      const plan = decide(
+        bot.brain,
+        ideas,
+        { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue },
+        `${ctx.today}-${ctx.t}`,
+      );
       for (const d of plan.decisions) {
         const i = d.idea;
         const q = wq(quotes[i.key]);
         const source = `Auto-trader · ${STRATEGY_LABEL[i.strategy]}`;
         const r = i.side === 'long'
-          ? placeOrder(bot.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: d.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source }, q, ctx)
+          ? // same-day buys as Upstox Intraday (cheaper charges), paid in full — no borrowing
+            placeOrder(bot.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: d.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source, ...(i.strategy !== 'swing' ? { product: 'intraday' as const, marginPct: 1 } : {}) }, q, ctx)
           : openShort(bot.wallet, { key: i.key, symbol: i.symbol, qty: d.qty, stop: i.stop, t1: i.t1 ?? (i.price + i.target) / 2, t2: i.target, source }, q, ctx);
         if (!r.ok || !r.fill) {
           bot = addLog(bot, now, 'info', `Could not open ${i.symbol}: ${r.ok ? 'not filled' : r.error}`);
@@ -556,10 +658,12 @@ export function runBot(now = Date.now(), force = false): Promise<BotState | null
           status: 'open',
           best: entry,
           worst: entry,
+          product: i.strategy === 'swing' ? 'delivery' : 'intraday',
         };
         bot = { ...bot, wallet: r.wallet, trades: [...bot.trades, trade].slice(-400), day: { ...bot.day, opened: bot.day.opened + 1 } };
         bot = addLog(bot, now, 'open', `${i.side === 'long' ? 'Bought' : 'Sold first'} ${d.qty} ${i.symbol} at ${px(entry)} (${rupees(d.qty * entry)}) — ${STRATEGY_LABEL[i.strategy].toLowerCase()}, ${Math.round(i.chance * 100)}% chance. ${d.sizeWhy}`);
         log.info(`Auto-trader ${i.side === 'long' ? 'bought' : 'sold first'} ${d.qty} ${i.symbol} @ ${entry}`);
+        void alertOpen(trade).catch(() => undefined);
       }
       bot = { ...bot, lastDecideAt: now, note: plan.note, looked: ideas.length };
     } else if (!ctx.open) {
@@ -592,5 +696,91 @@ export function botReset(forget: boolean, startCash = BOT_START, now = Date.now(
     const cash = Number.isFinite(startCash) && startCash >= 10_000 ? Math.round(startCash) : BOT_START;
     const fresh = newBot(now, forget || !old ? newBrain() : old.brain, cash);
     await setLocal('bot', addLog(fresh, now, 'info', forget ? `Reset: ${rupees(cash)} and a fresh brain.` : `Reset to ${rupees(cash)}; kept what it learned from ${old?.brain.n ?? 0} trades.`));
+  });
+}
+
+// ---------------------------------------------------------------- amount and protection (app v1.13)
+
+/**
+ * Sets the money the auto-trader trades with — e.g. what is in your Upstox account — without starting
+ * again: more money is added to its cash, less is taken from its free cash. Open trades and what it
+ * learned are kept; the overall result is counted from the new amount.
+ */
+export function botSetAmount(amount: number, now = Date.now()): Promise<{ total: number; free: number }> {
+  return queue(async () => {
+    if (!Number.isFinite(amount) || amount < 10_000) throw new Error('Enter at least ₹10,000.');
+    const target = Math.round(amount);
+    const stored = await getLocal('bot');
+    if (!stored) {
+      const fresh = addLog(newBot(now, newBrain(), target), now, 'info', `Amount set to ${rupees(target)}.`);
+      await setLocal('bot', fresh);
+      return { total: target, free: target };
+    }
+    const bot = { ...stored, brain: upgradeBrain(stored.brain) };
+    const quotes = await getQuotes();
+    const sum = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), istDate(now));
+    const delta = Math.round((target - sum.total) * 100) / 100;
+    if (delta < 0 && -delta > sum.free + 0.5) {
+      throw new Error(`${rupees(sum.total - sum.free)} is in open trades right now, so the lowest amount it can go to is ${rupees(sum.total - sum.free)}. Try again when trades have closed.`);
+    }
+    const wallet: WalletState = { ...bot.wallet, cash: Math.round((bot.wallet.cash + delta) * 100) / 100, startCash: Math.round((bot.wallet.startCash + delta) * 100) / 100 };
+    const next = addLog({ ...bot, wallet }, now, 'info', `Amount set to ${rupees(target)} (${delta >= 0 ? 'added' : 'took out'} ${rupees(Math.abs(delta))}). Open trades and what it learned are kept.`);
+    await setLocal('bot', next);
+    return { total: target, free: Math.round(sum.free + delta) };
+  });
+}
+
+/** Changes the money protection (any missing value keeps its current setting). */
+export function botSetRules(patch: Partial<ProtectRules>, now = Date.now()): Promise<ProtectRules> {
+  return queue(async () => {
+    const bot = await getBot(now);
+    const rules = protectRules({ ...protectRules(bot.rules), ...patch });
+    await setLocal('bot', addLog({ ...bot, rules }, now, 'info', rules.on ? `Protection: keep the profit from +${rules.lockStartPct}%, daily loss limit −${rules.dayLossPct}%, few-days picks at most ${rules.swingSharePct}%, quick exit ${rules.quickExitMin ? `after ${rules.quickExitMin} min` : 'off'}.` : 'Protection switched off (as before 1.13: no day limits).'));
+    return rules;
+  });
+}
+
+// ---------------------------------------------------------------- alerts you can copy (app v1.13)
+
+async function botAlertsOn(): Promise<boolean> {
+  return (await getSettings()).notifications.bot !== false;
+}
+
+const copyOf = (t: BotTrade) => ({ symbol: t.symbol, side: t.side, qty: t.qty, entry: t.entry, stop: t.stop, target: t.target, swing: t.strategy === 'swing', ...(t.t1 !== undefined ? { t1: t.t1 } : {}) });
+
+async function alertOpen(t: BotTrade): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(`alert:bot-open-${t.id}`, {
+    title: `🤖 Auto-trader ${t.side === 'long' ? 'bought' : 'sold first'} ${t.qty} ${t.symbol} at ${px(t.entry)}`,
+    message: `${copyLine(copyOf(t))} ${Math.round(t.chance * 100)}% chance · ${STRATEGY_LABEL[t.strategy].toLowerCase()}.`,
+    priority: 2,
+  });
+}
+
+async function alertHalf(t: BotTrade, qty: number, price: number): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(`alert:bot-half-${t.id}`, {
+    title: `🤖 Auto-trader sold half of ${t.symbol}: ${qty} at ${px(price)}`,
+    message: `Target 1 reached. If you copied it: sell ${qty} ${t.symbol} in Upstox now; the rest keeps a safety net at the buy price or higher.`,
+    priority: 2,
+  });
+}
+
+async function alertClose(t: BotTrade, price: number): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(`alert:bot-close-${t.id}`, {
+    title: `🤖 Auto-trader ${t.side === 'long' ? 'sold' : 'bought back'} ${t.symbol} at ${px(price)}: ${signedRs(t.pnl ?? 0)}`,
+    message: `${t.exitWhy ?? 'closed'}. If you copied it: ${t.side === 'long' ? 'sell' : 'buy back'} the rest of ${t.symbol} in Upstox now (and cancel its stop-loss order).`,
+    priority: 2,
+  });
+}
+
+async function alertHalt(why: 'lock' | 'loss', pnl: number, sold: number): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(`alert:bot-halt-${why}-${Date.now()}`, {
+    title: why === 'lock' ? `🤖 Auto-trader kept today's profit: ${signedRs(pnl)}` : `🤖 Auto-trader hit today's loss limit: ${signedRs(pnl)}`,
+    message: `It sold ${sold} trade${sold === 1 ? '' : 's'} bought today and stops until tomorrow 9:30. If you copied its trades: sell (or buy back) what you bought today in Upstox.`,
+    priority: 2,
+    requireInteraction: true,
   });
 }

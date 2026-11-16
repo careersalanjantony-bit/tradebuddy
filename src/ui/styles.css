@@ -1305,3 +1305,9 @@ body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: n
 .scan-cover { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; }
 .scan-parts { display: flex; flex-wrap: wrap; gap: 4px; }
 .scan-parts .chip b { margin-left: 2px; }
+
+/* app v1.13 — auto-trader amount and money protection */
+.protect-grid { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 8px 10px; align-items: center; margin-top: 6px; }
+.protect-grid .filter-chip { padding: 2px 10px; }
+.bot-gap { margin: 8px 0 0; padding: 8px 10px; border: 1px dashed var(--warn); border-radius: 10px; color: var(--warn); }
+@media (max-width: 380px) { .protect-grid { grid-template-columns: 1fr; } }

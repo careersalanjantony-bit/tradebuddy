@@ -149,6 +149,8 @@ export interface Settings {
     shorts?: boolean;
     /** app v1.9: instant alerts for live breakouts and confirmed breakouts */
     breakouts?: boolean;
+    /** app v1.13: an alert each time the auto-trader buys, sells or stops for the day (with the steps to copy it in Upstox) */
+    bot?: boolean;
     /** app v1.9: the sound of every notification (also with the app closed) */
     tone?: import('../notify/toneList').ToneId;
   };
@@ -307,6 +309,8 @@ export interface LocalStore {
   shortTest: (import('../daytrade/shortScan').ShortTestReport & { at: number }) | null;
   /** past test of the confirmed-breakout rule on the 5-minute history (app v1.9) */
   breakoutTest: (import('../daytrade/breakout').BreakoutTestReport & { at: number }) | null;
+  /** app v1.13: the auto-trader's money protection on past days (old way vs protected) */
+  botProtectTest: (import('../bot/protectTest').ProtectTestResult & { at: number; rulesKey: string }) | null;
   /** breakout alerts already sent today (kept across app restarts: never the same alert twice) */
   breakoutAlerted: { date: string; ids: string[] } | null;
   /** app v1.11: Nifty 50 / 100 / Midcap 100 / Smallcap 100 / 500 lists for the Day Trade scanners */

@@ -1,0 +1,5 @@
+Auto-trader: set the amount it trades with — type it or tap "Use my Upstox balance". Open trades and what it learned are kept; trades are sized for that money so you can copy them.
+Protect my money (on): keeps the day's profit once the day is up 0.4% (sells what it bought today if it gives back half), stops at a 1% daily loss, raises each safety net as the price rises, sells half at the first target, closes trades that are not working after 45 minutes.
+At most one stock per Rs 25,000 (up to 10), few-days picks at most 30%, no buys on bad news or against the whole market. Same-day buys as Intraday (lower charges).
+"Copy in Upstox" steps on every auto-trade, and an alert each time it buys or sells.
+A past test shows the old way vs the protected way on stored 5-minute history.

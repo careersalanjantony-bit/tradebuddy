@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
 import { STRATEGIES, STRATEGY_LABEL, strategyFocus, topLessons } from '../../bot/brain';
 import { BOT_START, MAX_RISK, MIN_RISK, SWING_MAX_DAYS } from '../../bot/policy';
+import { PROTECT_CHOICES, keepLevel, maxOpenFor, protectRules, type ProtectRules } from '../../bot/protect';
+import { copySteps } from '../../bot/copy';
 import type { BotState, BotTrade } from '../../background/botJobs';
 import { formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
@@ -121,7 +123,7 @@ export function AutoTraderView() {
           <Sparkline values={curve.length > 1 ? curve : [s.total, s.total]} width={96} height={34} />
         </div>
         <div class="tiny bot-hero-foot">
-          Started with {formatINR(bot?.wallet.startCash ?? BOT_START, 0)} · free {formatINR(s.free, 0)} · {open.length} open · {winRate === null ? 'no finished trades yet' : `won ${brain!.wins} of ${brain!.n} (${Math.round(winRate * 100)}%)`}
+          Put in {formatINR(bot?.wallet.startCash ?? BOT_START, 0)} · free {formatINR(s.free, 0)} · {open.length} open · {winRate === null ? 'no finished trades yet' : `won ${brain!.wins} of ${brain!.n} (${Math.round(winRate * 100)}%)`}
         </div>
       </section>
 
@@ -140,7 +142,11 @@ export function AutoTraderView() {
             <span class="think" aria-hidden="true" /> {bot.note}
           </p>
         )}
+        <GapNote bot={bot} now={now} marketOpen={market.phase === 'open'} />
       </section>
+
+      <AmountCard bot={bot} total={s.total} free={s.free} />
+      <ProtectCard bot={bot} todayPnl={s.todayPnl} total={s.total} />
 
       <section class="card" data-testid="bot-open">
         <h2>
@@ -244,16 +250,18 @@ export function AutoTraderView() {
               Size — no fixed limit: it can put any amount into a trade, up to all its free cash (no borrowing). How much it risks comes from its own confidence (a quarter of the "Kelly" amount): {MIN_RISK * 100}% of its money when unsure, up to {MAX_RISK * 100}% when very sure. When several good ideas appear at once, its free cash is shared among them by how good each one is.
             </li>
             <li>
-              No limit on the number of trades or on a day's loss. The only time rules: no new same-day trades after 2:30 pm (they must be closed by 3:10), top picks until 3:15.
+              With <b>Protect my money</b> on (the default): at most one stock per ₹25,000 (up to 10 at once), each at most a fair share of the money; "hold a few days" picks only up to their share; no buy on stocks with bad news today, nothing against a market clearly going the other way. It keeps the day's profit and stops at the daily loss limit (see above). No new same-day trades after 2:30 pm (closed by 3:10), top picks until 3:15.
             </li>
-            <li>Every trade has a safety net (sell if it falls to…) and a target. Once a trade is 1× its risk in profit, the safety net moves to the buy price. Same-day trades close by 3:10 pm; top picks after {SWING_MAX_DAYS} market days.</li>
+            <li>
+              Every trade has a safety net (sell if it falls to…) and a target. Same-day trades: the safety net moves to the buy price at 0.75× the risk in profit and then follows the best price; half is sold at 1× the risk; a trade that goes nowhere is closed; everything by 3:10 pm. Top picks: the buy price at 1× the risk, then it follows; sold after {SWING_MAX_DAYS} market days. Same-day buys are booked as Upstox <b>Intraday</b> (lower charges), paid in full — no borrowing.
+            </li>
             <li>About 1 decision in 8 is a small test trade on an idea it is unsure about — so it keeps learning.</li>
             <li>If the phone stopped the app during market hours, it replays the 5-minute candles it missed when you open it again, so a safety net that was hit counts as hit.</li>
           </ul>
         </details>
         <div class="row" style={{ gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
           <button class="btn small" type="button" data-testid="bot-reset" onClick={() => setConfirm('money')}>
-            New amount (keep learning)
+            Start again (keep learning)
           </button>
           <button class="btn small danger" type="button" onClick={() => setConfirm('all')}>
             Forget everything
@@ -284,9 +292,12 @@ export function AutoTraderView() {
 /** One open trade with a live progress bar: safety net ← buy price → target. */
 function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: number }) {
   const flash = useFlash(ltp);
+  const [copy, setCopy] = useState(false);
   const px = ltp ?? t.entry;
   const dir = t.side === 'long' ? 1 : -1;
-  const pnl = (px - t.entry) * t.qty * dir;
+  const qty = t.left ?? t.qty;
+  const pnl = (px - t.entry) * qty * dir;
+  const locked = (t.stop - t.entry) * dir;
   const lo = t.side === 'long' ? t.stop0 : t.target;
   const hi = t.side === 'long' ? t.target : t.stop0;
   const pos = (v: number) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
@@ -303,7 +314,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
       </div>
       <div class="row small">
         <span class="muted">
-          {t.qty} shares · ₹{formatNumberIN(t.entry)} · {formatINR(t.qty * t.entry, 0)} · {held}
+          {qty} shares{t.halfDone ? ` (half of ${t.qty} sold)` : ''} · ₹{formatNumberIN(t.entry)} · {formatINR(qty * t.entry, 0)} · {held}{t.product === 'intraday' ? ' · Intraday' : t.strategy === 'swing' ? ' · Delivery' : ''}
         </span>
         <span class="spacer" />
         <b class={tone(pnl)}>
@@ -323,8 +334,180 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
       </div>
       <div class="tiny bt-why">
         {Math.round(t.chance * 100)}% chance · {STRATEGY_LABEL[t.strategy]} · {t.reasons.slice(0, 2).join(' · ')}
-        {t.stop !== t.stop0 && <span class="ok-text"> · safety net moved to the buy price — can no longer lose</span>}
+        {t.stop !== t.stop0 && <span class="ok-text"> · {locked > 0 ? `safety net raised to ₹${formatNumberIN(t.stop)} — at least ${formatINR(locked * qty, 0)} profit kept` : 'safety net moved to the buy price — can no longer lose'}</span>}
       </div>
+      <button class="btn small" type="button" data-testid="bot-copy" style={{ marginTop: '6px' }} onClick={() => setCopy(!copy)}>
+        Copy in Upstox
+      </button>
+      {copy && (
+        <ol class="small how-steps" data-testid="bot-copy-steps">
+          {copySteps({ symbol: t.symbol, side: t.side, qty: t.left ?? t.qty, entry: t.entry, stop: t.stop, target: t.target, swing: t.strategy === 'swing', ...(t.t1 !== undefined ? { t1: t.t1 } : {}) }).map((x) => (
+            <li>{x}</li>
+          ))}
+          <li class="muted">You place it yourself — the app never sends orders. Your price can differ a little from the auto-trader's.</li>
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** When the auto-trader could not run during market hours (app closed / phone asleep). */
+function GapNote({ bot, now, marketOpen }: { bot: BotState | null | undefined; now: number; marketOpen: boolean }) {
+  const g = bot?.lastGap;
+  if (!g || istDate(g.to) !== istDate(now)) return null;
+  const mins = Math.round((g.to - g.from) / 60_000);
+  return (
+    <p class="small bot-gap" data-testid="bot-gap">
+      ⏸ Not running {formatTimeIST(g.from).slice(0, 5)}–{formatTimeIST(g.to).slice(0, 5)} ({mins} min) — the app was closed or the phone was asleep. It checked its safety nets and targets against the 5-minute prices it missed, but could not open trades in that time.
+      {marketOpen && ' To keep it running: keep the app open or in the background, and set Settings → Apps → TradeBuddy → Battery → Unrestricted.'}
+    </p>
+  );
+}
+
+/** App v1.13: the money it trades with — type it, or take what is in your Upstox account. */
+function AmountCard({ bot, total, free }: { bot: BotState | null | undefined; total: number; free: number }) {
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState<null | 'funds' | 'set'>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const typed = Math.round(Number(amount.replace(/[^0-9.]/g, '')) || 0);
+  const lowest = Math.max(10_000, Math.ceil(total - free));
+  const fromUpstox = async () => {
+    setBusy('funds');
+    setMsg(null);
+    try {
+      const f = await callBackground('funds:get');
+      setAmount(String(Math.floor(f.cash)));
+      setMsg({ ok: true, text: `Your Upstox account has ${formatINR(f.cash, 0)} available to trade (read only). Tap "Set amount" to use it.` });
+    } catch (e) {
+      setMsg({ ok: false, text: errorMessage(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const set = async () => {
+    setBusy('set');
+    setMsg(null);
+    try {
+      const r = await callBackground('bot:amount', { amount: typed });
+      setMsg({ ok: true, text: `Done — it now trades with ${formatINR(r.total, 0)} (${formatINR(r.free, 0)} free). Open trades and what it learned are kept.` });
+      setAmount('');
+    } catch (e) {
+      setMsg({ ok: false, text: errorMessage(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <section class="card" data-testid="bot-amount-card">
+      <h2>Amount to auto-trade</h2>
+      <p class="tiny muted" style={{ margin: '0 0 8px' }}>
+        Set it to what you have in Upstox and every auto-trade is sized for your real money — you can copy it share for share. Now: <b>{formatINR(total, 0)}</b> · holds at most <b>{maxOpenFor(total)}</b> stock{maxOpenFor(total) === 1 ? '' : 's'} at once
+        {bot ? '' : ' (₹50 lakh until you set it)'}.
+      </p>
+      <div class="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
+        <input type="text" inputMode="numeric" placeholder="e.g. 100000" value={amount} data-field="bot-set-amount" style={{ flex: '1 1 140px' }} onInput={(e) => setAmount((e.currentTarget as HTMLInputElement).value)} />
+        <button class="btn small primary" type="button" data-testid="bot-set-amount" disabled={busy !== null || typed < 10_000} onClick={() => void set()}>
+          {busy === 'set' ? 'Setting…' : 'Set amount'}
+        </button>
+        <button class="btn small" type="button" data-testid="bot-upstox-funds" disabled={busy !== null} onClick={() => void fromUpstox()}>
+          {busy === 'funds' ? 'Asking Upstox…' : 'Use my Upstox balance'}
+        </button>
+      </div>
+      {typed > 0 && typed < lowest && <p class="tiny err-text">{typed < 10_000 ? 'At least ₹10,000.' : `${formatINR(total - free, 0)} is in open trades — the lowest it can go now is ${formatINR(lowest, 0)}.`}</p>}
+      {typed >= 10_000 && <p class="tiny muted">With {formatINR(typed, 0)}: at most {maxOpenFor(typed)} stock{maxOpenFor(typed) === 1 ? '' : 's'} at once.</p>}
+      {msg && <p class={`small ${msg.ok ? 'ok-text' : 'err-text'}`} data-testid="bot-amount-msg">{msg.text}</p>}
+    </section>
+  );
+}
+
+const pctLabel = (x: number) => `${x}%`;
+
+/** App v1.13: keep the day's profit, the daily loss limit, the few-days share and the quick exit — with the past test. */
+function ProtectCard({ bot, todayPnl, total }: { bot: BotState | null | undefined; todayPnl: number; total: number }) {
+  const rules = protectRules(bot?.rules);
+  const test = useLocal('botProtectTest');
+  const [busy, setBusy] = useState(false);
+  const now = Date.now();
+  const today = istDate(now);
+  const guard = bot?.guard?.date === today ? bot.guard : undefined;
+  const money = total - todayPnl;
+  const keep = keepLevel(guard, money, rules);
+  const set = (patch: Partial<ProtectRules>) => void callBackground('bot:rules', { rules: patch }).catch((e: unknown) => toast(errorMessage(e), 'err'));
+  const rerun = () => {
+    setBusy(true);
+    void callBackground('bot:test')
+      .then((r) => toast(r.ok ? `Past test done: ${r.days} days` : 'Not enough 5-minute history yet', r.ok ? 'ok' : 'err'))
+      .catch((e: unknown) => toast(errorMessage(e), 'err'))
+      .finally(() => setBusy(false));
+  };
+  const chips = <K extends keyof typeof PROTECT_CHOICES>(k: K, label: (v: number) => string) => (
+    <span class="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
+      {PROTECT_CHOICES[k].map((v) => (
+        <button type="button" class={`filter-chip ${rules[k] === v ? 'on' : ''}`} data-protect={`${k}-${v}`} disabled={!rules.on} onClick={() => set({ [k]: v } as Partial<ProtectRules>)}>
+          {label(v)}
+        </button>
+      ))}
+    </span>
+  );
+  return (
+    <section class="card" data-testid="bot-protect">
+      <label class="row switch-row">
+        <span class="grow">
+          <b>Protect my money</b>
+          <span class="tiny muted" style={{ display: 'block' }}>
+            Keeps the day's profit, cuts losing trades early and stops on a bad day. Off = as before (no day limits).
+          </span>
+        </span>
+        <input type="checkbox" role="switch" class="switch" data-testid="bot-protect-switch" checked={rules.on} onChange={(e) => set({ on: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      {rules.on && (
+        <>
+          <p class="small" data-testid="bot-protect-today" style={{ margin: '6px 0' }}>
+            {guard?.halted === 'lock'
+              ? `✅ Stopped for today at ${formatTimeIST(guard.haltedAt ?? now).slice(0, 5)}: kept the profit (${signed(guard.pnlAtHalt ?? 0)}; best ${signed(guard.best)}).`
+              : guard?.halted === 'loss'
+                ? `⛔ Stopped for today at ${formatTimeIST(guard.haltedAt ?? now).slice(0, 5)}: daily loss limit (${signed(guard.pnlAtHalt ?? 0)}).`
+                : keep !== null
+                  ? `Today's best ${signed(guard!.best)} — it sells what it bought today if the day falls to ${signed(keep)}.`
+                  : `Keeps the profit once the day is up ${formatINR((rules.lockStartPct / 100) * money, 0)}; stops at a loss of ${formatINR((rules.dayLossPct / 100) * money, 0)}.`}
+          </p>
+          <div class="protect-grid small">
+            <span class="muted">Keep the profit from</span>
+            {chips('lockStartPct', (v) => `+${v}%`)}
+            <span class="muted">Daily loss limit</span>
+            {chips('dayLossPct', (v) => `−${v}%`)}
+            <span class="muted">Few-days picks at most</span>
+            {chips('swingSharePct', pctLabel)}
+            <span class="muted">Close a trade going nowhere after</span>
+            {chips('quickExitMin', (v) => (v ? `${v} min` : 'never'))}
+          </div>
+        </>
+      )}
+      <ProtectTestLine test={test} busy={busy} rerun={rerun} />
+    </section>
+  );
+}
+
+function ProtectTestLine({ test, busy, rerun }: { test: ReturnType<typeof useLocal<'botProtectTest'>>; busy: boolean; rerun: () => void }) {
+  return (
+    <div class="small" data-testid="bot-protect-test" style={{ marginTop: '8px' }}>
+      {!test ? (
+        <p class="tiny muted" style={{ margin: 0 }}>
+          Past test: runs once the 5-minute history (Nifty 100 + your stocks) has downloaded.
+        </p>
+      ) : (
+        <div class={`verdict ${test.protected.pnl >= test.old.pnl ? 'pass' : 'fail'}`}>
+          <b>Past test on {test.days} market days</b> ({formatINR(test.money, 0)}, the same {test.trades} same-day trades both ways, after charges):
+          <br />
+          Old way <span class={tone(test.old.pnl)}>{signed(test.old.pnl)}</span> · protected <span class={tone(test.protected.pnl)}>{signed(test.protected.pnl)}</span>
+          <br />
+          Worst day {signed(test.old.worstDay)} → {signed(test.protected.worstDay)} · days that gave back a good start: {test.old.gaveBackDays} → {test.protected.gaveBackDays} · profit kept early on {test.keptDays} day{test.keptDays === 1 ? '' : 's'}, loss limit on {test.limitDays}.
+          {test.protected.pnl < test.old.pnl && ' On these days the protection earned less than the old way — it trades safety for profit. Use practice only, or change the levels.'}
+        </div>
+      )}
+      <button class="btn small" type="button" style={{ marginTop: '6px' }} disabled={busy} data-testid="bot-protect-rerun" onClick={rerun}>
+        {busy ? 'Testing…' : 'Run the past test again'}
+      </button>
     </div>
   );
 }

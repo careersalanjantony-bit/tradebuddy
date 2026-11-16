@@ -84,6 +84,12 @@ export interface ApiMap {
   'shorts:model': { req: undefined; res: { trained: boolean } };
   'bot:enable': { req: { enabled: boolean }; res: { ok: boolean } };
   'bot:reset': { req: { forget: boolean; startCash?: number }; res: { ok: boolean } };
+  /** app v1.13: the money it trades with (keeps open trades and learning) */
+  'bot:amount': { req: { amount: number }; res: { total: number; free: number } };
+  /** app v1.13: the money protection */
+  'bot:rules': { req: { rules: Partial<import('../bot/protect').ProtectRules> }; res: import('../bot/protect').ProtectRules };
+  /** app v1.13: run the protection's past test now */
+  'bot:test': { req: undefined; res: { ok: boolean; days: number } };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>>; product?: import('../wallet/wallet').Product }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };

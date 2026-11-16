@@ -38,6 +38,34 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.13
+
+- **Amount to auto-trade.** A box at the top of the Auto-trader: type an amount, or tap **Use my
+  Upstox balance** (reads "cash available to trade", read only, needs today's login). It changes the
+  money without starting again — more is added to its cash, less is taken from its free cash; open
+  trades and what it learned stay. Every trade is then sized for that money, so you can copy it share
+  for share. It holds at most one stock per ₹25,000 (up to 10 at once), each at most a fair share.
+- **Protect my money** (on by default; off = as before):
+  - **keep the day's profit** — once the day is up +0.4% of the money, it may give back at most half
+    of its best result; then it sells everything bought today and stops until tomorrow;
+  - **daily loss limit** — at −1% it does the same;
+  - **each trade** — the safety net moves to the buy price at 0.75× the risk in profit and then follows
+    the best price; half is sold at 1× the risk; a same-day trade that is not working (or going
+    nowhere) after 45 minutes is closed early;
+  - **new trades** — "hold a few days" picks only up to 30% of the money; no buy on a stock with bad
+    news today; nothing against a market clearly going the other way;
+  - same-day buys are booked as Upstox **Intraday** (lower charges), paid in full (no borrowing).
+  The levels can be changed on the card (+0.2/0.4/0.75/1%, −0.5/1/1.5/2%, 0/30/50/100%, 30/45/60 min).
+- **Past test of the protection** on the stored 5-minute history (Nifty 100 + your stocks, up to 120
+  days): the same same-day trades handled the old way and the protected way, after charges — total,
+  worst day, days that gave back a good start. Shown honestly even when the protection earns less.
+- **Copy in Upstox** on every open auto-trade (product, quantity, limit price, stop-loss trigger,
+  target) and an **alert** each time it buys, sells half, sells or stops for the day (new switch in
+  Settings → Alerts). The app still never places orders.
+- **Not running** notice: when the app was closed or the phone asleep during market hours, the card
+  says from when to when, that safety nets were checked against the missed 5-minute prices but no
+  trades were opened, and how to keep it running (battery: Unrestricted).
+
 ## New in 1.12
 
 - **Everything studies all five indices at once — there is no index to pick any more.** Nifty 50,
