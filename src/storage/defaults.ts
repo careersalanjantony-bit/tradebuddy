@@ -92,6 +92,7 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     nseFiles: null,
     catalysts: null,
     earlyTest: null,
+    preopenRecord: null,
     breakoutAlerted: null,
     scanLists: null,
     ideaAlerts: null,

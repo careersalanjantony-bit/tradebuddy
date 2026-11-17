@@ -1,6 +1,6 @@
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
-import { decodeFeedResponse, subscribeMessage, type FeedTick } from '../data/feedProto';
+import { decodeFeedResponse, subscribeMessage, type FeedTick, type PreOpenStatus } from '../data/feedProto';
 import { INDEX_KEYS } from '../data/indices';
 import { getQuotes } from '../data/quotes';
 import { priceKeys } from './scanList';
@@ -41,6 +41,13 @@ let lastError: string | undefined;
 let badMessages = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let onFlush: ((now: number) => Promise<void>) | null = null;
+/** app v1.16: Upstox's pre-open session status per segment, from the feed's market-info messages */
+const preOpen = new Map<string, PreOpenStatus>();
+
+/** The latest pre-open session status Upstox sent for a segment (e.g. NSE_EQ), if any. */
+export function feedPreOpen(segment: string): PreOpenStatus | null {
+  return preOpen.get(segment) ?? null;
+}
 
 /** Called after new prices were stored (dataJobs registers the alert / signal checks here). */
 export function setFeedListener(fn: (now: number) => Promise<void>): void {
@@ -166,6 +173,7 @@ function open(uri: string, keys: string[]): void {
     if (!(e.data instanceof ArrayBuffer)) return;
     try {
       const d = decodeFeedResponse(new Uint8Array(e.data));
+      for (const [seg, st] of Object.entries(d.preOpen ?? {})) preOpen.set(seg, st);
       if (!d.ticks.length) return;
       for (const t of d.ticks) pending.set(t.key, t);
       lastTickAt = Date.now();

@@ -38,6 +38,34 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.16
+
+- **🌱 Early Movers is now the first card on Home** — the main trading tool, one clean list that
+  follows the clock. Each stock is one line (symbol, stage, the plan in a few words, price, %, score);
+  tap it for the numbers. Past test, record and data limits sit behind one "More". Day trade keeps a
+  link to it (no second copy).
+- **Pre-open rising candidates (9:00–9:15)** — no more waiting until 9:20. From 9:00 every stock of
+  the five indices is read every ~15 seconds from Upstox Full Market Quotes V3 (500 per request; the
+  live feed adds the same numbers in between): the indicative opening price (IEP), the quantity that
+  would match there, the unmatched quantity, the reference price and the waiting buy / sell quantity.
+  Ranked with the owner's fixed points (set in advance, **not** a chance of rising):
+  IEP gap above yesterday 25 (1% at least to be listed) · buyers vs sellers waiting 20 · matched
+  quantity (size vs a usual day, and growing) 15 · good news since yesterday's close 15 (bad news:
+  never listed) · yesterday's volume vs usual 10 · its sector's pre-open gap 10 · IEP steady near the
+  end 5. Schedule: first ranking 9:05, re-checked when order entry closes (9:07–9:08), recalculated
+  while the opening price is worked out, **final top 10 fixed at 9:13** with one alert. Missing data
+  counts 0 and says "not available".
+- **Opening drive (from 9:15)** — the final picks, and any stock that opens 1%+ up, are followed on
+  every live price from 30 seconds after the open: holding above its opening price and the day's
+  average price, gap kept, volume at least 1.5× the usual pace, buyers ahead → a plan at once (buy only
+  above the high since the open, stop under VWAP / the low, 0.3–1.2%, targets 1R and 2R), sized for
+  ₹10,000 / ₹50 risk including every charge, with an alert. A stock that falls back below its open is
+  removed for the day. Setups and breakouts follow from 9:20 as before.
+- **Honest testing:** Upstox keeps no past pre-open data, so the ranking cannot be back-tested — the
+  app now writes each day's final 10 and how they did in the first 30 minutes (did +1% come before
+  −1%? where at 9:45?) to a record shown on the card. The opening-drive rule is tested on the stored
+  5-minute days against "just buy any gap-up at 9:20", older and newer half separately; nothing tuned.
+
 ## New in 1.15
 
 - **🌱 Early Movers — Before the Rally** (first card on Day trade): stocks getting ready to rise

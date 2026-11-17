@@ -16,8 +16,9 @@ import { trainRiseAsync } from '../rising/trainRun';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { claimAlert } from './ideaGate';
-import { catalystFor, type NseFiles } from './earlyJobs';
+import { catalystFor, catalystLookup, type NseFiles } from './earlyJobs';
 import { lookAt, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage } from '../early/early';
+import { DRIVE, drivePlan, readDrive, scoreDrive, type DriveState } from '../early/preopen';
 import type { Catalyst } from '../early/catalyst';
 import { prevDays } from './mlJobs';
 import { scanUniverse } from './scanList';
@@ -91,6 +92,8 @@ interface Track {
   sincePrice: number | null;
   /** app v1.15: its stage in Early Movers today */
   early: EarlyState | null;
+  /** app v1.16: the opening drive (9:15–9:35) */
+  drive?: { state: DriveState; since: number | null; outWhy?: string; alerted?: boolean };
   /** when the earlier days (usual volume) were last looked for, while none were stored */
   prevAt?: number;
 }
@@ -125,6 +128,37 @@ export interface EarlyRow {
   delivery: { pct: number; date: string } | null;
   rise: RiseTag | null;
   buyShare: number | null;
+}
+
+/** App v1.16 — a stock holding its opening gap (9:15–9:35), or a final pre-open pick still waiting. */
+export interface DriveRow {
+  key: string;
+  symbol: string;
+  name: string;
+  index?: string;
+  industry?: string;
+  state: 'holding' | 'waiting';
+  /** when it first held its gap (null while waiting) */
+  since: number | null;
+  price: number;
+  open: number;
+  prevClose: number;
+  gapPct: number;
+  changePct: number;
+  fromOpenPct: number;
+  pace: number | null;
+  vwap: number | null;
+  buyShare: number | null;
+  plan: EarlyPlan;
+  size: Size;
+  score: number;
+  reasons: string[];
+  warnings: string[];
+  missing: string[];
+  catalyst: Catalyst | null;
+  /** its place and points on the final pre-open list (null = not on it) */
+  preRank: number | null;
+  preScore: number | null;
 }
 
 const empty = (): Bars => ({ t: [], o: [], h: [], l: [], c: [], v: [] });
@@ -317,6 +351,14 @@ export async function scanRising(now = Date.now()): Promise<number> {
     let expired = 0;
     let tooRisky = 0;
     let badNews = 0;
+    // app v1.16: the final pre-open list (or the latest ranking when the final was not made) for the opening drive
+    const pre = await getSession('preopen');
+    const preList = pre && pre.date === date ? (pre.final?.rows ?? pre.rows) : [];
+    const preopen = new Map(preList.map((r) => [r.key, { rank: r.rank, score: r.score }]));
+    const catOf = t < DRIVE.untilT ? await catalystLookup(now) : () => null;
+    const driveRows: DriveRow[] = [];
+    const driveEvents: DriveRow[] = [];
+    let driveOut = 0;
     const rows: RiseRow[] = [];
     const reads = new Map<string, RiseRead>();
     let loaded = 0;
@@ -326,7 +368,6 @@ export async function scanRising(now = Date.now()): Promise<number> {
       if (tr.load === 'yes') loaded++;
       if (!fresh(q)) continue;
       follow(tr, q, now);
-      if (tr.load !== 'yes') continue;
       // the 5-minute history may arrive after the open: look for the earlier days again every minute
       if (!tr.prev?.length && now - (tr.prevAt ?? 0) > 60_000) {
         tr.prevAt = now;
@@ -336,6 +377,15 @@ export async function scanRising(now = Date.now()): Promise<number> {
           })
           .catch(() => undefined);
       }
+      // app v1.16: the opening drive — from 9:15, no waiting for the first 5-minute candle
+      if (scan.tag[k] && t < DRIVE.untilT) {
+        const dr = await driveStep(k, tr, q, now, preopen.get(k) ?? null, { sectorPct: sectorPct(scan.industry[k]), market, capital, maxRisk, index: scan.tag[k], industry: scan.industry[k], openAt: m.session.openAt ?? now, catOf });
+        if (dr.out) driveOut++;
+        if (dr.tooRisky) tooRisky++;
+        if (dr.row) driveRows.push(dr.row);
+        if (dr.row && dr.event) driveEvents.push(dr.row);
+      }
+      if (tr.load !== 'yes') continue;
       const { read, x } = readNow(tr, q, now, market, mdl);
       reads.set(k, read);
       // app v1.15: Early Movers — the same candles, read for a setup / live breakout / confirmed breakout
@@ -383,8 +433,10 @@ export async function scanRising(now = Date.now()): Promise<number> {
     await setSession('rise', { at: now, date, scanned: scan.keys.length, loaded, modelAt: mdl?.report.at ?? null, rows: top, held: heldRows });
     const stageRank: Record<Stage, number> = { confirmed: 3, breakout: 2, setup: 1 };
     earlyRows.sort((a, b) => stageRank[b.stage] - stageRank[a.stage] || b.score - a.score);
-    await setSession('early', { at: now, date, rows: earlyRows.slice(0, 30), expired, tooRisky, badNews, capital, maxRisk });
+    driveRows.sort((a, b) => (b.state === 'holding' ? 1 : 0) - (a.state === 'holding' ? 1 : 0) || b.score - a.score);
+    await setSession('early', { at: now, date, rows: earlyRows.slice(0, 30), drive: driveRows.slice(0, 15), driveOut, expired, tooRisky, badNews, capital, maxRisk });
     await alertEarly(earlyEvents, now, settings.notifications.early !== false).catch((err: unknown) => log.warn('Early Movers alert failed', { error: errorMessage(err) }));
+    await alertDrive(driveEvents, now, settings.notifications.early !== false).catch((err: unknown) => log.warn('Opening-drive alert failed', { error: errorMessage(err) }));
     await alertRising(top, heldRows, now, t, settings.notifications.rising).catch((err: unknown) => log.warn('Rising alert failed', { error: errorMessage(err) }));
     return top.length;
   } finally {
@@ -531,6 +583,120 @@ async function earlyStep(
   };
   const event = step.event === 'setup' || step.event === 'breakout' || step.event === 'confirmed' ? step.event : null;
   return { row, event, expired: false, tooRisky: false, badNews: false };
+}
+
+interface DriveCtx {
+  sectorPct: number | null;
+  market: number | null;
+  capital: number;
+  maxRisk: number;
+  index?: string;
+  industry?: string;
+  openAt: number;
+  catOf: (key: string) => Catalyst | null;
+}
+
+/** Usual volume by this moment of the day from the earlier days (the first candle at least half counted: mornings start heavy). */
+function usualBy(prev: PrevDay[] | null, now: number): number | null {
+  if (!prev?.length) return null;
+  const usual = usualFrom(prev);
+  const tm = minutesIST(now) + (((now + 5.5 * 3600_000) % 60_000) / 60_000);
+  const slot = Math.floor(tm / 5) * 5;
+  const frac = Math.max(0, Math.min(1, (tm - slot) / 5));
+  const bar = usual(slot).bar;
+  if (bar === null) return null;
+  if (slot <= 9 * 60 + 15) return bar * Math.max(0.5, frac);
+  const before = usual(slot - 5).cum;
+  return before === null ? null : before + bar * frac;
+}
+
+/**
+ * One stock's opening drive (9:15–9:35): it joins when it is on the final pre-open list or opened 1 %+
+ * up; listed while it holds its gap (or, for a final pre-open pick, while it waits); out for the day
+ * once it falls below its open or runs too far.
+ */
+async function driveStep(
+  k: string,
+  tr: Track,
+  q: Quote,
+  now: number,
+  pre: { rank: number; score: number } | null,
+  ctx: DriveCtx,
+): Promise<{ row: DriveRow | null; event: boolean; out: boolean; tooRisky: boolean }> {
+  const none = { row: null, event: false, out: false, tooRisky: false };
+  if (!q.open || !q.prevClose || !(q.open > 0) || q.high === null || q.low === null) return none;
+  const gap = (q.open / q.prevClose - 1) * 100;
+  if (!pre && gap < DRIVE.minOpenGapPct && !tr.drive) return none;
+  if (tr.drive && (tr.drive.state === 'faded' || tr.drive.state === 'ran')) return { ...none, out: true };
+  const catalyst = ctx.catOf(k);
+  if (catalyst?.tone === 'bad') return none;
+  const buyShare = q.buyQty && q.sellQty && q.buyQty + q.sellQty > 0 ? q.buyQty / (q.buyQty + q.sellQty) : null;
+  const vwap = q.vwap && q.vwap > 0 ? q.vwap : null;
+  const d = readDrive({ price: q.ltp, open: q.open, prevClose: q.prevClose, high: Math.max(q.high, q.ltp), low: Math.min(q.low, q.ltp), vwap, volume: q.volume, usualVol: usualBy(tr.prev, now), buyShare, secsSinceOpen: (now - ctx.openAt) / 1000 });
+  const was = tr.drive?.state;
+  tr.drive = { ...(tr.drive ?? { since: null }), state: d.state, ...(d.outWhy ? { outWhy: d.outWhy } : {}) };
+  if (d.state === 'faded' || d.state === 'ran') return { ...none, out: true };
+  if (d.state === 'waiting' && !pre) return none;
+  const inst = await getInstrument(k);
+  const tick = inst?.tick ?? 0.05;
+  const plan = drivePlan({ price: q.ltp, open: q.open, high: Math.max(q.high, q.ltp), low: Math.min(q.low, q.ltp), vwap }, tick);
+  const size = sizeTrade(plan, ctx.capital, ctx.maxRisk, tick);
+  if (!size.ok && d.state === 'holding') return { ...none, tooRisky: true };
+  if (d.state === 'holding' && tr.drive.since === null) tr.drive.since = now;
+  const sc = scoreDrive(d, pre?.score ?? null, { goodNews: catalyst?.tone === 'good', sectorPct: ctx.sectorPct, marketPct: ctx.market, buyShare });
+  const symbol = inst?.trading_symbol ?? k;
+  const row: DriveRow = {
+    key: k,
+    symbol,
+    name: inst?.name ?? symbol,
+    ...(ctx.index ? { index: ctx.index } : {}),
+    ...(ctx.industry ? { industry: ctx.industry } : {}),
+    state: d.state === 'holding' ? 'holding' : 'waiting',
+    since: tr.drive.since,
+    price: q.ltp,
+    open: q.open,
+    prevClose: q.prevClose,
+    gapPct: d.gapPct,
+    changePct: d.changePct,
+    fromOpenPct: d.fromOpenPct,
+    pace: d.pace,
+    vwap,
+    buyShare,
+    plan,
+    size,
+    score: sc.score,
+    reasons: [...d.why.filter((w) => !/trading has started/.test(w)).slice(0, 3), ...sc.reasons].filter((x, j, all) => all.indexOf(x) === j).slice(0, 6),
+    warnings: sc.warnings,
+    missing: d.missing,
+    catalyst,
+    preRank: pre?.rank ?? null,
+    preScore: pre?.score ?? null,
+  };
+  const event = d.state === 'holding' && was !== 'holding' && !tr.drive.alerted && sc.score >= 60;
+  if (event) tr.drive.alerted = true;
+  return { row, event, out: false, tooRisky: false };
+}
+
+/** One alert per stock when it starts holding its opening gap with a score of 60+ (shared one-alert-per-stock gate). */
+async function alertDrive(rows: DriveRow[], now: number, on: boolean): Promise<void> {
+  if (!on || !rows.length) return;
+  const date = istDate(now);
+  const prev = await getSession('earlyAlerted');
+  const sent = prev?.date === date ? [...prev.sent] : [];
+  let changed = false;
+  for (const r of rows) {
+    const id = `${r.key}|drive`;
+    if (sent.includes(id) || !(await claimAlert(r.key, 'buy', 'early', now))) continue;
+    sent.push(id);
+    changed = true;
+    const p = r.plan;
+    await notify(`alert:early-${r.key}-drive-${date}`, {
+      title: `⚡ ${r.symbol}: holding its opening gap · score ${r.score}`,
+      message: `₹${r.price.toFixed(2)} (opened ${r.gapPct >= 0 ? '+' : '−'}${Math.abs(r.gapPct).toFixed(1)}%${r.preRank ? `, #${r.preRank} in the pre-open` : ''}). Buy only above ₹${p.breakout.toFixed(2)} · stop-loss ₹${p.stop.toFixed(2)} · targets ₹${p.t1.toFixed(2)} / ₹${p.t2.toFixed(2)} · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. Not a guarantee — you place the order yourself.`,
+      priority: 2,
+    });
+  }
+  if (changed) await setSession('earlyAlerted', { date, sent });
 }
 
 const STAGE_WORDS: Record<Stage, string> = { setup: 'setup forming', breakout: 'breaking out (live, not confirmed)', confirmed: 'breakout confirmed' };

@@ -1,0 +1,4 @@
+Early Movers is now the first card on Home: one clean list, one line per stock, tap for details.
+New: Pre-open top 10 (9:00-9:15) from Upstox's pre-open price, matched quantity and buy/sell orders - ranked from 9:05, final list at 9:13 with an alert.
+New: Opening drive from 9:15 - the picks that hold their opening gap with heavy volume get a plan at once (no waiting for 9:20), sized for Rs 10,000 / Rs 50 risk including charges.
+Each morning's final list and its first 30 minutes are recorded - the honest test of the ranking. Points, not a chance; you place every order.

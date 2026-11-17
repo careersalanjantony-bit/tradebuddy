@@ -317,7 +317,9 @@ export interface LocalStore {
   /** app v1.15: Early Movers — NSE end-of-day files, one catalyst per stock, the past test */
   nseFiles: import('../background/earlyJobs').NseFiles | null;
   catalysts: import('../background/earlyJobs').CatalystStore | null;
-  earlyTest: (import('../early/earlyTest').EarlyTestResult & { at: number }) | null;
+  earlyTest: (import('../early/earlyTest').EarlyTestResult & { at: number; open?: import('../early/preopen').OpenTestResult | null }) | null;
+  /** app v1.16: each day's final pre-open top 10 and how they did in the first 30 minutes (last 60 days) */
+  preopenRecord: import('../background/preopenJobs').PreopenDay[] | null;
   /** app v1.14: the learned Rising-now model and its test on unseen days */
   riseModel: import('../rising/momentum').RiseModel | null;
   /** app v1.13: the auto-trader's money protection on past days (old way vs protected) */

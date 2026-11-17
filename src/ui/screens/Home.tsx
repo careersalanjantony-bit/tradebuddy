@@ -18,10 +18,12 @@ import { BreadthCard } from '../components/Shorts';
 import { AutoTraderMini } from '../components/AutoTrader';
 import { UpdateBanner } from '../components/Update';
 import { greetingLine, motto } from '../greeting';
+import { MoversCard } from '../components/MoversHome';
 
 /**
  * Home (app v1.1): one glance — your practice money, the single best idea right now, what is rising,
- * the news. Everything else (tests, tables, learning) stays one tap away.
+ * the news. Everything else (tests, tables, learning) stays one tap away. App v1.16: Early Movers (the
+ * pre-open top 10, the opening drive, setups and breakouts) is the first card — the main trading tool.
  */
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
@@ -246,10 +248,11 @@ export function HomeScreen({ go }: { go: Go }) {
       </header>
       <SetupNudge go={go} />
       <UpdateBanner />
+      <MoversCard go={go} />
+      <RisingCarousel />
+      <BestIdea go={go} />
       <WalletHero go={go} />
       <AutoTraderMini go={go} />
-      <BestIdea go={go} />
-      <RisingCarousel />
       <BreadthCard />
       <div class="quick-grid">
         <button type="button" class="quick" onClick={() => go('daytrade')}>

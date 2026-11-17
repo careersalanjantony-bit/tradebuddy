@@ -186,6 +186,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (settings?.dayTrade && settings.dayTrade.earlyCapitalInr === undefined) await kv.set({ settings: { ...settings, dayTrade: { ...settings.dayTrade, earlyCapitalInr: 10_000, earlyRiskInr: 50 } } });
     },
   },
+  {
+    to: 19,
+    description: 'app v1.16: pre-open rising candidates — the daily record',
+    async up(kv) {
+      const { preopenRecord } = await kv.get(['preopenRecord']);
+      if (preopenRecord === undefined) await kv.set({ preopenRecord: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

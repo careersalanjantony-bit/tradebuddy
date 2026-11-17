@@ -81,6 +81,8 @@ export interface ApiMap {
   /** app v1.15: Early Movers — refresh catalysts and NSE files now / run the past test now */
   'early:refresh': { req: undefined; res: { catalysts: number; nse: boolean } };
   'early:test': { req: undefined; res: { ok: boolean; days: number } };
+  /** app v1.16: read the pre-open now (9:00–9:15) */
+  'preopen:refresh': { req: undefined; res: { listed: number } };
   'rise:train': { req: undefined; res: { ok: boolean; days: number } };
   'breakouts:test': { req: undefined; res: { done: boolean } };
   'update:check': { req: undefined; res: import('../update/update').UpdateState };

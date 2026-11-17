@@ -21,7 +21,7 @@ import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
 import { BreadthCard, FallingNowCard } from '../components/Shorts';
 import { AlsoIn, IndexTag, ScanCoverage, useScanUniverse } from '../components/ScanList';
-import { EarlyMoversCard } from '../components/EarlyMovers';
+
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -132,7 +132,13 @@ export function DayTradeScreen({ go }: { go: Go }) {
         <>
           <DayPlan now={now} />
           <MoodLine />
-          <EarlyMoversCard />
+          <button type="button" class="nudge" data-testid="early-moved" onClick={() => go('today')}>
+            <span aria-hidden="true">🌱</span>
+            <span>
+              <b>Early Movers is on Home now</b>
+              <span class="small muted">Pre-open top 10 from 9:00, the opening drive from 9:15, setups and breakouts all day.</span>
+            </span>
+          </button>
           <RisingNowCard />
           <BreadthCard />
           <SignalsCard amount={amount} slots={slots} />

@@ -22,6 +22,23 @@ export interface Quote {
   sellQty?: number | null;
   /** the latest 1-minute candle (full mode) */
   m1?: { open: number; high: number; low: number; close: number; vol: number; ts: number } | null;
+  /** app v1.16 — the pre-open call auction (9:00–9:15), from the live feed or Full Market Quotes V3 */
+  pre?: PreOpenQuote | null;
+}
+
+export interface PreOpenQuote {
+  /** indicative equilibrium price: where the opening auction would match now */
+  iep: number;
+  /** the quantity that would match at that price (null = not given) */
+  ieq: number | null;
+  /** unmatched quantity at that price, in total and from market orders (as Upstox gives it) */
+  imb: number | null;
+  imbM: number | null;
+  /** reference price of the auction's price band */
+  rp: number | null;
+  /** when read (ms) and from where */
+  at: number;
+  src: 'feed' | 'quote';
 }
 
 type Obj = Record<string, unknown>;
@@ -97,7 +114,7 @@ export function mergeLtp(prev: Record<string, Quote>, ltpData: unknown, fetchedA
  */
 export function mergeTicks(
   prev: Record<string, Quote>,
-  ticks: Array<{ key: string; ltp: number; cp: number; ltt?: number; ltq?: number; atp?: number; vtt?: number; tbq?: number; tsq?: number; day?: { open: number; high: number; low: number }; m1?: Quote['m1'] }>,
+  ticks: Array<{ key: string; ltp: number; cp: number; ltt?: number; ltq?: number; atp?: number; vtt?: number; tbq?: number; tsq?: number; day?: { open: number; high: number; low: number }; m1?: Quote['m1']; iep?: number; ieq?: number; iiq?: number; iiqM?: number; rp?: number }>,
   watched: ReadonlySet<string>,
   fetchedAt: number,
 ): { quotes: Record<string, Quote> & Record<string, Quote>; updated: number } {
@@ -123,11 +140,71 @@ export function mergeTicks(
       ...(t.tbq !== undefined ? { buyQty: t.tbq } : old?.buyQty !== undefined ? { buyQty: old.buyQty } : {}),
       ...(t.tsq !== undefined ? { sellQty: t.tsq } : old?.sellQty !== undefined ? { sellQty: old.sellQty } : {}),
       ...(t.m1 ? { m1: t.m1 } : old?.m1 ? { m1: old.m1 } : {}),
+      // app v1.16: the pre-open auction (kept from the last reading when a tick does not carry it)
+      ...(t.iep !== undefined && t.iep > 0 && (ref === null || Math.abs(t.iep / ref - 1) <= 0.25)
+        ? { pre: { iep: t.iep, ieq: t.ieq ?? null, imb: t.iiq ?? null, imbM: t.iiqM ?? null, rp: t.rp ?? null, at: fetchedAt, src: 'feed' as const } }
+        : old?.pre
+          ? { pre: old.pre }
+          : {}),
     };
     updated++;
   }
   return { quotes, updated };
 }
+
+/**
+ * App v1.16 — Full Market Quotes V3 (GET /v3/market-quote/quotes, up to 500 keys; fields checked on
+ * 17 Nov 2026 in Upstox's own SDKs: indicative_equilibrium_price, indicative_equilibrium_quantity,
+ * indicative_imbalance_quantity_total / _market, reference_price, prev_close_price, total_buy_quantity,
+ * total_sell_quantity, average_price, volume, last_price, instrument_token). Merged into the stored
+ * quotes: the pre-open auction, the waiting buy / sell quantities and the previous close. The last price
+ * is taken only for a stock with none yet (the normal price poll and the live feed own it). Pure.
+ */
+export function mergeFullQuotes(prev: Record<string, Quote>, data: unknown, fetchedAt: number): { quotes: Record<string, Quote>; updated: number; withIep: number } {
+  const quotes = { ...prev };
+  let updated = 0;
+  let withIep = 0;
+  for (const item of Object.values((data ?? {}) as Obj)) {
+    const it = item as Obj;
+    const key = it?.instrument_token;
+    if (typeof key !== 'string') continue;
+    const ltp = num(it.last_price);
+    const old = quotes[key];
+    if (!old && !(ltp !== null && ltp > 0)) continue;
+    const prevClose = num(it.prev_close_price);
+    const ref = old?.ltp ?? prevClose ?? ltp;
+    const iep = num(it.indicative_equilibrium_price);
+    const pre: PreOpenQuote | null =
+      iep !== null && iep > 0 && (!ref || Math.abs(iep / ref - 1) <= 0.25)
+        ? { iep, ieq: nonNeg(it.indicative_equilibrium_quantity), imb: num(it.indicative_imbalance_quantity_total), imbM: num(it.indicative_imbalance_quantity_market), rp: pos(it.reference_price), at: fetchedAt, src: 'quote' }
+        : null;
+    if (pre) withIep++;
+    const buy = nonNeg(it.total_buy_quantity);
+    const sell = nonNeg(it.total_sell_quantity);
+    const vwap = pos(it.average_price);
+    const base: Quote = old ?? { key, ltp: ltp!, open: null, high: null, low: null, volume: num(it.volume), prevClose: null, fetchedAt };
+    quotes[key] = {
+      ...base,
+      prevClose: prevClose !== null && prevClose > 0 ? prevClose : base.prevClose,
+      ...(buy !== null ? { buyQty: buy } : {}),
+      ...(sell !== null ? { sellQty: sell } : {}),
+      ...(vwap !== null && !base.vwap ? { vwap } : {}),
+      ...(pre ? { pre } : {}),
+      ...(old ? {} : { fetchedAt }),
+    };
+    updated++;
+  }
+  return { quotes, updated, withIep };
+}
+
+const nonNeg = (v: unknown): number | null => {
+  const n = num(v);
+  return n !== null && n >= 0 ? n : null;
+};
+const pos = (v: unknown): number | null => {
+  const n = num(v);
+  return n !== null && n > 0 ? n : null;
+};
 
 /** Daily candles from /v3/historical-candle: [ts, o, h, l, c, volume, oi], any order → oldest first, deduped. */
 export function parseCandles(data: unknown): Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }> {

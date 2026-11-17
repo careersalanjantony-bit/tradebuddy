@@ -7,6 +7,7 @@ import { getQuotes } from '../data/quotes';
 import { minutesIST } from '../daytrade/live';
 import { catalystOf, lastCloseBefore, type Catalyst } from '../early/catalyst';
 import { runEarlyTest, type TestDay } from '../early/earlyTest';
+import { runOpenTest } from '../early/preopen';
 import { NSE_BLOCK_URL, NSE_BULK_URL, nseDeliveryUrl, parseDeals, parseDelivery, type Deal, type Delivery } from '../early/nseFiles';
 import { createLogger } from '../lib/log';
 import { errorMessage } from '../lib/serialize';
@@ -154,12 +155,25 @@ export function sweepCatalysts(now = Date.now(), force = false): Promise<Catalys
 
 /** The stock's catalyst: the full sweep, or the fresher headlines the News tab keeps for important stocks. */
 export async function catalystFor(key: string, now: number): Promise<Catalyst | null> {
+  return (await catalystLookup(now))(key);
+}
+
+/** App v1.16: the same for many stocks at once (one read of the stored news). */
+export async function catalystLookup(now: number): Promise<(key: string) => Catalyst | null> {
   const [store, news] = await Promise.all([getLocal('catalysts'), getSession('news')]);
   const since = lastCloseBefore(now);
-  const fresh = catalystOf((news?.items ?? []).filter((i) => i.key === key), since);
-  const swept = store && store.since === since ? (store.byKey[key] ?? null) : null;
-  if (fresh && swept) return fresh.tone === 'bad' || swept.tone !== 'bad' ? (fresh.at >= swept.at ? fresh : swept) : swept;
-  return fresh ?? swept;
+  const byKey = new Map<string, NonNullable<typeof news>['items']>();
+  for (const i of news?.items ?? []) {
+    const list = byKey.get(i.key) ?? [];
+    list.push(i);
+    byKey.set(i.key, list);
+  }
+  return (key) => {
+    const fresh = catalystOf(byKey.get(key) ?? [], since);
+    const swept = store && store.since === since ? (store.byKey[key] ?? null) : null;
+    if (fresh && swept) return fresh.tone === 'bad' || swept.tone !== 'bad' ? (fresh.at >= swept.at ? fresh : swept) : swept;
+    return fresh ?? swept;
+  };
 }
 
 // ---------------------------------------------------------------- pre-market view (and the opening gaps)
@@ -195,6 +209,10 @@ export async function refreshPremarket(now = Date.now()): Promise<number> {
       if (opened && q.open) {
         gapPct = (q.open / q.prevClose - 1) * 100;
         gapKind = 'open';
+      } else if (!opened && t >= 9 * 60 && q.pre && istDate(q.pre.at) === istDate(now)) {
+        // app v1.16: Upstox's indicative pre-open price (IEP)
+        gapPct = (q.pre.iep / q.prevClose - 1) * 100;
+        gapKind = 'pre-open';
       } else if (!opened && t >= 9 * 60 && q.ltp !== q.prevClose) {
         gapPct = (q.ltp / q.prevClose - 1) * 100;
         gapKind = 'pre-open';
@@ -241,7 +259,9 @@ export function testEarly(now = Date.now(), force = false): Promise<unknown> {
       }
     }
     const r = runEarlyTest(days, capital, maxRisk);
-    await setLocal('earlyTest', r ? { ...r, at: now } : null);
+    // app v1.16: the opening-drive rule on the same days (the pre-open auction itself has no stored history)
+    const open = runOpenTest(days, capital, maxRisk);
+    await setLocal('earlyTest', r ? { ...r, at: now, open } : null);
     if (r) log.info(`Early Movers past test: ${r.days} days, live ${r.live.trades} trades ₹${Math.round(r.live.pnl)}, late ${r.late.trades} ₹${Math.round(r.late.pnl)}, baseline ${r.baseline.trades} ₹${Math.round(r.baseline.pnl)}`);
     return r;
   })().finally(() => {

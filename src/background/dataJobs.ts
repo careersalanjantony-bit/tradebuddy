@@ -30,6 +30,7 @@ import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 import { refreshBreadth, scanShorts } from './shortJobs';
 import { scanRising, trainRisingIfDue } from './risingJobs';
+import { preopenTick } from './preopenJobs';
 import { priceKeys } from './scanList';
 import type { Quote } from '../data/quotesParse';
 import { runBot } from './botJobs';
@@ -182,6 +183,8 @@ setFeedListener(async (now) => {
   // Rising now is read on every live price update (at most every 1.5 s), not every 2 seconds:
   // a stock should be listed the moment it qualifies
   void scanRising(now).catch(() => undefined);
+  // app v1.16: pre-open readings from the live feed (paced inside, every 10 s)
+  void preopenTick(now).catch(() => undefined);
   if (now - lastFeedChecksAt < 2_000) {
     announce('quotes');
     return;

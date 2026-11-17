@@ -10,14 +10,22 @@
  *   LTPC         { double ltp = 1; int64 ltt = 2; int64 ltq = 3; double cp = 4; DoubleValue iep = 5; }
  *   MarketFullFeed { LTPC ltpc = 1; MarketLevel marketLevel = 2; OptionGreeks optionGreeks = 3;
  *                    MarketOHLC marketOHLC = 4; double atp = 5; int64 vtt = 6; double oi = 7; double iv = 8;
- *                    double tbq = 9; double tsq = 10; … }            (re-checked 14 Nov 2026)
+ *                    double tbq = 9; double tsq = 10;
+ *                    double iep = 11; double rp = 12; int64 ieq = 13; int64 iiqTotal = 14; int64 iiqM = 15;
+ *                    bool casEligible = 16; }   (re-checked 17 Nov 2026 in Upstox's own SDKs, upstox-nodejs
+ *                    src/feeder/proto/MarketDataFeedV3.proto and upstox-python, both updated that day)
+ *   MarketInfo     { map<string, MarketStatus> segmentStatus = 1; map<string, StatusInfo> casMarketStatus = 2;
+ *                    map<string, StatusInfo> preOpenSessionStatus = 3; }   StatusInfo { string status = 1; int64 updatedTime = 2; }
  *   IndexFullFeed  { LTPC ltpc = 1; MarketOHLC marketOHLC = 2; }
  *   MarketOHLC     { repeated OHLC ohlc = 1; }
  *   OHLC           { string interval = 1; double open = 2; double high = 3; double low = 4; double close = 5; int64 vol = 6; int64 ts = 7; }
  *
  * Read: the last price (ltp), previous close (cp), trade time and quantity; in "full" mode (app v1.9)
  * also the day's average price (atp = VWAP), the volume traded today (vtt), the waiting buy / sell
- * quantities (tbq / tsq), today's candle ("1d") and the latest 1-minute candle ("I1").
+ * quantities (tbq / tsq), today's candle ("1d") and the latest 1-minute candle ("I1"). App v1.16: the
+ * pre-open call auction (9:00–9:15) — indicative equilibrium price (iep, also LTPC.iep), the quantity
+ * that would match there (ieq), the unmatched (imbalance) quantity (iiqTotal, iiqM — signed int64) and
+ * the reference price (rp); and the market-info message's pre-open session status per segment.
  */
 
 export interface FeedCandle {
@@ -49,6 +57,19 @@ export interface FeedTick {
   day?: FeedCandle;
   /** full mode only: the latest 1-minute candle */
   m1?: FeedCandle;
+  /** app v1.16 — pre-open call auction: indicative equilibrium price, its matched quantity, the unmatched
+   * (imbalance) quantity in total and from market orders, and the reference price (full mode / LTPC) */
+  iep?: number;
+  ieq?: number;
+  iiq?: number;
+  iiqM?: number;
+  rp?: number;
+}
+
+export interface PreOpenStatus {
+  status: string;
+  /** ms */
+  at: number;
 }
 
 export interface DecodedFeed {
@@ -56,6 +77,8 @@ export interface DecodedFeed {
   type: number;
   ticks: FeedTick[];
   currentTs: number;
+  /** app v1.16: the pre-open session status per segment (market-info messages), e.g. NSE_EQ → PRE_OPEN_END */
+  preOpen?: Record<string, PreOpenStatus>;
 }
 
 class Reader {
@@ -79,6 +102,19 @@ class Reader {
       result += (b & 0x7f) * mul;
       if (!(b & 0x80)) return result;
       mul *= 128;
+    }
+    throw new Error('feed: varint too long');
+  }
+  /** int64 (two's complement in 10 bytes when negative) as a Number. */
+  int64(): number {
+    let v = 0n;
+    let shift = 0n;
+    for (let i = 0; i < 10; i++) {
+      if (this.pos >= this.end) throw new Error('feed: truncated varint');
+      const b = this.buf[this.pos++]!;
+      v |= BigInt(b & 0x7f) << shift;
+      if (!(b & 0x80)) return Number(BigInt.asIntN(64, v));
+      shift += 7n;
     }
     throw new Error('feed: varint too long');
   }
@@ -117,8 +153,19 @@ class Reader {
   }
 }
 
+/** google.protobuf.DoubleValue { double value = 1; } */
+function readDoubleValue(r: Reader): number | null {
+  let v: number | null = 0; // an empty wrapper is 0 (proto3 default)
+  while (!r.done) {
+    const tag = r.varint();
+    if (tag >>> 3 === 1 && (tag & 7) === 1) v = r.double();
+    else r.skip(tag & 7);
+  }
+  return v;
+}
+
 function readLtpc(r: Reader): Omit<FeedTick, 'key'> {
-  const t = { ltp: 0, cp: 0, ltt: 0, ltq: 0 };
+  const t: Omit<FeedTick, 'key'> = { ltp: 0, cp: 0, ltt: 0, ltq: 0 };
   while (!r.done) {
     const tag = r.varint();
     const field = tag >>> 3;
@@ -127,7 +174,11 @@ function readLtpc(r: Reader): Omit<FeedTick, 'key'> {
     else if (field === 2 && wire === 0) t.ltt = r.varint();
     else if (field === 3 && wire === 0) t.ltq = r.varint();
     else if (field === 4 && wire === 1) t.cp = r.double();
-    else r.skip(wire);
+    else if (field === 5 && wire === 2) {
+      // app v1.16: set only during the pre-open / closing call auction
+      const iep = readDoubleValue(r.sub());
+      if (iep !== null && Number.isFinite(iep) && iep > 0) t.iep = iep;
+    } else r.skip(wire);
   }
   return t;
 }
@@ -170,6 +221,7 @@ function readMarketOhlc(r: Reader, into: TickData): void {
 function readFull(r: Reader, index: boolean): TickData | null {
   let out: TickData | null = null;
   const extra: Partial<TickData> = {};
+  const imb: { iiq?: number; iiqM?: number } = {};
   while (!r.done) {
     const tag = r.varint();
     const field = tag >>> 3;
@@ -180,9 +232,26 @@ function readFull(r: Reader, index: boolean): TickData | null {
     else if (!index && field === 6 && wire === 0) extra.vtt = r.varint();
     else if (!index && field === 9 && wire === 1) extra.tbq = r.double();
     else if (!index && field === 10 && wire === 1) extra.tsq = r.double();
+    // app v1.16: the pre-open call auction (0 outside it)
+    else if (!index && field === 11 && wire === 1) extra.iep = r.double();
+    else if (!index && field === 12 && wire === 1) extra.rp = r.double();
+    else if (!index && field === 13 && wire === 0) extra.ieq = r.int64();
+    else if (!index && field === 14 && wire === 0) imb.iiq = r.int64();
+    else if (!index && field === 15 && wire === 0) imb.iiqM = r.int64();
     else r.skip(wire);
   }
   if (!out) return null;
+  // the call-auction numbers mean something only while there is an indicative price
+  const auction = (extra.iep !== undefined && extra.iep > 0) || (out.iep !== undefined && out.iep > 0);
+  if (extra.iep !== undefined && !(extra.iep > 0)) delete extra.iep;
+  if (!auction) {
+    delete extra.ieq;
+    delete extra.rp;
+  } else {
+    if (imb.iiq !== undefined && Number.isFinite(imb.iiq)) out.iiq = imb.iiq;
+    if (imb.iiqM !== undefined && Number.isFinite(imb.iiqM)) out.iiqM = imb.iiqM;
+  }
+  if (extra.rp !== undefined && !(extra.rp > 0)) delete extra.rp;
   for (const [k, v] of Object.entries(extra)) if (v !== undefined && (typeof v !== 'number' || (Number.isFinite(v) && v >= 0))) (out as Record<string, unknown>)[k] = v;
   return out;
 }
@@ -219,6 +288,40 @@ function readFeed(r: Reader): Omit<FeedTick, 'key'> | null {
   return out;
 }
 
+/** MarketInfo: only the pre-open session status per segment (field 3: map<string, StatusInfo>). */
+function readMarketInfo(r: Reader): Record<string, PreOpenStatus> | null {
+  const out: Record<string, PreOpenStatus> = {};
+  let any = false;
+  while (!r.done) {
+    const tag = r.varint();
+    if (tag >>> 3 === 3 && (tag & 7) === 2) {
+      const entry = r.sub();
+      let key = '';
+      let st: PreOpenStatus | null = null;
+      while (!entry.done) {
+        const t = entry.varint();
+        if (t >>> 3 === 1 && (t & 7) === 2) key = entry.string();
+        else if (t >>> 3 === 2 && (t & 7) === 2) {
+          const v = entry.sub();
+          const s: PreOpenStatus = { status: '', at: 0 };
+          while (!v.done) {
+            const t2 = v.varint();
+            if (t2 >>> 3 === 1 && (t2 & 7) === 2) s.status = v.string();
+            else if (t2 >>> 3 === 2 && (t2 & 7) === 0) s.at = v.varint();
+            else v.skip(t2 & 7);
+          }
+          st = s;
+        } else entry.skip(t & 7);
+      }
+      if (key && st?.status) {
+        out[key] = st;
+        any = true;
+      }
+    } else r.skip(tag & 7);
+  }
+  return any ? out : null;
+}
+
 /** Decodes one binary feed message. Throws on malformed data (the caller ignores that message). */
 export function decodeFeedResponse(bytes: Uint8Array): DecodedFeed {
   const r = new Reader(bytes);
@@ -229,6 +332,10 @@ export function decodeFeedResponse(bytes: Uint8Array): DecodedFeed {
     const wire = tag & 7;
     if (field === 1 && wire === 0) out.type = r.varint();
     else if (field === 3 && wire === 0) out.currentTs = r.varint();
+    else if (field === 4 && wire === 2) {
+      const pre = readMarketInfo(r.sub());
+      if (pre) out.preOpen = pre;
+    }
     else if (field === 2 && wire === 2) {
       // map entry: key = 1 (string), value = 2 (Feed)
       const entry = r.sub();

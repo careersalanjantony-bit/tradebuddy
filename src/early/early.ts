@@ -133,8 +133,8 @@ export function setupCheck(l: Look): { ok: boolean; why: string[]; missing: stri
   return { ok: missing.length === 0, why, missing };
 }
 
-const upTick = (x: number, tick: number) => Math.round(Math.ceil(x / tick - 1e-9) * tick * 100) / 100;
-const downTick = (x: number, tick: number) => Math.round(Math.floor(x / tick + 1e-9) * tick * 100) / 100;
+export const upTick = (x: number, tick: number) => Math.round(Math.ceil(x / tick - 1e-9) * tick * 100) / 100;
+export const downTick = (x: number, tick: number) => Math.round(Math.floor(x / tick + 1e-9) * tick * 100) / 100;
 
 export interface EarlyPlan {
   /** breakout price: buy only above it */

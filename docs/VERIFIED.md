@@ -155,3 +155,21 @@ Standard APIs: 50/s, 500/min, 2000/30 min, per API per user (unchanged from spec
 | MTF | Upstox: "Interest ₹20/day for every slab of ₹40,000 taken as MTF"; pledge/unpledge ₹20 + GST per scrip (owner question; the app does not model MTF) | — |
 | Android build | Capacitor 8.6.0 (compileSdk/targetSdk 36, minSdk 24), signed release APK verified with `apksigner` | `android/` |
 | **Not verified on a real phone** | in-app browser login redirect capture, local notifications, the special-use foreground service during market hours, WebSocket feed from the app's WebView | `src/platform/nativeBindings.ts` |
+
+## Pre-open call auction (checked 17 Nov 2026, app v1.16.0)
+
+upstox.com could not be opened from the build machine, so the fields were read from Upstox's own SDKs
+(public GitHub repositories, both updated 17 Nov 2026): `upstox/upstox-nodejs`
+(`src/feeder/proto/MarketDataFeedV3.proto`, `src/api/MarketQuoteV3Api.js`, `src/model/MarketQuoteSymbolV3.js`)
+and `upstox/upstox-python` (`upstox_client/models/market_quote_symbol_v3.py`, its feed proto — identical
+except for whitespace). `tests/fixtures/MarketDataFeed.proto` already matches them.
+
+| Item | Finding | Code |
+|---|---|---|
+| Full Market Quotes V3 | `GET /v3/market-quote/quotes?instrument_key=k1,k2` — "up to 500 instruments in one go"; `data` keyed by "EXCHANGE:SYMBOL", each with `instrument_token`, `last_price`, `volume`, `average_price`, `total_buy_quantity`, `total_sell_quantity`, `prev_close_price`, `indicative_equilibrium_price` ("discovered during the call auction session"), `reference_price` ("against which the call auction price band is applied"), `indicative_equilibrium_quantity` ("matched at the indicative equilibrium price"), `indicative_imbalance_quantity_total` ("total indicative imbalance quantity in the call auction order book"), `indicative_imbalance_quantity_market` ("market-order component"), `cas_eligible` | `src/data/quotesParse.ts` `mergeFullQuotes`, `src/background/preopenJobs.ts` |
+| Live feed (full mode) | `MarketFullFeed` adds `double iep = 11; double rp = 12; int64 ieq = 13; int64 iiqTotal = 14; int64 iiqM = 15; bool casEligible = 16;` and `LTPC.iep = 5` (`google.protobuf.DoubleValue`, set only in an auction); `MarketInfo.preOpenSessionStatus = 3` (`map<string, StatusInfo{string status = 1; int64 updatedTime = 2}>`) | `src/data/feedProto.ts` (signed int64 read with BigInt) |
+| Imbalance sign | int64, so it can be negative, but neither SDK says which side a + or − means → shown as a size only; the buy / sell direction comes from `total_buy_quantity` vs `total_sell_quantity` | `PreDetail` |
+| NSE pre-open timing | orders 9:00 to ~9:07–9:08 (random close in the last minute), then price discovery, trading from 9:15 (the owner's plan of 17 Nov 2026 uses the same schedule) | `src/early/preopen.ts` `PRE` |
+| Tested how | decoder against protobufjs with Upstox's definition (incl. a negative imbalance and the session status), the V3 quote parser, the ranking points, the opening drive, a full fake morning (8:50 → 9:13 final → 9:15 drive → 9:47 record) and a phone-size browser run at 9:06 and 9:13 | `tests/preopen.test.ts`, `tests/preopenLive.test.ts`, `scripts/app-smoke.mjs` |
+| **Not verified on real data** | (1) that Upstox fills these fields for every stock during 9:00–9:15 with the Analytics Token; (2) whether `total_buy_quantity` / `total_sell_quantity` show the auction's order book in the pre-open; (3) the exact `preOpenSessionStatus` words (`PRE_OPEN_START`, `PRE_OPEN_M_END`, `PRE_OPEN_END` from search results; shown as received); (4) whether the feed sends pre-open ticks before 9:15 — the app reads the quotes API every 15 s anyway | Home → Early Movers → More → data limits |
+| No past pre-open data | Upstox's historical candles start at 9:15, so the ranking itself cannot be back-tested; the app writes each day's final 10 and their first 30 minutes to a record (`preopenRecord`) and tests the opening-drive rule on stored 5-minute days | `recordOutcomes`, `runOpenTest` |

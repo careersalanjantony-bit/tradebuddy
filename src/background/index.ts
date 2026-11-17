@@ -50,6 +50,7 @@ import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdea
 import { testProtect } from './botTest';
 import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
 import { earlyTick, refreshNseFiles, refreshPremarket, sweepCatalysts, testEarly } from './earlyJobs';
+import { preopenTick } from './preopenJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -103,6 +104,8 @@ ready.then(() => setTimeout(() => void trainRisingIfDue().catch(() => undefined)
 ready.then(() => {
   setTimeout(() => earlyTick(), 20_000);
   setInterval(() => earlyTick(), 60_000);
+  // app v1.16: the pre-open rising candidates (9:00–9:15) — every 10 s (returns at once outside 8:45–3:35)
+  setInterval(() => void preopenTick().catch(() => undefined), 10_000);
 }).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
@@ -318,6 +321,7 @@ const handlers: Handlers = {
     await refreshPremarket(now + 60_000);
     return { catalysts: c ? Object.keys(c.byKey).length : 0, nse: !!n };
   },
+  'preopen:refresh': async () => ({ listed: await preopenTick(Date.now(), true) }),
   'early:test': async () => {
     const r = (await testEarly(Date.now(), true)) as { days?: number } | null;
     return { ok: !!r, days: r?.days ?? 0 };

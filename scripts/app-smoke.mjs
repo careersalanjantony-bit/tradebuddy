@@ -143,6 +143,20 @@ async function upstox(route) {
     }
     return route.fulfill(json({ status: 'success', data }));
   }
+  if (url.pathname === '/v3/market-quote/quotes') {
+    // app v1.16: the pre-open call auction — [gap %, waiting buy, waiting sell, matched quantity]
+    const PRE = { RELIANCE: [3.0, 70000, 30000, 60000], BSE: [4.5, 40000, 40000, 30000], TRENT: [2.2, 52000, 28000, 20000], ETERNAL: [1.4, 90000, 60000, 400000], ICICIBANK: [-0.6, 20000, 50000, 10000] };
+    const data = {};
+    for (const k of keys) {
+      if (!symOf[k]) continue;
+      const b = BASE[symOf[k]] ?? 500;
+      const g = PRE[symOf[k]] ?? [(hashPct(k) - 0.5) * 1.2, 10000, 10000, 5000];
+      const on = !!mock.preopen;
+      data[`NSE_EQ:${symOf[k]}`] = { instrument_token: k, symbol: symOf[k], last_price: b, prev_close_price: b, volume: 0, total_buy_quantity: g[1], total_sell_quantity: g[2], indicative_equilibrium_price: on ? Math.round(b * (1 + g[0] / 100) * 20) / 20 : 0, indicative_equilibrium_quantity: on ? g[3] : 0, indicative_imbalance_quantity_total: on ? g[1] - g[2] : 0, indicative_imbalance_quantity_market: 0, reference_price: b };
+    }
+    mock.fullQuoteCalls = (mock.fullQuoteCalls ?? 0) + 1;
+    return route.fulfill(json({ status: 'success', data }));
+  }
   if (url.pathname === '/v2/market-quote/quotes') {
     const data = {};
     keys.forEach((k, i) => {
@@ -420,6 +434,8 @@ await page.click('.bottom-nav [data-nav="today"]');
 await page.waitForSelector('[data-testid="wallet-mini"]');
 check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
 await until(async () => !!(await page.$('[data-testid="rising-carousel"] .rise-tile')) && ((await page.textContent('[data-testid="market-pill"]').catch(() => '')) ?? '').includes('Market open'), 15000);
+const homeOrder = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid')));
+check('Home (app v1.16): "🌱 Early Movers" is the first card — above Rising now, the best idea and the practice money', homeOrder[0] === 'early-movers' && homeOrder.indexOf('early-movers') < homeOrder.indexOf('wallet-mini') && homeOrder.indexOf('early-movers') < homeOrder.indexOf('best-idea'), JSON.stringify(homeOrder));
 check('Home: greeting, market open pill, the best-idea card and the rising-now carousel',((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
 check('black theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
@@ -576,14 +592,21 @@ const heldOk = await until(async () => {
 }, 10000);
 const riseHeldText = ((await page.textContent('[data-testid="rise-held"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('"Your stocks now": the stock bought from the Rising card (practice) gets keep / protect / take-the-profit advice with a price', heldOk && riseBought && new RegExp(`${BREAK_SYM}practice`).test(riseHeldText), `bought ${riseBought} (${riseBuyMsg.slice(0, 100)}) · ${riseHeldText.slice(riseHeldText.indexOf(BREAK_SYM) >= 0 ? riseHeldText.indexOf(BREAK_SYM) : 0).slice(0, 160)}`);
-console.log('── Early Movers — Before the Rally');
-const earlyOrder = await page.evaluate(() => {
-  const cards = [...document.querySelectorAll('section.card')].map((c) => c.getAttribute('data-testid'));
-  return { early: cards.indexOf('early-movers'), rise: cards.indexOf('rising-now'), signals: cards.indexOf('day-signals') };
-});
-check('"🌱 Early Movers — Before the Rally" is the first card on Day trade (above Rising now and Today\'s buy ideas)', earlyOrder.early >= 0 && earlyOrder.early < earlyOrder.rise && earlyOrder.early < earlyOrder.signals, JSON.stringify(earlyOrder));
+console.log('── Early Movers (on Home since v1.16)');
+check('Day trade points to Early Movers on Home (no second, crowded copy)', !!(await page.$('[data-testid="early-moved"]')) && !(await page.$('[data-testid="early-movers"]')));
+await page.click('[data-testid="early-moved"]');
+await page.waitForSelector('[data-testid="early-movers"]', { timeout: 8000 }).catch(() => {});
+const moversTop = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid'))[0]);
+check('the link opens Home with Early Movers on top', moversTop === 'early-movers', String(moversTop));
+const liveTab = await page.getAttribute('[data-movers-tab="live"]', 'class').catch(() => '');
+const phaseText = ((await page.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
+const stepsNow = await page.$$eval('[data-testid="movers-steps"] li', (els) => els.map((e) => `${e.className}:${e.textContent}`)).catch(() => []);
+check('market open: "Live now" is shown, the schedule strip marks 9:20 setups as the current step', (liveTab ?? '').includes('on') && /Market open/.test(phaseText) && stepsNow.some((x) => x.startsWith('now:') && x.includes('9:20')), `${phaseText} · ${stepsNow.join(' | ')}`);
+const moneyLine = ((await page.textContent('[data-testid="movers-money"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+await page.click('[data-testid="movers-money"]');
 const moneyText = ((await page.textContent('[data-testid="early-money"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-check('it works with ₹10,000 capital and at most ₹50 risk per trade including all charges', moneyText.includes('₹10,000') && moneyText.includes('₹50') && moneyText.includes('including brokerage and all charges'), moneyText.slice(0, 160));
+check('it works with ₹10,000 capital and at most ₹50 risk per trade including all charges (one line; tap to change)', moneyLine.includes('₹10,000') && moneyLine.includes('₹50') && moneyText.includes('including brokerage and all charges'), moneyLine.slice(0, 120));
+await page.click('[data-testid="movers-money"]');
 let earlyFound = false;
 for (let i = 0; i < 10 && !earlyFound; i++) {
   mock.breakPrice = 200.85;
@@ -593,26 +616,30 @@ for (let i = 0; i < 10 && !earlyFound; i++) {
   earlyFound = await until(async () => !!(await page.$(`[data-testid="early-movers"] .early-item[data-symbol="${BREAK_SYM}"]`)), 5000);
 }
 const earlyRow = await page.evaluate(async () => (await chrome.storage.session.get('early')).early?.rows?.[0] ?? null);
+const rowLine = ((await page.textContent(`.early-item[data-symbol="${BREAK_SYM}"] .mv-row`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('each stock is ONE short line (symbol, stage, plan in a few words, price, % and score) — details only on tap', earlyFound && rowLine.includes(BREAK_SYM) && /sh, risk ₹\d+/.test(rowLine) && !(await page.$(`.early-item[data-symbol="${BREAK_SYM}"] [data-testid="early-detail"]`)), rowLine.slice(0, 160));
+await page.click(`.early-item[data-symbol="${BREAK_SYM}"] .mv-row`).catch(() => {});
+await page.waitForSelector(`.early-item[data-symbol="${BREAK_SYM}"] [data-testid="early-detail"]`, { timeout: 4000 }).catch(() => {});
 const earlyText = ((await page.textContent(`.early-item[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
   'an early mover is listed with name, NSE symbol, price, % change, catalyst, relative volume, VWAP, RSI, EMA 9, breakout price, entry, stop-loss, targets and score',
   earlyFound && ['NSE: ADANIENT', 'Rel. volume', 'VWAP', 'RSI (5-min)', 'EMA 9 (5-min)', 'Breakout above', 'Entry', 'Stop-loss', 'Targets', 'score', '📰'].every((w) => earlyText.includes(w)),
   earlyRow ? `${earlyRow.symbol} ${earlyRow.stage} score ${earlyRow.score}, ${earlyRow.size.qty} sh risk ₹${earlyRow.size.risk} · rvol ${earlyRow.rvolDay?.toFixed(1)}` : earlyText.slice(0, 200),
 );
-check('setups and breakouts are told apart (🌱 potential setup / 🚀 live, not confirmed / ✅ confirmed)', !!earlyRow && ['setup', 'breakout', 'confirmed'].includes(earlyRow.stage) && /Potential setup|Breakout — live, not confirmed|Confirmed breakout/.test(earlyText), earlyRow?.stage ?? 'none');
+check('setups and breakouts are told apart (🌱 setup / 🚀 breakout / ✅ confirmed)', !!earlyRow && ['setup', 'breakout', 'confirmed'].includes(earlyRow.stage) && /🌱 Setup|🚀 Breakout|✅ Confirmed/.test(rowLine), earlyRow?.stage ?? 'none');
 check('the quantity keeps the ₹50 limit with all charges and fits the ₹10,000 capital', !!earlyRow && earlyRow.size.ok && earlyRow.size.risk <= 50 && earlyRow.size.value <= 10_000 && earlyText.includes('incl.') && earlyText.includes('charges'), earlyRow ? `${earlyRow.size.qty} shares, ₹${earlyRow.size.value}, risk ₹${earlyRow.size.risk} (charges ₹${earlyRow.size.charges})` : 'none');
 const instText = ((await page.textContent(`.early-item[data-symbol="${BREAK_SYM}"] [data-testid="early-inst"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('institutional signs are shown only when there is data — FII/DII clearly marked as not available', instText.includes('FII/DII: not available') && /bulk\/block deal|deal (BUY|SELL)/i.test(instText), instText.slice(0, 160));
 const earlyBanner = await until(async () => /ADANIENT: (breaking out|setup forming|breakout confirmed)/.test((await page.textContent('.alert-banners').catch(() => '')) ?? '') || (await page.evaluate(async () => ((await chrome.storage.session.get('earlyAlerted')).earlyAlerted?.sent ?? []).length > 0)), 6000);
 check('an Early Movers alert goes out (sound + in-app banner), each stage once', earlyBanner, JSON.stringify(await page.evaluate(async () => (await chrome.storage.session.get('earlyAlerted')).earlyAlerted?.sent ?? [])));
-await page.click('[data-testid="early-limits"] summary').catch(() => {});
-const limitsText = ((await page.textContent('[data-testid="early-limits"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-check('"Data, delays and what is not available": live feed, Upstox news (no results database), NSE end-of-day files, FII/DII unavailable, pre-open indicative, score is not a chance', ['Upstox', 'no results database', 'NSE end-of-day files', 'FII / DII activity:', 'not available', 'Pre-open', 'not a chance of rising'].every((w) => limitsText.includes(w)), limitsText.slice(0, 220));
-const testText = ((await page.textContent('[data-testid="early-test"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-check('the past test line is there (it runs after the close on stored 5-minute prices)', /Past test/.test(testText), testText.slice(0, 160));
 await page.$eval(`.early-item[data-symbol="${BREAK_SYM}"]`, (el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
 await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-early.png') });
+await page.click('[data-testid="movers-more"] summary').catch(() => {});
+const limitsText = ((await page.textContent('[data-testid="early-limits"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"More" holds the data limits: pre-open IEP indicative, live feed, Upstox news (no results database), NSE end-of-day files, FII/DII unavailable, score is not a chance', ['IEP', 'indicative', 'Upstox', 'no results database', 'NSE end-of-day files', 'FII / DII activity:', 'not available', 'not a chance of rising'].every((w) => limitsText.includes(w)), limitsText.slice(0, 220));
+const testText = ((await page.textContent('[data-testid="early-test"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('…and the past test and the pre-open record (written each morning from now on — no past pre-open data exists)', /Past test/.test(testText) && /Pre-open record:/.test(testText) && /only honest test/.test(testText), testText.slice(0, 200));
 const riseSent = await page.evaluate(async () => (await chrome.storage.session.get('riseAlerted')).riseAlerted?.keys ?? []);
 check('each "likely to keep rising" alert is sent once a day per stock', riseSent.filter((k) => k === 'NSE_EQ|INE423A01024').length === 1, JSON.stringify(riseSent));
 mock.breakPrice = 200.3;
@@ -877,6 +904,85 @@ const toneFile = await page.evaluate(async () => (await fetch('sounds/tone_coins
 check('the tone files are part of the app', toneFile);
 await page.$eval('[data-testid="tone-settings"]', (el) => el.scrollIntoView({ block: 'start' }));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-tones.png') });
+
+console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second phone');
+{
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const p2 = await ctx2.newPage();
+  p2.on('pageerror', (e) => errors.push(`pre-open phone: ${e.message}`));
+  await p2.clock.install({ time: new Date(Date.parse('2026-11-17T03:36:00Z')) }); // Tue 9:06 IST
+  mock.preopen = true;
+  await p2.route('https://api.upstox.com/**', upstox);
+  await p2.route('https://assets.upstox.com/**', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/octet-stream', 'access-control-allow-origin': '*' }, body: gzipSync(Buffer.from(JSON.stringify(allRows))) }));
+  await p2.route('https://nsearchives.nseindia.com/**', (route) =>
+    route.request().url().includes('ind_nifty50list.csv') ? route.fulfill({ status: 200, headers: { 'content-type': 'text/csv', 'access-control-allow-origin': '*' }, body: nifty50Csv }) : route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }),
+  );
+  await p2.route('https://raw.githubusercontent.com/**', (route) => route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'Not Found' }));
+  await p2.goto(base);
+  await p2.waitForSelector('[data-testid="guide"]', { timeout: 20000 });
+  while (await p2.$('[data-testid="guide-next"]')) await p2.click('[data-testid="guide-next"]');
+  await p2.evaluate(async () => {
+    const s = (await chrome.storage.local.get('settings')).settings;
+    await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, settings: { ...s, dayTrade: { ...s.dayTrade, enabled: true } } });
+  });
+  await p2.click('[data-testid="guide-done"]');
+  await p2.waitForSelector('[data-testid="profile-setup"]', { timeout: 10000 });
+  await p2.fill('[data-field="profile-name"]', 'Alan Joy');
+  await p2.click('[data-testid="profile-next"]');
+  for (const pin of ['2580', '2580']) {
+    for (const d of pin) await p2.click(`.pinpad [data-key="${d}"]`);
+    await p2.waitForTimeout(250);
+  }
+  await p2.waitForSelector('[data-testid="wallet"]', { timeout: 10000 }).catch(() => {});
+  await p2.click('.bottom-nav [data-nav="today"]');
+  await p2.waitForSelector('[data-testid="early-movers"]', { timeout: 10000 }).catch(() => {});
+  let ranked = false;
+  for (let i = 0; i < 20 && !ranked; i++) {
+    await p2.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'preopen:refresh', payload: undefined })).catch(() => undefined);
+    ranked = await until(() => p2.evaluate(async () => ((await chrome.storage.session.get('preopen')).preopen?.rows ?? []).length >= 3), 3000);
+  }
+  const pre = await p2.evaluate(async () => (await chrome.storage.session.get('preopen')).preopen ?? null);
+  check('9:06: the pre-open is read from Upstox Full Market Quotes V3 (IEP, matched quantity, buy / sell) and ranked', ranked && (mock.fullQuoteCalls ?? 0) > 0 && pre?.phase === 'ranking', pre ? `${pre.counts.withIep} with a pre-open price, ${pre.counts.listed} listed: ${pre.rows.map((r) => `${r.symbol} ${r.gapPct.toFixed(1)}% (${r.score})`).join(', ')}` : 'none');
+  check('only stocks 1%+ above yesterday, best points first (ICICIBANK, below yesterday, is not there)', !!pre && pre.rows.every((r) => r.gapPct >= 1) && pre.rows.every((r, i, a) => i === 0 || a[i - 1].score >= r.score) && !pre.rows.some((r) => r.symbol === 'ICICIBANK'), pre?.rows.map((r) => r.symbol).join(','));
+  await until(async () => (await p2.$$('[data-testid="pre-item"]')).length >= 3, 8000);
+  const preTab = (await p2.getAttribute('[data-movers-tab="pre"]', 'class').catch(() => '')) ?? '';
+  const pill = ((await p2.textContent('[data-testid="movers-pill"]').catch(() => '')) ?? '').trim();
+  const phaseText2 = ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
+  check('Home before 9:15: the Pre-open tab is shown, marked PRE-OPEN, "Ranked — orders still coming in"', preTab.includes('on') && pill === 'PRE-OPEN' && phaseText2.startsWith('Ranked'), `${pill} · ${phaseText2}`);
+  const firstLine = ((await p2.textContent('[data-testid="pre-item"] .mv-row').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check('each candidate is one line: rank, symbol, pre-open price, buyers %, gap and score', /^1/.test(firstLine.trim()) && /pre-open ₹/.test(firstLine) && /buyers \d+%/.test(firstLine) && /\+\d/.test(firstLine), firstLine.slice(0, 120));
+  await p2.click('[data-testid="pre-item"] .mv-row');
+  await p2.waitForSelector('[data-testid="pre-detail"]', { timeout: 4000 }).catch(() => {});
+  const parts = await p2.$$eval('[data-testid="pre-parts"] .pre-part', (els) => els.map((e) => `${e.getAttribute('data-part')}:${(e.querySelector('b')?.textContent ?? '').trim()}`)).catch(() => []);
+  const detail = ((await p2.textContent('[data-testid="pre-detail"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check('tap: the seven parts with their points (25 / 20 / 15 / 15 / 10 / 10 / 5) and the number behind each', parts.length === 7 && ['/25', '/20', '/15', '/15', '/10', '/10', '/5'].every((m, i) => parts[i]?.endsWith(m)), parts.join(' '));
+  check('…the Upstox auction numbers (matched, unmatched, reference price) and a first size estimate within ₹50', /matched [\d,.]+( lakh)? shares at ₹/.test(detail) && /reference price ₹/.test(detail) && /keeps ₹\d+ risk incl\. charges/.test(detail) && Number((/keeps ₹(\d+) risk/.exec(detail) ?? [])[1] ?? 99) <= 50, detail.slice(0, 260));
+  await revealAll();
+  await p2.evaluate(() => document.querySelectorAll('[data-rv]').forEach((el) => el.classList.add('in'))).catch(() => undefined);
+  await p2.$eval('[data-testid="early-movers"]', (el) => el.scrollIntoView({ block: 'start' })).catch(() => {});
+  await p2.screenshot({ animations: 'disabled', path: join(out, 'app-preopen.png') });
+  // 9:13:10 — the final top 10 is fixed
+  await p2.clock.setSystemTime(new Date(Date.parse('2026-11-17T03:43:10Z')));
+  let fixed = false;
+  for (let i = 0; i < 10 && !fixed; i++) {
+    await p2.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'preopen:refresh', payload: undefined })).catch(() => undefined);
+    fixed = await until(() => p2.evaluate(async () => !!(await chrome.storage.session.get('preopen')).preopen?.final), 3000);
+  }
+  const fin = await p2.evaluate(async () => (await chrome.storage.session.get('preopen')).preopen ?? null);
+  const notes2 = await p2.evaluate(() => chrome.notifications.getAll());
+  const rec2 = await p2.evaluate(async () => (await chrome.storage.local.get('preopenRecord')).preopenRecord ?? []);
+  check('9:13: the final list is fixed, one alert ("ready for 9:15") and the day is written to the record', fixed && Object.keys(notes2).includes('alert:preopen-final-2026-11-17') && rec2.length === 1 && rec2[0].rows.length === fin?.final?.rows.length, fin?.final ? fin.final.rows.map((r) => r.symbol).join(', ') : 'not fixed');
+  await until(async () => /Final list, fixed at 09:13/.test((await p2.textContent('[data-testid="pre-status"]').catch(() => '')) ?? ''), 6000);
+  await until(async () => ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim().startsWith('Final top 10'), 6000);
+  const finText = ((await p2.textContent('[data-testid="pre-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  const finPhase = ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
+  check('Home shows "Final top 10 for the open" and "Final list, fixed at 09:13"', /Final list, fixed at 09:13/.test(finText) && finPhase.startsWith('Final top 10'), `${finPhase} · ${finText.slice(0, 100)}`);
+  await p2.screenshot({ animations: 'disabled', path: join(out, 'app-preopen-final.png') });
+  const overflow2 = await p2.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+  check('no sideways scrolling on the pre-open screen', !overflow2);
+  mock.preopen = false;
+  await ctx2.close();
+}
 
 console.log('── Safety');
 check('no order / GTT request was ever made', !mock.calls.some((c) => c.startsWith('ORDER-LIKE')), `${mock.calls.length} fake Upstox calls`);
