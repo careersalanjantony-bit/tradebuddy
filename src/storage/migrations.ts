@@ -174,6 +174,18 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (riseModel === undefined) await kv.set({ riseModel: null });
     },
   },
+  {
+    to: 18,
+    description: 'app v1.15: Early Movers — Before the Rally',
+    async up(kv) {
+      const { nseFiles, catalysts, earlyTest, settings } = (await kv.get(['nseFiles', 'catalysts', 'earlyTest', 'settings'])) as Record<string, unknown> & { settings?: { dayTrade?: Record<string, unknown> } };
+      if (nseFiles === undefined) await kv.set({ nseFiles: null });
+      if (catalysts === undefined) await kv.set({ catalysts: null });
+      if (earlyTest === undefined) await kv.set({ earlyTest: null });
+      // the owner's numbers: ₹10,000 capital, at most ₹50 risk per trade including all charges
+      if (settings?.dayTrade && settings.dayTrade.earlyCapitalInr === undefined) await kv.set({ settings: { ...settings, dayTrade: { ...settings.dayTrade, earlyCapitalInr: 10_000, earlyRiskInr: 50 } } });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

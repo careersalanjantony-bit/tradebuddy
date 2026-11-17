@@ -87,6 +87,26 @@ function breakCandles() {
   });
   return out.reverse();
 }
+/** app v1.15: ten earlier market days of the breakout stock, 10,000 shares per 5 minutes (inside the asked range) */
+function breakHistory(pathname) {
+  const m = /minutes\/5\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})/.exec(decodeURIComponent(pathname));
+  if (!m) return [];
+  const [, to, from] = m;
+  const out = [];
+  for (let back = 1; back <= 16; back++) {
+    const d = new Date(Date.UTC(2026, 10, 16 - back));
+    const wd = d.getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    const date = d.toISOString().slice(0, 10);
+    if (date < from || date > to) continue;
+    for (let i = 0; i < 75; i++) {
+      const mm = 15 + i * 5;
+      const hh = String(9 + Math.floor(mm / 60)).padStart(2, '0');
+      out.push([`${date}T${hh}:${String(mm % 60).padStart(2, '0')}:00+05:30`, 199, 199.4, 198.6, 199, 10_000, 0]);
+    }
+  }
+  return out.reverse();
+}
 const hashPct = (k) => ([...k].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 1000) / 1000;
 const priceOf = (key) => {
   if (symOf[key] === FALL) return Math.round((mock.fallPrice ?? BASE[FALL] * 0.988) * 20) / 20;
@@ -142,6 +162,7 @@ async function upstox(route) {
   }
   if (url.pathname.startsWith('/v3/historical-candle/intraday/') && decodeURIComponent(url.pathname).includes(fallKey())) return route.fulfill(json({ status: 'success', data: { candles: fallCandles() } }));
   if (url.pathname.startsWith('/v3/historical-candle/intraday/') && decodeURIComponent(url.pathname).includes(BREAK)) return route.fulfill(json({ status: 'success', data: { candles: breakCandles() } }));
+  if (url.pathname.startsWith('/v3/historical-candle/') && !url.pathname.includes('/intraday/') && decodeURIComponent(url.pathname).includes(BREAK) && url.pathname.includes('/minutes/5/')) return route.fulfill(json({ status: 'success', data: { candles: breakHistory(url.pathname) } }));
   if (url.pathname.startsWith('/v3/historical-candle')) return route.fulfill(json({ status: 'success', data: { candles: [] } }));
   if (url.pathname.startsWith('/v2/fundamentals')) return route.fulfill(json({ status: 'success', data: [] }));
   if (/\/order|gtt/i.test(url.pathname)) mock.calls.push('ORDER-LIKE ' + url.pathname);
@@ -197,6 +218,28 @@ await page.evaluate(async (keys) => {
   const s = (await chrome.storage.local.get('settings')).settings;
   await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, watchlist: keys, settings: { ...s, scanner: { ...s.scanner, universe: 'nifty50' }, dayTrade: { ...s.dayTrade, enabled: true }, risk: { ...s.risk, capitalInr: 200000 } } });
 }, eq.map((r) => r.instrument_key));
+// app v1.15: ten earlier days of 5-minute prices for the breakout stock, stored the way the app stores
+// them (its history download starts with a login, which this test does not do): its "usual volume"
+await page.evaluate(async (key) => {
+  const db = await new Promise((res, rej) => {
+    const r = indexedDB.open('swing-assistant');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const tx = db.transaction('intraday', 'readwrite');
+  const st = tx.objectStore('intraday');
+  for (let back = 1; back <= 16; back++) {
+    const d = new Date(Date.UTC(2026, 10, 16 - back));
+    if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    const n = 75;
+    st.put({ key, date: d.toISOString().slice(0, 10), t: Array.from({ length: n }, (_, i) => 555 + i * 5), o: Array(n).fill(199), h: Array(n).fill(199.4), l: Array(n).fill(198.6), c: Array(n).fill(199), v: Array(n).fill(10_000) });
+  }
+  await new Promise((res, rej) => {
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+}, BREAK);
 await page.click('[data-testid="guide-done"]');
 
 console.log('── Login: profile + PIN');
@@ -499,7 +542,7 @@ for (let i = 0; i < 8 && !riseFound; i++) {
   mock.breakVol += 100_000;
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'rise:scan', payload: undefined }));
-  riseFound = await until(async () => !!(await page.$(`[data-testid="rising-now"] .rise-item[data-symbol="${BREAK_SYM}"]`)), 6000);
+  riseFound = await until(async () => /Likely to keep rising/.test((await page.textContent(`[data-testid="rising-now"] .rise-item[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? ''), 6000);
 }
 const riseText = ((await page.textContent(`.rise-item[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
@@ -533,6 +576,43 @@ const heldOk = await until(async () => {
 }, 10000);
 const riseHeldText = ((await page.textContent('[data-testid="rise-held"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('"Your stocks now": the stock bought from the Rising card (practice) gets keep / protect / take-the-profit advice with a price', heldOk && riseBought && new RegExp(`${BREAK_SYM}practice`).test(riseHeldText), `bought ${riseBought} (${riseBuyMsg.slice(0, 100)}) · ${riseHeldText.slice(riseHeldText.indexOf(BREAK_SYM) >= 0 ? riseHeldText.indexOf(BREAK_SYM) : 0).slice(0, 160)}`);
+console.log('── Early Movers — Before the Rally');
+const earlyOrder = await page.evaluate(() => {
+  const cards = [...document.querySelectorAll('section.card')].map((c) => c.getAttribute('data-testid'));
+  return { early: cards.indexOf('early-movers'), rise: cards.indexOf('rising-now'), signals: cards.indexOf('day-signals') };
+});
+check('"🌱 Early Movers — Before the Rally" is the first card on Day trade (above Rising now and Today\'s buy ideas)', earlyOrder.early >= 0 && earlyOrder.early < earlyOrder.rise && earlyOrder.early < earlyOrder.signals, JSON.stringify(earlyOrder));
+const moneyText = ((await page.textContent('[data-testid="early-money"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('it works with ₹10,000 capital and at most ₹50 risk per trade including all charges', moneyText.includes('₹10,000') && moneyText.includes('₹50') && moneyText.includes('including brokerage and all charges'), moneyText.slice(0, 160));
+let earlyFound = false;
+for (let i = 0; i < 10 && !earlyFound; i++) {
+  mock.breakPrice = 200.85;
+  mock.breakVol += 100_000;
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'rise:scan', payload: undefined }));
+  earlyFound = await until(async () => !!(await page.$(`[data-testid="early-movers"] .early-item[data-symbol="${BREAK_SYM}"]`)), 5000);
+}
+const earlyRow = await page.evaluate(async () => (await chrome.storage.session.get('early')).early?.rows?.[0] ?? null);
+const earlyText = ((await page.textContent(`.early-item[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check(
+  'an early mover is listed with name, NSE symbol, price, % change, catalyst, relative volume, VWAP, RSI, EMA 9, breakout price, entry, stop-loss, targets and score',
+  earlyFound && ['NSE: ADANIENT', 'Rel. volume', 'VWAP', 'RSI (5-min)', 'EMA 9 (5-min)', 'Breakout above', 'Entry', 'Stop-loss', 'Targets', 'score', '📰'].every((w) => earlyText.includes(w)),
+  earlyRow ? `${earlyRow.symbol} ${earlyRow.stage} score ${earlyRow.score}, ${earlyRow.size.qty} sh risk ₹${earlyRow.size.risk} · rvol ${earlyRow.rvolDay?.toFixed(1)}` : earlyText.slice(0, 200),
+);
+check('setups and breakouts are told apart (🌱 potential setup / 🚀 live, not confirmed / ✅ confirmed)', !!earlyRow && ['setup', 'breakout', 'confirmed'].includes(earlyRow.stage) && /Potential setup|Breakout — live, not confirmed|Confirmed breakout/.test(earlyText), earlyRow?.stage ?? 'none');
+check('the quantity keeps the ₹50 limit with all charges and fits the ₹10,000 capital', !!earlyRow && earlyRow.size.ok && earlyRow.size.risk <= 50 && earlyRow.size.value <= 10_000 && earlyText.includes('incl.') && earlyText.includes('charges'), earlyRow ? `${earlyRow.size.qty} shares, ₹${earlyRow.size.value}, risk ₹${earlyRow.size.risk} (charges ₹${earlyRow.size.charges})` : 'none');
+const instText = ((await page.textContent(`.early-item[data-symbol="${BREAK_SYM}"] [data-testid="early-inst"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('institutional signs are shown only when there is data — FII/DII clearly marked as not available', instText.includes('FII/DII: not available') && /bulk\/block deal|deal (BUY|SELL)/i.test(instText), instText.slice(0, 160));
+const earlyBanner = await until(async () => /ADANIENT: (breaking out|setup forming|breakout confirmed)/.test((await page.textContent('.alert-banners').catch(() => '')) ?? '') || (await page.evaluate(async () => ((await chrome.storage.session.get('earlyAlerted')).earlyAlerted?.sent ?? []).length > 0)), 6000);
+check('an Early Movers alert goes out (sound + in-app banner), each stage once', earlyBanner, JSON.stringify(await page.evaluate(async () => (await chrome.storage.session.get('earlyAlerted')).earlyAlerted?.sent ?? [])));
+await page.click('[data-testid="early-limits"] summary').catch(() => {});
+const limitsText = ((await page.textContent('[data-testid="early-limits"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"Data, delays and what is not available": live feed, Upstox news (no results database), NSE end-of-day files, FII/DII unavailable, pre-open indicative, score is not a chance', ['Upstox', 'no results database', 'NSE end-of-day files', 'FII / DII activity:', 'not available', 'Pre-open', 'not a chance of rising'].every((w) => limitsText.includes(w)), limitsText.slice(0, 220));
+const testText = ((await page.textContent('[data-testid="early-test"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('the past test line is there (it runs after the close on stored 5-minute prices)', /Past test/.test(testText), testText.slice(0, 160));
+await page.$eval(`.early-item[data-symbol="${BREAK_SYM}"]`, (el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-early.png') });
 const riseSent = await page.evaluate(async () => (await chrome.storage.session.get('riseAlerted')).riseAlerted?.keys ?? []);
 check('each "likely to keep rising" alert is sent once a day per stock', riseSent.filter((k) => k === 'NSE_EQ|INE423A01024').length === 1, JSON.stringify(riseSent));
 mock.breakPrice = 200.3;
@@ -780,7 +860,7 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: day-trade BUY / SELL ideas, auto-trader trades, Rising now, sell-first ideas, new top picks, closed-app checks and sounds — all on by default (no breakouts)', switches.length === 7 && switches.every(Boolean) && !!(await page.$('[data-alert="bot"]')) && !(await page.$('[data-alert="breakouts"]')), JSON.stringify(switches));
+check('Alerts card: day-trade BUY / SELL ideas, Early Movers, auto-trader trades, Rising now, sell-first ideas, new top picks, closed-app checks and sounds — all on by default (no breakouts)', switches.length === 8 && switches.every(Boolean) && !!(await page.$('[data-alert="bot"]')) && !!(await page.$('[data-alert="early"]')) && !(await page.$('[data-alert="breakouts"]')), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });

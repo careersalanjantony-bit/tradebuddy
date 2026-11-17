@@ -16,6 +16,9 @@ import { trainRiseAsync } from '../rising/trainRun';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { claimAlert } from './ideaGate';
+import { catalystFor, type NseFiles } from './earlyJobs';
+import { lookAt, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage } from '../early/early';
+import type { Catalyst } from '../early/catalyst';
 import { prevDays } from './mlJobs';
 import { scanUniverse } from './scanList';
 
@@ -86,6 +89,42 @@ interface Track {
   prev: PrevDay[] | null;
   since: number | null;
   sincePrice: number | null;
+  /** app v1.15: its stage in Early Movers today */
+  early: EarlyState | null;
+  /** when the earlier days (usual volume) were last looked for, while none were stored */
+  prevAt?: number;
+}
+
+/** App v1.15 — one row of "Early Movers — Before the Rally". */
+export interface EarlyRow {
+  key: string;
+  symbol: string;
+  name: string;
+  index?: string;
+  industry?: string;
+  stage: Stage;
+  since: number;
+  breakAt: number | null;
+  confirmedAt: number | null;
+  price: number;
+  changePct: number;
+  gapPct: number | null;
+  rvolDay: number | null;
+  rvolBar: number | null;
+  vwap: number;
+  ema9: number;
+  rsi: number | null;
+  resistance: number;
+  plan: EarlyPlan;
+  size: Size;
+  score: number;
+  reasons: string[];
+  warnings: string[];
+  catalyst: Catalyst | null;
+  deals: Array<{ kind: 'bulk' | 'block'; side: 'BUY' | 'SELL'; qty: number; client: string; date: string }>;
+  delivery: { pct: number; date: string } | null;
+  rise: RiseTag | null;
+  buyShare: number | null;
 }
 
 const empty = (): Bars => ({ t: [], o: [], h: [], l: [], c: [], v: [] });
@@ -241,7 +280,7 @@ export async function scanRising(now = Date.now()): Promise<number> {
     if (state.date !== date) state = { date, tracks: new Map() };
     const [scan, quotes, held, mdl, settings] = await Promise.all([scanUniverse(), getQuotes(), heldStocks(), getModel(), getSettings()]);
     const keys = [...new Set([...scan.keys, ...held.map((h) => h.key)])];
-    for (const k of keys) if (!state.tracks.has(k)) state.tracks.set(k, { bars: empty(), cur: null, load: 'no', retryAt: 0, prev: null, since: null, sincePrice: null });
+    for (const k of keys) if (!state.tracks.has(k)) state.tracks.set(k, { bars: empty(), cur: null, load: 'no', retryAt: 0, prev: null, since: null, sincePrice: null, early: null });
     loadMissing(keys, now);
     // the whole market: average move since the open of every scanned stock with a live price
     let sum = 0;
@@ -255,6 +294,29 @@ export async function scanRising(now = Date.now()): Promise<number> {
       }
     }
     const market = cnt >= 20 ? sum / cnt : null;
+    // app v1.15: each sector's average move since the open (3+ stocks with a live price)
+    const secSum = new Map<string, [number, number]>();
+    for (const k of scan.keys) {
+      const q = quotes[k];
+      const ind = scan.industry[k];
+      if (!ind || !fresh(q) || !q.open) continue;
+      const cell = secSum.get(ind) ?? [0, 0];
+      cell[0] += (q.ltp / q.open - 1) * 100;
+      cell[1]++;
+      secSum.set(ind, cell);
+    }
+    const sectorPct = (ind: string | undefined) => {
+      const c = ind ? secSum.get(ind) : undefined;
+      return c && c[1] >= 3 ? c[0] / c[1] : null;
+    };
+    const nse = await getLocal('nseFiles');
+    const capital = settings.dayTrade.earlyCapitalInr ?? 10_000;
+    const maxRisk = settings.dayTrade.earlyRiskInr ?? 50;
+    const earlyRows: EarlyRow[] = [];
+    const earlyEvents: Array<{ row: EarlyRow; event: 'setup' | 'breakout' | 'confirmed' }> = [];
+    let expired = 0;
+    let tooRisky = 0;
+    let badNews = 0;
     const rows: RiseRow[] = [];
     const reads = new Map<string, RiseRead>();
     let loaded = 0;
@@ -265,8 +327,26 @@ export async function scanRising(now = Date.now()): Promise<number> {
       if (!fresh(q)) continue;
       follow(tr, q, now);
       if (tr.load !== 'yes') continue;
+      // the 5-minute history may arrive after the open: look for the earlier days again every minute
+      if (!tr.prev?.length && now - (tr.prevAt ?? 0) > 60_000) {
+        tr.prevAt = now;
+        void prevDays(k, date)
+          .then((p) => {
+            if (p.length) tr.prev = p;
+          })
+          .catch(() => undefined);
+      }
       const { read, x } = readNow(tr, q, now, market, mdl);
       reads.set(k, read);
+      // app v1.15: Early Movers — the same candles, read for a setup / live breakout / confirmed breakout
+      if (scan.tag[k]) {
+        const er = await earlyStep(k, tr, q, now, read.tag, { sectorPct: sectorPct(scan.industry[k]), market, nse, capital, maxRisk, index: scan.tag[k], industry: scan.industry[k] });
+        if (er.expired) expired++;
+        if (er.tooRisky) tooRisky++;
+        if (er.badNews) badNews++;
+        if (er.row) earlyRows.push(er.row);
+        if (er.row && er.event) earlyEvents.push({ row: er.row, event: er.event });
+      }
       if (!x || !isRisingMoment(x) || !scan.tag[k]) continue;
       if (read.tag === 'strong' && tr.since === null) {
         tr.since = now;
@@ -301,6 +381,10 @@ export async function scanRising(now = Date.now()): Promise<number> {
       heldRows.push({ key: h.key, symbol: (await getInstrument(h.key))?.trading_symbol ?? h.key, source: h.source, qty: h.qty, buyPrice: h.buyPrice, price: q.ltp, tag: read.tag, chance: read.chance, measured: read.measured, action: a.action, protectAt: a.protectAt, text: a.text, reasons: read.reasons });
     }
     await setSession('rise', { at: now, date, scanned: scan.keys.length, loaded, modelAt: mdl?.report.at ?? null, rows: top, held: heldRows });
+    const stageRank: Record<Stage, number> = { confirmed: 3, breakout: 2, setup: 1 };
+    earlyRows.sort((a, b) => stageRank[b.stage] - stageRank[a.stage] || b.score - a.score);
+    await setSession('early', { at: now, date, rows: earlyRows.slice(0, 30), expired, tooRisky, badNews, capital, maxRisk });
+    await alertEarly(earlyEvents, now, settings.notifications.early !== false).catch((err: unknown) => log.warn('Early Movers alert failed', { error: errorMessage(err) }));
     await alertRising(top, heldRows, now, t, settings.notifications.rising).catch((err: unknown) => log.warn('Rising alert failed', { error: errorMessage(err) }));
     return top.length;
   } finally {
@@ -349,6 +433,132 @@ async function alertRising(rows: RiseRow[], held: HeldRow[], now: number, t: num
     });
   }
   if (changed) await setSession('riseAlerted', sent);
+}
+
+// ---------------------------------------------------------------- Early Movers (app v1.15)
+
+interface EarlyCtx {
+  sectorPct: number | null;
+  market: number | null;
+  nse: NseFiles | null | undefined;
+  capital: number;
+  maxRisk: number;
+  index?: string;
+  industry?: string;
+}
+
+/** One stock's step in Early Movers on a live price; the row when it is listed now. */
+async function earlyStep(
+  k: string,
+  tr: Track,
+  q: Quote,
+  now: number,
+  rise: RiseTag,
+  ctx: EarlyCtx,
+): Promise<{ row: EarlyRow | null; event: 'setup' | 'breakout' | 'confirmed' | null; expired: boolean; tooRisky: boolean; badNews: boolean }> {
+  const none = { row: null, event: null, expired: false, tooRisky: false, badNews: false };
+  const b = working(tr, now);
+  if (b.t.length < 2) return none;
+  const run = running(b);
+  const usual = usualFrom(tr.prev ?? []);
+  const i = b.t.length - 1;
+  // the candle in progress already carries its volume scaled to a full 5 minutes (see curVolume)
+  const prevHigh = tr.prev?.length ? tr.prev[tr.prev.length - 1]!.high : null;
+  const look = lookAt({ b, run, i, price: q.ltp, prevClose: q.prevClose, prevHigh, usual });
+  if (!look) return none;
+  const inst = await getInstrument(k);
+  const tick = inst?.tick ?? 0.05;
+  const n = tr.bars.t.length;
+  const lastDone = n ? { t: tr.bars.t[n - 1]!, c: tr.bars.c[n - 1]!, v: tr.bars.v[n - 1]!, usualBar: usual(tr.bars.t[n - 1]!).bar } : null;
+  const slot = Math.floor(minutesIST(now) / 5) * 5;
+  const step = stepEarly(tr.early, look, now, slot, lastDone, tick);
+  tr.early = step.state;
+  const s = tr.early;
+  if (!s || s.stage === 'expired') return { ...none, expired: s?.stage === 'expired' };
+  const catalyst = await catalystFor(k, now);
+  if (catalyst?.tone === 'bad') return { ...none, badNews: true };
+  const symbol = inst?.trading_symbol ?? k;
+  const deals = [...(ctx.nse?.bulk.deals ?? []), ...(ctx.nse?.block.deals ?? [])].filter((d) => d.symbol === symbol.toUpperCase()).map((d) => ({ kind: d.kind, side: d.side, qty: d.qty, client: d.client, date: d.date }));
+  const dv = ctx.nse?.delivery.bySymbol[symbol.toUpperCase()];
+  const buyShare = q.buyQty && q.sellQty && q.buyQty + q.sellQty > 0 ? q.buyQty / (q.buyQty + q.sellQty) : null;
+  const stage = s.stage;
+  // the plan is the frozen one; once it has broken out, buying now means buying at the live price —
+  // the quantity is worked out from that price so the risk limit still holds
+  const plan = stage === 'setup' ? s.plan : { ...s.plan, entry: Math.max(s.plan.entry, Math.round(Math.ceil(q.ltp / tick - 1e-9) * tick * 100) / 100) };
+  const size = sizeTrade(plan, ctx.capital, ctx.maxRisk, tick);
+  if (!size.ok) return { ...none, tooRisky: true };
+  const sc = scoreEarly({
+    look,
+    stage,
+    catalyst: catalyst ? { tone: catalyst.tone, kind: catalyst.kind } : null,
+    rise,
+    dealBuy: deals.some((d) => d.side === 'BUY'),
+    dealSell: deals.some((d) => d.side === 'SELL'),
+    deliveryPct: dv ? dv.pct : null,
+    sectorPct: ctx.sectorPct,
+    marketPct: ctx.market,
+    buyShare,
+  });
+  const row: EarlyRow = {
+    key: k,
+    symbol,
+    name: inst?.name ?? symbol,
+    ...(ctx.index ? { index: ctx.index } : {}),
+    ...(ctx.industry ? { industry: ctx.industry } : {}),
+    stage,
+    since: s.since,
+    breakAt: s.breakAt ?? null,
+    confirmedAt: s.confirmedAt ?? null,
+    price: q.ltp,
+    changePct: look.changePct,
+    gapPct: look.gapPct,
+    rvolDay: look.rvolDay,
+    rvolBar: look.rvolBar,
+    vwap: look.vwap,
+    ema9: look.ema9,
+    rsi: look.rsi,
+    resistance: s.level,
+    plan,
+    size,
+    score: sc.score,
+    reasons: [...setupCheck(look).why.slice(1, 4), ...sc.reasons].filter((x, j, all) => all.indexOf(x) === j).slice(0, 6),
+    warnings: sc.warnings,
+    catalyst,
+    deals,
+    delivery: dv ? { pct: dv.pct, date: dv.date } : null,
+    rise,
+    buyShare,
+  };
+  const event = step.event === 'setup' || step.event === 'breakout' || step.event === 'confirmed' ? step.event : null;
+  return { row, event, expired: false, tooRisky: false, badNews: false };
+}
+
+const STAGE_WORDS: Record<Stage, string> = { setup: 'setup forming', breakout: 'breaking out (live, not confirmed)', confirmed: 'breakout confirmed' };
+
+/**
+ * Alerts with sound and the in-app banner: a new setup with a score of 60 or more (one per stock a day,
+ * shared with the other scanners' alerts), its live breakout, and the confirmation — each once.
+ */
+async function alertEarly(events: Array<{ row: EarlyRow; event: Stage }>, now: number, on: boolean): Promise<void> {
+  if (!on || !events.length) return;
+  const date = istDate(now);
+  const prev = await getSession('earlyAlerted');
+  const sent = prev?.date === date ? [...prev.sent] : [];
+  let changed = false;
+  for (const { row: r, event } of events) {
+    const id = `${r.key}|${event}`;
+    if (sent.includes(id)) continue;
+    if (event === 'setup' && (r.score < 60 || !(await claimAlert(r.key, 'buy', 'early', now)))) continue;
+    sent.push(id);
+    changed = true;
+    const p = r.plan;
+    await notify(`alert:early-${r.key}-${event}-${date}`, {
+      title: `${event === 'confirmed' ? '✅' : event === 'breakout' ? '🚀' : '🌱'} ${r.symbol}: ${STAGE_WORDS[event]} · score ${r.score}`,
+      message: `₹${r.price.toFixed(2)} (${r.changePct >= 0 ? '+' : ''}${r.changePct.toFixed(1)}% today). Buy above ₹${p.breakout.toFixed(2)} · stop-loss ₹${p.stop.toFixed(2)} · targets ₹${p.t1.toFixed(2)} / ₹${p.t2.toFixed(2)} · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. ${r.reasons.slice(0, 2).join(' · ')}. Not a guarantee — you place the order yourself.`,
+      priority: 2,
+    });
+  }
+  if (changed) await setSession('earlyAlerted', { date, sent });
 }
 
 // ---------------------------------------------------------------- learning (once a day)

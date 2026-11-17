@@ -63,6 +63,10 @@ export interface SessionStore {
   /** 5-minute history download progress */
   intradayProgress: { done: number; total: number; running: boolean; at: number; error?: string };
   /** buyers meter + rising-now list (app v1.0) */
+  /** app v1.15: Early Movers — the live list, the pre-market view, alerts sent */
+  early: { at: number; date: string; rows: import('../background/risingJobs').EarlyRow[]; expired: number; tooRisky: number; badNews: number; capital: number; maxRisk: number };
+  premarket: { at: number; opened: boolean; rows: import('../background/earlyJobs').PremarketRow[]; newsAt: number | null; newsAsked: number; newsError: string | null };
+  earlyAlerted: { date: string; sent: string[] };
   /** app v1.14: the live Rising-now list and the reading of the stocks you hold */
   rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[] };
   riseAlerted: { date: string; keys: string[]; held: Record<string, number> };

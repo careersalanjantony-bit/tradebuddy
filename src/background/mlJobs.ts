@@ -83,7 +83,8 @@ export async function prevDays(key: string, date: string): Promise<PrevDay[]> {
     .slice(-10)
     .map(prevDayOf)
     .filter((x): x is PrevDay => !!x);
-  prevCache.set(key, { date, days });
+  // nothing stored yet (history still downloading): ask again next time instead of remembering "none"
+  if (days.length) prevCache.set(key, { date, days });
   return days;
 }
 

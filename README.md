@@ -38,6 +38,44 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.15
+
+- **🌱 Early Movers — Before the Rally** (first card on Day trade): stocks getting ready to rise
+  BEFORE the big move, across the same live list of all five indices (each stock once).
+  - **Potential setup:** up less than 4% today (and < 2.5% since the open), at/above the day's average
+    price and EMA 9, RSI 50–72, at least 2× its usual volume (today so far or the last 5 minutes), and
+    pressing within 1.5% under its resistance (today's high, or yesterday's high just above) with
+    higher lows.
+  - **Breakout — live, not confirmed:** the moment a live price crosses the breakout price with the
+    candle's volume ≥ 1.5× usual (checked on every live price, ~1.5 s). **Confirmed:** the 5-minute
+    candle closes above. A close back below = false breakout (removed). Expired signals (no breakout
+    in 45 min, ran more than 1× the risk above the entry, fell to the stop) are removed and counted.
+  - Each stock shows name, NSE symbol, price, % change, catalyst, relative volume, VWAP, RSI, EMA 9,
+    breakout price, entry, stop-loss, two targets, a score out of 100 (how many independent signs
+    agree — not a chance), the reasons and any warnings.
+  - **Your money:** capital ₹10,000 and at most ₹50 risk per trade including brokerage, every Upstox
+    Intraday charge and one tick of slippage (both changeable on the card). The quantity is the most
+    shares that keep that limit without borrowing; a trade that cannot keep it is not shown. During a
+    live breakout the quantity is worked out from the live price.
+  - **Catalysts:** Upstox news for every scanned stock (30 per request) before the open and every 30
+    minutes, read by words into results / order win / upgrade / corporate action / approval / deal /
+    trouble, with the headline shown. There is no results database: growth numbers only when a
+    headline says so. Bad news keeps a stock out.
+  - **Gap-ups:** the opening gap from 9:15 (an indicative pre-open price from 9:00, marked as such).
+  - **Institutional signs:** NSE's end-of-day bulk and block deal files and the delivery % (dated, last
+    trading day). **FII / DII: not available** (NSE publishes it only on its website).
+  - **Alerts** with sound and the in-app banner: a setup forming (score 60+), its live breakout and the
+    confirmation — each once (new switch in Settings → Alerts).
+  - **Past test** on the stored 5-minute history with the rules as fixed (nothing tuned): early (live
+    breakout), early (after confirmation), "late chasers" (already up 4%+) and a plain baseline, with
+    your capital and ₹ risk after charges, and the older and newer half of the days separately. Only
+    price and volume can be tested (news, deals and the order book have no stored history).
+  - A "Data, delays and what is not available" panel on the card.
+- Today's Buy Ideas, Falling Now and Rising now stay as they were. Breakout detection is part of
+  Early Movers; the separate Breakout Today card stays switched off as asked on 17 Nov.
+- Fix: stocks whose 5-minute history arrives after the open get their usual volume within a minute
+  (it was missing for the rest of the day).
+
 ## New in 1.14
 
 - **📈 Rising now — live** (the first card on Day trade, also on Home). Every stock of the five indices

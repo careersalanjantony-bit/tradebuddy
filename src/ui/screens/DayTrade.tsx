@@ -21,6 +21,7 @@ import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
 import { BreadthCard, FallingNowCard } from '../components/Shorts';
 import { AlsoIn, IndexTag, ScanCoverage, useScanUniverse } from '../components/ScanList';
+import { EarlyMoversCard } from '../components/EarlyMovers';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const day = (d: string) => formatDateIST(istEpoch(d, '12:00'));
@@ -131,6 +132,7 @@ export function DayTradeScreen({ go }: { go: Go }) {
         <>
           <DayPlan now={now} />
           <MoodLine />
+          <EarlyMoversCard />
           <RisingNowCard />
           <BreadthCard />
           <SignalsCard amount={amount} slots={slots} />

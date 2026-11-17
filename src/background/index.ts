@@ -49,6 +49,7 @@ import { checkForUpdate, startUpdateChecks } from './updateJobs';
 import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas } from './botJobs';
 import { testProtect } from './botTest';
 import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
+import { earlyTick, refreshNseFiles, refreshPremarket, sweepCatalysts, testEarly } from './earlyJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -98,6 +99,11 @@ ready.then(() => setTimeout(() => void testBreakoutsIfDue().catch(() => undefine
 ready.then(() => setTimeout(() => void testProtect().catch(() => undefined), 120_000)).catch(() => undefined);
 // app v1.14: the Rising-now model (once a day outside market hours, or at once when there is none)
 ready.then(() => setTimeout(() => void trainRisingIfDue().catch(() => undefined), 150_000)).catch(() => undefined);
+// app v1.15: Early Movers' slower inputs (pre-market view, catalyst sweep, NSE files, past test) — every minute
+ready.then(() => {
+  setTimeout(() => earlyTick(), 20_000);
+  setInterval(() => earlyTick(), 60_000);
+}).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
@@ -306,6 +312,16 @@ const handlers: Handlers = {
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'breakouts:scan': async () => ({ found: await scanBreakouts(Date.now()) }),
   'rise:scan': async () => ({ listed: await scanRising(Date.now()) }),
+  'early:refresh': async () => {
+    const now = Date.now();
+    const [c, n] = await Promise.all([sweepCatalysts(now, true), refreshNseFiles(now, true)]);
+    await refreshPremarket(now + 60_000);
+    return { catalysts: c ? Object.keys(c.byKey).length : 0, nse: !!n };
+  },
+  'early:test': async () => {
+    const r = (await testEarly(Date.now(), true)) as { days?: number } | null;
+    return { ok: !!r, days: r?.days ?? 0 };
+  },
   'rise:train': async () => {
     const m = await trainRising(Date.now(), true);
     return { ok: !!m, days: m ? m.report.trainDays + m.report.testDays : 0 };

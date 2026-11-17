@@ -38,6 +38,8 @@ export interface ScanUniverse {
   perIndex: Record<string, number>;
   /** where each list came from */
   sources: Partial<Record<UniverseIndex, 'nse' | 'bundled'>>;
+  /** app v1.15: each company's industry as NSE lists it (for sector strength) */
+  industry: Record<string, string>;
 }
 
 export const membersOf = (index: UniverseIndex, stored: ScanLists | null | undefined): IndexMember[] => stored?.lists[index]?.members ?? BUNDLED[index] ?? [];
@@ -52,6 +54,7 @@ export function buildScan(stored: ScanLists | null | undefined, ownKeys: string[
   const added: Record<string, number> = {};
   const perIndex: Record<string, number> = {};
   const sources: Partial<Record<UniverseIndex, 'nse' | 'bundled'>> = {};
+  const industry: Record<string, string> = {};
   for (const index of SCAN_ORDER) {
     const members = membersOf(index, stored);
     perIndex[INDEX_TAG[index]] = members.length;
@@ -59,6 +62,7 @@ export function buildScan(stored: ScanLists | null | undefined, ownKeys: string[
     let n = 0;
     for (const m of members) {
       const k = memberKey(m);
+      if (m.industry && !industry[k]) industry[k] = m.industry;
       if (tag[k]) continue;
       tag[k] = INDEX_TAG[index];
       keys.push(k);
@@ -74,7 +78,7 @@ export function buildScan(stored: ScanLists | null | undefined, ownKeys: string[
     own++;
   }
   if (own) added[OWN_TAG] = own;
-  return { keys, tag, added, perIndex, sources };
+  return { keys, tag, added, perIndex, sources, industry };
 }
 
 /** One-line description: "Nifty 50, Nifty 100, Midcap 100, Smallcap 100 and Nifty 500 — 503 stocks". */

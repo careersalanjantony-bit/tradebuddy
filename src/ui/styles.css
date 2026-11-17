@@ -1324,3 +1324,21 @@ body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: n
 .rise-held { margin: 6px 0 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; gap: 6px; }
 .rise-held-row.sell { border-left: 3px solid var(--err); padding-left: 6px; }
 .rise-held-row.keep { border-left: 3px solid var(--ok); padding-left: 6px; }
+
+/* app v1.15 — Early Movers */
+.early-list { display: flex; flex-direction: column; gap: 10px; }
+.early-item { padding: 10px; border: 1px solid var(--border); border-radius: 12px; }
+.early-item.breakout { border-color: var(--warn); }
+.early-item.confirmed { border-color: var(--ok); }
+.chip.early-stage { font-weight: 700; }
+.chip.early-stage.setup { color: var(--info); border-color: var(--info); background: var(--info-bg); }
+.chip.early-stage.breakout { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+.chip.early-stage.confirmed { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.chip.early-score { font-weight: 700; }
+.chip.early-gap { color: var(--ok); border-color: var(--ok); }
+.early-money { padding: 8px 10px; border: 1px dashed var(--border); border-radius: 10px; }
+.early-pre { margin-top: 8px; }
+.early-pre-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.early-pre-row { padding: 6px 8px; border: 1px solid var(--border); border-radius: 10px; }
+.reason-pill.warn { color: var(--warn); border-color: var(--warn); }
+.early-cat, .early-plan { margin-top: 6px; }

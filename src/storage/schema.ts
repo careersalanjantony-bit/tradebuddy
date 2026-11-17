@@ -124,6 +124,9 @@ export interface Settings {
     shortRiskInr?: number;
     /** most you want to lose on one breakout (buy-first) trade, ₹ (app v1.9) */
     breakoutRiskInr?: number;
+    /** app v1.15: Early Movers — capital and most total risk per trade (incl. all charges) */
+    earlyCapitalInr?: number;
+    earlyRiskInr?: number;
     /** app v1.11: what the three Day Trade scanners watch — all five indices, or only the Stocks-tab list */
     /** notification + sound for new signals */
     alerts: boolean;
@@ -149,6 +152,8 @@ export interface Settings {
     shorts?: boolean;
     /** app v1.9: instant alerts for live breakouts and confirmed breakouts */
     breakouts?: boolean;
+    /** app v1.15: Early Movers alerts (setup forming, live breakout, confirmed) */
+    early?: boolean;
     /** app v1.13: an alert each time the auto-trader buys, sells or stops for the day (with the steps to copy it in Upstox) */
     bot?: boolean;
     /** app v1.9: the sound of every notification (also with the app closed) */
@@ -309,6 +314,10 @@ export interface LocalStore {
   shortTest: (import('../daytrade/shortScan').ShortTestReport & { at: number }) | null;
   /** past test of the confirmed-breakout rule on the 5-minute history (app v1.9) */
   breakoutTest: (import('../daytrade/breakout').BreakoutTestReport & { at: number }) | null;
+  /** app v1.15: Early Movers — NSE end-of-day files, one catalyst per stock, the past test */
+  nseFiles: import('../background/earlyJobs').NseFiles | null;
+  catalysts: import('../background/earlyJobs').CatalystStore | null;
+  earlyTest: (import('../early/earlyTest').EarlyTestResult & { at: number }) | null;
   /** app v1.14: the learned Rising-now model and its test on unseen days */
   riseModel: import('../rising/momentum').RiseModel | null;
   /** app v1.13: the auto-trader's money protection on past days (old way vs protected) */

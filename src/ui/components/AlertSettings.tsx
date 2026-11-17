@@ -20,6 +20,13 @@ export function AlertSettings({ settings }: { settings: Settings }) {
       set: (v) => updateSettings({ dayTrade: { alerts: v } }),
     },
     {
+      id: 'early',
+      on: settings.notifications.early !== false,
+      title: '🌱 Early Movers',
+      about: 'A setup forming (score 60+), its live breakout and the 5-minute confirmation — each once, with sound, the plan and the shares for your ₹ risk limit.',
+      set: (v) => updateSettings({ notifications: { early: v } }),
+    },
+    {
       id: 'bot',
       on: settings.notifications.bot !== false,
       title: '🤖 Auto-trader trades',

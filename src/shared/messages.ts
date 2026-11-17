@@ -78,6 +78,9 @@ export interface ApiMap {
   'breakouts:scan': { req: undefined; res: { found: number } };
   /** app v1.14: read the Rising-now list now / learn the model again */
   'rise:scan': { req: undefined; res: { listed: number } };
+  /** app v1.15: Early Movers — refresh catalysts and NSE files now / run the past test now */
+  'early:refresh': { req: undefined; res: { catalysts: number; nse: boolean } };
+  'early:test': { req: undefined; res: { ok: boolean; days: number } };
   'rise:train': { req: undefined; res: { ok: boolean; days: number } };
   'breakouts:test': { req: undefined; res: { done: boolean } };
   'update:check': { req: undefined; res: import('../update/update').UpdateState };

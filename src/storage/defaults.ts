@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scanner: { eveningEnabled: true, morningEnabled: true, fundamentalFilter: false, universe: 'all', newPickAlerts: true, rankBy: 'safety' },
   alerts: { cooldownMinutes: 15, hysteresisPct: 0.1, staleSeconds: 60 },
   portfolio: { autoSync: true },
-  dayTrade: { shortRiskInr: 50, breakoutRiskInr: 100, enabled: true, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
+  dayTrade: { shortRiskInr: 50, breakoutRiskInr: 100, earlyCapitalInr: 10_000, earlyRiskInr: 50, enabled: true, testSessions: 120, slippagePct: 0.02, maxLossesPerDay: 2, alerts: true },
   claude: {
     reportModel: 'claude-opus-5-5',
     extractModel: 'claude-haiku-5-5',
@@ -89,6 +89,9 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     breakoutTest: null,
     botProtectTest: null,
     riseModel: null,
+    nseFiles: null,
+    catalysts: null,
+    earlyTest: null,
     breakoutAlerted: null,
     scanLists: null,
     ideaAlerts: null,
