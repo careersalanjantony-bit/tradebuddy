@@ -29,7 +29,7 @@ import { INDEX_KEYS } from '../data/indices';
 import { checkWallet, recordEquity } from './walletJobs';
 import { refreshFlow } from './flowJobs';
 import { refreshBreadth, scanShorts } from './shortJobs';
-import { scanBreakouts } from './breakoutJobs';
+import { scanRising, trainRisingIfDue } from './risingJobs';
 import { priceKeys } from './scanList';
 import type { Quote } from '../data/quotesParse';
 import { runBot } from './botJobs';
@@ -165,8 +165,10 @@ export async function afterQuotes(now = Date.now()): Promise<void> {
     if (m.phase === 'open') void refreshFlow(now).catch(() => undefined);
     void refreshBreadth(now).catch(() => undefined);
     if (m.phase === 'open') void scanShorts(now).catch(() => undefined);
-    // breakouts (app v1.9): also after every price poll, when the live feed is not connected
-    if (m.phase === 'open') void scanBreakouts(now).catch((err: unknown) => log.warn('Breakout scan failed', { error: err }));
+    // Rising now (app v1.14): also after every price poll, when the live feed is not connected
+    if (m.phase === 'open') void scanRising(now).catch((err: unknown) => log.warn('Rising scan failed', { error: err }));
+    // its learning: once a day outside market hours (or at once when there is none yet)
+    void trainRisingIfDue(now).catch(() => undefined);
   } finally {
     afterRunning = false;
   }
@@ -177,9 +179,9 @@ let lastFeedChecksAt = 0;
 setFeedListener(async (now) => {
   // stocks the feed does not cover get their price checked too (also with the app in the background)
   if ((await getSession('feedStatus'))?.connected) void fillStale(now)?.catch(() => undefined);
-  // breakouts are checked on EVERY live price update (about each second), not every 2 seconds:
-  // the alert must come the moment the price crosses the resistance with a volume surge
-  void scanBreakouts(now).catch(() => undefined);
+  // Rising now is read on every live price update (at most every 1.5 s), not every 2 seconds:
+  // a stock should be listed the moment it qualifies
+  void scanRising(now).catch(() => undefined);
   if (now - lastFeedChecksAt < 2_000) {
     announce('quotes');
     return;

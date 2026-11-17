@@ -166,6 +166,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (botProtectTest === undefined) await kv.set({ botProtectTest: null });
     },
   },
+  {
+    to: 17,
+    description: 'app v1.14: the learned Rising-now model',
+    async up(kv) {
+      const { riseModel } = await kv.get(['riseModel']);
+      if (riseModel === undefined) await kv.set({ riseModel: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

@@ -408,9 +408,19 @@ export async function breakoutsIdle(): Promise<void> {
   for (let i = 0; i < 100 && (state.loading || reloading); i++) await Promise.all([state.loading, reloading]);
 }
 
+/**
+ * App v1.14: the owner switched "Breakout Today" off ("nothing useful in it") — the live "Rising now"
+ * engine (risingJobs.ts) replaced it. The code stays (tests switch it on), but nothing runs by default.
+ */
+let breakoutsOn = false;
+export function setBreakoutsOn(on: boolean): void {
+  breakoutsOn = on;
+}
+export const breakoutsEnabled = (): boolean => breakoutsOn;
+
 /** On every price update in market hours (at most about once a second). */
 export async function scanBreakouts(now = Date.now()): Promise<number> {
-  if (scanning || Math.abs(now - lastScanAt) < 800) return 0;
+  if (!breakoutsOn || scanning || Math.abs(now - lastScanAt) < 800) return 0;
   scanning = true;
   lastScanAt = now;
   try {
@@ -581,6 +591,7 @@ export async function testBreakouts(now = Date.now()): Promise<void> {
 }
 
 export async function testBreakoutsIfDue(now = Date.now()): Promise<void> {
+  if (!breakoutsOn) return;
   const r = await getLocal('breakoutTest');
   if (r && now - r.at < 20 * 3600_000) return;
   await testBreakouts(now).catch((err: unknown) => log.warn('Breakout past test failed', { error: errorMessage(err) }));

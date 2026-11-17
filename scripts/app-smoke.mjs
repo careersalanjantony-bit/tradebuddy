@@ -352,14 +352,14 @@ await page.waitForTimeout(300);
 await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-practice-products.png'), fullPage: true });
 
-console.log('── Day trade tab: rising now, buyers meter, learning');
+console.log('── Day trade tab: rising now, learning');
 await page.click('.bottom-nav [data-nav="daytrade"]');
-const rising = await until(async () => (await page.$$('[data-testid="rising-now"] .holding')).length > 0, 30000);
+check('page slides in from the side of the tab (Day trade is right of Home)', await until(() => page.evaluate(() => !!document.querySelector('main.page.from-right, main.page.from-left')), 3000));
+const rising = await until(async () => !!(await page.$('[data-testid="rising-now"]')), 15000);
 const risingText = ((await page.textContent('[data-testid="rising-now"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-check('"Rising now" lists stocks with the buyers meter', rising && /Buyers strong|More buyers/.test(risingText), risingText.slice(0, 200));
-check('"Rising now" says it is a list to watch, not a signal', risingText.includes('not a buy signal'));
+check('"Rising now — live" reads every stock on each live price, with a tag for whether it is likely to keep rising', rising && risingText.includes('read on each live price') && risingText.includes('likely to keep rising'), risingText.slice(0, 200));
+check('"Rising now" says the tag is never a promise', risingText.includes('Never a promise'));
 check('the self-learning line is on the Day trade tab', ((await page.textContent('[data-testid="learning-line"]').catch(() => '')) ?? '').includes('Self-learning'));
-check('page slides in from the side of the tab (Day trade is right of Home)', await page.evaluate(() => !!document.querySelector('main.page.from-right, main.page.from-left')));
 check("Day trade starts with today's plan, the current step highlighted (10:30 = buy ideas)", ((await page.textContent('[data-testid="day-plan"] .plan-step.now').catch(() => '')) ?? '').includes('Buy ideas'));
 check('the past test and how-it-works are folded away under one line', !!(await page.$('[data-testid="day-details"]')) && !(await page.$eval('[data-testid="day-details"]', (e) => e.hasAttribute('open'))));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
@@ -478,66 +478,63 @@ const covered = await until(() => page.evaluate(async () => ((await chrome.stora
 check('"Buy back now" closes the rest of the sell-first trade', covered);
 mock.fallPrice = undefined;
 
-console.log('── Breakout Today (live)');
+console.log('── Rising now (live)');
 await page.click('.bottom-nav [data-nav="daytrade"]');
-await page.waitForSelector('[data-testid="breakouts"]', { timeout: 15000 }).catch(() => {});
-const boOrder = await page.evaluate(() => {
+await page.waitForSelector('[data-testid="rising-now"]', { timeout: 15000 }).catch(() => {});
+const riseOrder = await page.evaluate(() => {
   const cards = [...document.querySelectorAll('section.card')].map((c) => c.getAttribute('data-testid'));
-  return cards.indexOf('breakouts') - cards.indexOf('falling-now');
+  return { rise: cards.indexOf('rising-now'), signals: cards.indexOf('day-signals'), falling: cards.indexOf('falling-now'), breakouts: cards.indexOf('breakouts') };
 });
-check('"🚀 Breakout Today — buy-first ideas" sits directly below "Falling now"', boOrder === 1, `${boOrder}`);
-const boStatus = ((await page.textContent('[data-testid="breakout-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-check('it says it checks the list on every live price', /Checking \d+ stocks on every live price/.test(boStatus), boStatus);
-// the price crosses ₹200.45 with a burst of volume → alert at once (no waiting for the 5-minute scan)
-let boFound = false;
-for (let i = 0; i < 4 && !boFound; i++) {
+check('"📈 Rising now — live" is the first idea card on Day trade; "Breakout Today" is switched off and gone', riseOrder.rise >= 0 && riseOrder.rise < riseOrder.signals && (riseOrder.falling === -1 || riseOrder.rise < riseOrder.falling) && riseOrder.breakouts === -1, JSON.stringify(riseOrder));
+// a learned check stored the way the app stores it (its maths is covered by the unit tests; here: the screen and the alert)
+const RISE_MODEL = {
+  version: 'rise-v1',
+  model: { scaler: { mean: Array(17).fill(0), std: Array(17).fill(1) }, logistic: { w: Array(17).fill(0), b: 0 }, boosted: { base: 0, lr: 0.1, trees: [] } },
+  report: { version: 'rise-v1', at: 1, trainDays: 84, testDays: 36, testFrom: '2026-09-28', testTo: '2026-11-13', samples: 61234, base: { n: 9000, win: 0.31, avgNetPct: -0.04 }, auc: 0.61, bands: [{ lo: 0, hi: 1, n: 9000, win: 0.62, avgNetPct: 0.12 }], strongFrom: 0.4, fadeTo: -1, old: { n: 2400, win: 0.29, avgNetPct: -0.07 }, strong: { n: 900, win: 0.62, avgNetPct: 0.12 }, early: { n: 300, win: 0.58, avgNetPct: 0.09 }, importance: [{ name: 'volume now vs usual', weight: 0.1 }, { name: 'last 15 minutes', weight: 0.08 }, { name: 'vs day average price', weight: 0.05 }] },
+};
+await page.evaluate(async (m) => chrome.storage.local.set({ riseModel: m }), RISE_MODEL);
+let riseFound = false;
+for (let i = 0; i < 8 && !riseFound; i++) {
   mock.breakPrice = 200.85;
   mock.breakVol += 100_000;
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
-  boFound = await until(async () => !!(await page.$(`[data-testid="breakouts"] .bo-idea[data-symbol="${BREAK_SYM}"]`)), 6000);
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'rise:scan', payload: undefined }));
+  riseFound = await until(async () => !!(await page.$(`[data-testid="rising-now"] .rise-item[data-symbol="${BREAK_SYM}"]`)), 6000);
 }
-if (!boFound) {
-  const dbg = await page.evaluate(async (k) => {
-    const b = (await chrome.storage.session.get('breakouts')).breakouts;
-    const q = (await chrome.storage.session.get('quotes')).quotes?.[k];
-    const lp = (await chrome.storage.session.get('lastPoll')).lastPoll;
-    const u = (await chrome.storage.local.get('universe')).universe;
-    const st = (await chrome.storage.local.get('settings')).settings;
-    return { uni: u ? { index: u.index, source: u.source, n: u.members.length, first: u.members.slice(0, 3).map((m) => m.isin), hasFill: u.members.some((m) => m.isin === 'INF000000000') } : null, setUni: st.scanner.universe, now: new Date(Date.now()).toISOString(), at: b ? new Date(b.at).toISOString() : null, scanned: b?.scanned, signals: b?.signals?.length, q, lastPoll: lp ? { ...lp, at: new Date(lp.at).toISOString() } : null };
-  }, BREAK);
-  console.log('DEBUG breakout:', JSON.stringify(dbg), 'ltpCalls', mock.ltpCalls, 'breakSeen', mock.breakSeen, 'lastLtpKeys', mock.lastLtpKeys, 'BREAK', BREAK);
-}
-const boSig = await page.evaluate(async () => (await chrome.storage.session.get('breakouts')).breakouts?.signals?.[0]);
-const boText = ((await page.textContent(`.bo-idea[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const riseText = ((await page.textContent(`.rise-item[data-symbol="${BREAK_SYM}"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
-  'a live breakout shows at once: name, breakout price, current price, time, volume jump, entry, stop-loss, two targets and quantity',
-  boFound && boSig?.status === 'breakout' && Math.abs(boSig.level - 200.45) < 1e-6 && ['🚀 Breakout', 'Breakout price', '₹200.85', 'Current price', 'Volume increase', 'Breakout time', 'Stop-loss', 'Target 1', 'Target 2', 'shares'].every((w) => boText.includes(w)),
-  boSig ? `${boSig.symbol} ${boSig.price} > ${boSig.level}, ${boSig.volX.toFixed(1)}× volume, ${boSig.plan.qty} @ ${boSig.plan.entry} stop ${boSig.plan.stop} t1 ${boSig.plan.t1} t2 ${boSig.plan.t2}` : boText.slice(0, 160),
+  'a rising stock is listed live with its tag ("Likely to keep rising" and how often similar moments did), reasons, and a quick-trade plan (take profit +0.6%, stop −0.4%, sell by)',
+  riseFound && riseText.includes('Likely to keep rising') && /62\/100/.test(riseText) && riseText.includes('Quick trade') && riseText.includes('take profit') && riseText.includes('sell by'),
+  riseText.slice(0, 220),
 );
-const bannerShown = await until(async () => ((await page.textContent('.alert-banners').catch(() => '')) ?? '').includes(`Breakout: ${BREAK_SYM}`), 5000);
-check('the alert pops up inside the app at the top (with the chosen tone)', bannerShown);
+const riseModelText = ((await page.textContent('[data-testid="rise-model"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('the learned check says how it did on days it never saw, next to the old Rising-today list (never "100%")', riseModelText.includes('tested on the newest 36') && riseModelText.includes('the old Rising-today list: 29%') && riseModelText.includes('62%') && !/100%/.test(riseModelText), riseModelText.slice(0, 220));
+const riseBanner = await until(async () => ((await page.textContent('.alert-banners').catch(() => '')) ?? '').includes(`${BREAK_SYM} likely to keep rising`), 6000);
+check('the alert pops up inside the app at the top (with the chosen tone)', riseBanner);
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-alert-banner.png') });
-await page.waitForTimeout(400);
-await page.$eval(`.bo-idea[data-symbol="${BREAK_SYM}"]`, (el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
-await revealAll();
-await page.screenshot({ animations: 'disabled', path: join(out, 'app-breakout.png') });
 await page.click('.alert-banner-close').catch(() => {});
-await page.click(`.bo-idea[data-symbol="${BREAK_SYM}"] [data-testid="breakout-practice"]`);
-const sheetOk = await until(async () => ((await page.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').includes(BREAK_SYM), 5000);
-check('"Practice buy" opens the buy panel with the breakout’s quantity, stop-loss and target', sheetOk);
+await page.$eval(`.rise-item[data-symbol="${BREAK_SYM}"]`, (el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+await revealAll();
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-rising.png') });
+await page.click(`.rise-item[data-symbol="${BREAK_SYM}"] [data-testid="rise-practice"]`);
+const riseSheet = await until(async () => ((await page.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').includes(BREAK_SYM), 5000);
+check('"Practice buy" opens the buy panel for it (Intraday, with its stop-loss and take-profit)', riseSheet && ((await page.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').includes('Intraday'));
+await page.click('[data-testid="trade-submit"]').catch(() => {});
+await until(async () => /Bought|bought|placed|Order/i.test((await page.textContent('[data-testid="trade-msg"]').catch(() => '')) ?? ''), 5000);
+const riseBuyMsg = ((await page.textContent('[data-testid="trade-msg"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const riseBought = await page.evaluate(async (k) => ((await chrome.storage.local.get('wallet')).wallet?.holdings ?? []).some((h) => h.key === k), 'NSE_EQ|INE423A01024');
 await page.keyboard.press('Escape').catch(() => {});
 await page.click('.sheet-backdrop', { position: { x: 10, y: 10 } }).catch(() => {});
-const sentOnce = await page.evaluate(async () => (await chrome.storage.local.get('breakoutAlerted')).breakoutAlerted?.ids ?? []);
-check('each breakout alert is sent once (remembered even if the app restarts)', sentOnce.length === 1 && sentOnce[0].endsWith('-early'), JSON.stringify(sentOnce));
-const boTag = ((await page.textContent(`.bo-idea[data-symbol="${BREAK_SYM}"] [data-testid="index-tag"]`).catch(() => '')) ?? '').trim();
-const gate = await page.evaluate(async () => (await chrome.storage.local.get('ideaAlerts')).ideaAlerts?.items ?? []);
-// the narrowest of the lists the app downloaded (the fake NSE Nifty 50 file here has no ADANIENT, so: Nifty 100)
-const boWant = await page.evaluate(async () => {
-  const l = (await chrome.storage.local.get('scanLists')).scanLists?.lists ?? {};
-  const has = (i) => (l[i]?.members ?? []).some((m) => m.isin === 'INE423A01024');
-  return has('nifty50') ? 'Nifty 50' : has('nifty100') ? 'Nifty 100' : '?';
-});
-check('the breakout shows its index, and the alert is recorded once across the three scanners', boTag === boWant && gate.filter((x) => x.key === 'NSE_EQ|INE423A01024' && x.side === 'buy').length === 1, `${boTag || 'no tag'} (expected ${boWant}) · ${JSON.stringify(gate.map((x) => `${x.src}:${x.side}`))}`);
+const heldOk = await until(async () => {
+  await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'rise:scan', payload: undefined }));
+  const txt = ((await page.textContent(`[data-testid="rise-held"]`).catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  const at = txt.indexOf(`${BREAK_SYM}practice`);
+  return at >= 0 && /Likely to keep rising — keep, sell if it drops to ₹|Unclear — keep a tight stop|Slowing/.test(txt.slice(at, at + 220));
+}, 10000);
+const riseHeldText = ((await page.textContent('[data-testid="rise-held"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('"Your stocks now": the stock bought from the Rising card (practice) gets keep / protect / take-the-profit advice with a price', heldOk && riseBought && new RegExp(`${BREAK_SYM}practice`).test(riseHeldText), `bought ${riseBought} (${riseBuyMsg.slice(0, 100)}) · ${riseHeldText.slice(riseHeldText.indexOf(BREAK_SYM) >= 0 ? riseHeldText.indexOf(BREAK_SYM) : 0).slice(0, 160)}`);
+const riseSent = await page.evaluate(async () => (await chrome.storage.session.get('riseAlerted')).riseAlerted?.keys ?? []);
+check('each "likely to keep rising" alert is sent once a day per stock', riseSent.filter((k) => k === 'NSE_EQ|INE423A01024').length === 1, JSON.stringify(riseSent));
 mock.breakPrice = 200.3;
 
 console.log('── In-app updates');
@@ -783,7 +780,7 @@ console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);
 await page.waitForSelector('[data-testid="alert-settings"]', { timeout: 10000 });
 const switches = await page.$$eval('[data-testid="alert-settings"] input.switch', (els) => els.map((e) => e.checked));
-check('Alerts card: day-trade BUY / SELL ideas, breakouts, auto-trader trades, rising fast, sell-first ideas, new top picks, closed-app checks and sounds — all on by default', switches.length === 8 && switches.every(Boolean) && !!(await page.$('[data-alert="bot"]')), JSON.stringify(switches));
+check('Alerts card: day-trade BUY / SELL ideas, auto-trader trades, Rising now, sell-first ideas, new top picks, closed-app checks and sounds — all on by default (no breakouts)', switches.length === 7 && switches.every(Boolean) && !!(await page.$('[data-alert="bot"]')) && !(await page.$('[data-alert="breakouts"]')), JSON.stringify(switches));
 await page.click('[data-alert="rising"] input.switch');
 check('a switch changes the setting', await until(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings.notifications.rising === false), 5000));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-settings.png') });

@@ -106,6 +106,16 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
   const [indexView, setIndexView] = usePersistentState<IndexView>('stocks.index', 'all');
   const members = useIndexMembers();
   const { tag } = useScanUniverse();
+  // app v1.14: today's live reading next to the long-term labels
+  const riseS = useSessionValue('rise');
+  const riseOf = useMemo(() => {
+    const m = new Map<string, { tag: 'strong' | 'unclear' | 'fading'; measured: number | null }>();
+    if (riseS && riseS.date === istDate(Date.now())) {
+      for (const r of riseS.rows) m.set(r.key, { tag: r.tag, measured: r.measured });
+      for (const h of riseS.held) m.set(h.key, { tag: h.tag, measured: h.measured });
+    }
+    return m;
+  }, [riseS?.at]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const safety = (settings?.scanner.rankBy ?? 'safety') === 'safety';
@@ -279,6 +289,7 @@ function AutoList({ go, keys }: { go: Go; keys: string[] }) {
             data={r.data}
             onOpen={() => go('stock', r.key)}
             {...(tag[r.key] ? { indexTag: tag[r.key] } : {})}
+            {...(riseOf.get(r.key) ? { rise: riseOf.get(r.key)! } : {})}
             {...(r.signal ? { signal: { side: r.signal.side, time: formatTimeIST(r.signal.at).slice(0, 5) } } : {})}
             {...(r.pick ? { badge: safety ? `#${r.pick.i + 1} pick · made money ${r.pick.won} of ${r.pick.of} times` : `#${r.pick.i + 1} pick · past avg ${r.pick.pct >= 0 ? '+' : ''}${r.pick.pct.toFixed(1)}%` } : {})}
           />

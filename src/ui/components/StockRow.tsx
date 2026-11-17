@@ -5,6 +5,8 @@ import { VerdictChip } from './Explain';
 import { PLAIN_VERDICT, explainSnapshot, plainLine } from '../../advisor/explain';
 import { useSettings } from '../hooks';
 import { Sparkline, useFlash } from './Motion';
+import { RiseChip } from './RisingNow';
+import type { RiseTag } from '../../rising/momentum';
 
 /** One compact stock line for the narrow side panel. */
 export function StockRow({
@@ -15,6 +17,7 @@ export function StockRow({
   badge,
   signal,
   indexTag,
+  rise,
 }: {
   symbol: string;
   data: StockData | undefined;
@@ -25,6 +28,8 @@ export function StockRow({
   signal?: { side: 'long' | 'short'; time: string };
   /** the narrowest index the stock is in ("Nifty 50", "Midcap 100"…; app v1.12) */
   indexTag?: string;
+  /** app v1.14: today's live Rising-now reading */
+  rise?: { tag: RiseTag; measured: number | null };
 }) {
   const s = data?.snapshot;
   const q = data?.quote;
@@ -51,6 +56,7 @@ export function StockRow({
             </span>
           )}
           {badge && <span class="chip pick">{badge}</span>}
+          {rise && <RiseChip tag={rise.tag} measured={rise.measured} />}
           <span class="px">
             {closes.length > 5 && <Sparkline values={closes} width={64} height={24} />}
             <span class={`price ${flash}`}>{price !== null ? `₹${formatNumberIN(price)}` : '—'}</span>
@@ -60,7 +66,8 @@ export function StockRow({
         {s ? (
           simple ? (
             <div class="line2 plain">
-              <span class={`chip verdict ${verdict === 'Good setup' ? 'good' : verdict === 'Wait' ? 'wait' : verdict === 'Avoid' || verdict === 'Check data' ? 'bad' : 'neutral'}`} data-verdict={verdict}>
+              <span class={`chip verdict ${verdict === 'Good setup' ? 'good' : verdict === 'Wait' ? 'wait' : verdict === 'Avoid' || verdict === 'Check data' ? 'bad' : 'neutral'}`} data-verdict={verdict} title="For holding a few days to weeks, from months of daily prices — not today's move">
+                {verdict === 'Good setup' || verdict === 'Wait' || verdict === 'Avoid' ? 'Few days: ' : ''}
                 {PLAIN_VERDICT[verdict!]}
               </span>{' '}
               <span class="plain-text">{plainLine(s, verdict!)}</span>

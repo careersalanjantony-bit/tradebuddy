@@ -93,7 +93,8 @@ export async function refreshFlow(now = Date.now(), force = false): Promise<{ st
     const lite: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }> = {};
     for (const f of Object.values(flows)) lite[f.key] = { buyQty: f.buyQty, sellQty: f.sellQty, vwap: f.vwap, pace: paces.get(f.key) ?? null };
     await setSession('flow', { at: now, stocks: lite, rising });
-    await alertRising(rising, now, t).catch((err: unknown) => log.warn('Rising alert failed', { error: errorMessage(err) }));
+    // app v1.14: the "Rising now" alerts come from the live engine (risingJobs.ts); this list only feeds the buyers meter
+    void alertRising;
     return { stocks: Object.keys(flows).length, rising: rising.length };
   } catch (err) {
     log.info('Buyers meter not updated', { reason: errorMessage(err) });

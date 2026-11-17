@@ -47,10 +47,11 @@ export async function syncBackgroundChecker(now = Date.now()): Promise<void> {
   await syncBackground({
     enabled: settings.notifications.background,
     rising: settings.notifications.rising,
-    breakouts: settings.notifications.breakouts !== false,
+    // app v1.14: Breakout Today is switched off (also with the app closed)
+    breakouts: false,
     breakoutRisk: settings.dayTrade.breakoutRiskInr ?? 100,
     channel: alertChannel(settings.notifications),
-    levels: await breakoutLevels(universe, istDate(now)),
+    levels: {},
     token: secrets.upstoxAnalyticsToken ?? null,
     holidays: (cal?.holidays ?? []).map((h) => h.date),
     universe,

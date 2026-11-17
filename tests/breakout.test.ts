@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installChromeMock } from './chromeMock';
 import { noIndexLists } from './scanHelpers';
-import { breakoutsIdle, liveBar, resetBreakouts, sameLevel, scanBreakouts, type BreakoutSignal, type LiveCandle } from '../src/background/breakoutJobs';
+import { breakoutsIdle, liveBar, resetBreakouts, sameLevel, scanBreakouts, setBreakoutsOn, type BreakoutSignal, type LiveCandle } from '../src/background/breakoutJobs';
 import { BO, BREAKOUT_RULES_VERSION as BO_VERSION, checkBreakout, confirmCandle, normalCandleVolume, planBreakout, resistanceOf, runBreakoutTest, simulateBreakoutDay, vwapOf, type Bar, type LiveInput } from '../src/daytrade/breakout';
 import { features, FEATURES, newBrain, STRATEGIES, upgradeBrain, type Brain } from '../src/bot/brain';
 import type { Quote } from '../src/data/quotesParse';
@@ -205,6 +205,7 @@ async function liveMorning() {
 beforeEach(async () => {
   chrome = installChromeMock();
   resetBreakouts();
+  setBreakoutsOn(true);
   day = { high: 0, low: Infinity };
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.dayTrade.enabled = true;

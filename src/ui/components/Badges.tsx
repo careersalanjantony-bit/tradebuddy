@@ -25,10 +25,15 @@ const FLAG_TIP: Record<Flag, string> = {
   'Not enough data': 'Less than 200 days of history — some indicators are missing.',
 };
 
+/**
+ * App v1.14: these setups come from months of daily prices (for holding a few days to weeks), not from
+ * today's move — a "Clean uptrend" stock can be down today. The chip says so, and its tip explains it.
+ */
 export function SetupBadge({ setup }: { setup: SetupLabel }) {
   return (
-    <span class={`chip setup ${SETUP_TONE[setup]}`} title={SETUP_TIP[setup]}>
+    <span class={`chip setup ${SETUP_TONE[setup]}`} title={`${SETUP_TIP[setup]} From months of daily prices — not today's move.`}>
       {setup}
+      {setup !== 'No setup' ? ' · months' : ''}
     </span>
   );
 }

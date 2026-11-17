@@ -20,13 +20,6 @@ export function AlertSettings({ settings }: { settings: Settings }) {
       set: (v) => updateSettings({ dayTrade: { alerts: v } }),
     },
     {
-      id: 'breakouts',
-      on: settings.notifications.breakouts !== false,
-      title: '🚀 Breakouts (buy first)',
-      about: "The moment a stock breaks above today's high with a volume surge (9:20–3:00), then ✅ when the 5-minute candle confirms it. Each with entry, stop-loss, two targets and quantity.",
-      set: (v) => updateSettings({ notifications: { breakouts: v } }),
-    },
-    {
       id: 'bot',
       on: settings.notifications.bot !== false,
       title: '🤖 Auto-trader trades',
@@ -36,8 +29,8 @@ export function AlertSettings({ settings }: { settings: Settings }) {
     {
       id: 'rising',
       on: settings.notifications.rising,
-      title: 'Stocks rising fast',
-      about: 'Buyers clearly in control and much busier than usual. At most 3 a day.',
+      title: '📈 Rising now',
+      about: 'The moment a stock becomes "likely to keep rising" (9:30–2:45, at most 10 a day), with a quick-trade plan — and when a stock you hold turns to "slowing — take the profit".',
       set: (v) => updateSettings({ notifications: { rising: v } }),
     },
     {

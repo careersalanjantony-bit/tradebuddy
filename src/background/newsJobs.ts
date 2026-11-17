@@ -60,6 +60,9 @@ export async function newsTargets(now = Date.now()): Promise<Array<{ key: string
   if (signals?.date === today) {
     for (const s of [...signals.signals].filter((x) => !x.late).sort((a, b) => (b.chance ?? 0.5) - (a.chance ?? 0.5))) add(s.key, 'idea');
   }
+  // app v1.14: the live Rising-now list ("likely to keep rising" first), else the older list
+  const rise = await getSession('rise');
+  for (const r of rise?.date === today ? rise.rows.filter((x) => x.tag !== 'fading') : []) add(r.key, 'rising');
   for (const r of flow?.rising ?? []) add(r.key, 'rising');
   if (shortIdeas && istDate(shortIdeas.at) === today) for (const s of shortIdeas.ideas) add(s.key, 'falling');
   if (picks?.day === today) for (const k of picks.keys) add(k, 'pick');

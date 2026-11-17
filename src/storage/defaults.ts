@@ -88,6 +88,7 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     newsCache: null,
     breakoutTest: null,
     botProtectTest: null,
+    riseModel: null,
     breakoutAlerted: null,
     scanLists: null,
     ideaAlerts: null,

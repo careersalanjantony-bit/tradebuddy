@@ -48,6 +48,7 @@ import { testBreakoutsIfDue } from './breakoutJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
 import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas } from './botJobs';
 import { testProtect } from './botTest';
+import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -95,6 +96,8 @@ ready.then(() => setTimeout(() => void learnIfDue().catch(() => undefined), 60_0
 ready.then(() => setTimeout(() => void testBreakoutsIfDue().catch(() => undefined), 90_000)).catch(() => undefined);
 // app v1.13: the auto-trader's money protection on past days (once a day)
 ready.then(() => setTimeout(() => void testProtect().catch(() => undefined), 120_000)).catch(() => undefined);
+// app v1.14: the Rising-now model (once a day outside market hours, or at once when there is none)
+ready.then(() => setTimeout(() => void trainRisingIfDue().catch(() => undefined), 150_000)).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
@@ -302,6 +305,11 @@ const handlers: Handlers = {
   'wallet:cover': async ({ key }) => walletCover(key),
   'shorts:scan': async () => ({ ideas: await scanShorts(Date.now(), true) }),
   'breakouts:scan': async () => ({ found: await scanBreakouts(Date.now()) }),
+  'rise:scan': async () => ({ listed: await scanRising(Date.now()) }),
+  'rise:train': async () => {
+    const m = await trainRising(Date.now(), true);
+    return { ok: !!m, days: m ? m.report.trainDays + m.report.testDays : 0 };
+  },
   'breakouts:test': async () => {
     await testBreakouts(Date.now());
     return { done: true };

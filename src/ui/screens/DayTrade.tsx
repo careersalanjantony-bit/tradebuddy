@@ -20,7 +20,6 @@ import { ChanceRing } from '../components/Motion';
 import { LearningCard } from '../components/Learning';
 import { RisingNowCard, meterTone } from '../components/RisingNow';
 import { BreadthCard, FallingNowCard } from '../components/Shorts';
-import { BreakoutCard } from '../components/Breakouts';
 import { AlsoIn, IndexTag, ScanCoverage, useScanUniverse } from '../components/ScanList';
 
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
@@ -132,11 +131,10 @@ export function DayTradeScreen({ go }: { go: Go }) {
         <>
           <DayPlan now={now} />
           <MoodLine />
+          <RisingNowCard />
           <BreadthCard />
           <SignalsCard amount={amount} slots={slots} />
           <FallingNowCard />
-          <BreakoutCard />
-          <RisingNowCard />
           <LearningCard go={go} />
           <DayTradesCard />
           <UpstoxSyncLine />

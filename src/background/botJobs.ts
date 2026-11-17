@@ -7,6 +7,7 @@ import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, type Idea } from '../bot/
 import { checkDay, manageTrade, protectRules, type DayGuard, type ProtectRules } from '../bot/protect';
 import { notify } from '../notify/chrome';
 import { copyLine } from '../bot/copy';
+import { quickPlan as quickPlanFrom } from '../rising/momentum';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { buyersMeter } from '../data/flow';
@@ -196,7 +197,7 @@ export function settleClosed(bot: BotState, now: number): BotState {
  * price early and then follows the best price; half is sold at 1× the risk; a same-day trade that
  * goes nowhere is closed. Also tracks best/worst prices for the progress bars.
  */
-function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx): BotState {
+function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx, riseTags: Map<string, 'strong' | 'unclear' | 'fading'> = new Map()): BotState {
   const rules = protectRules(bot.rules);
   let w = bot.wallet;
   const trades = bot.trades.map((t) => {
@@ -214,6 +215,14 @@ function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx
       next = { ...next, stop: a.stop };
     }
     if (!fresh) return next;
+    // app v1.14: a "Rising now" quick trade: after 20 minutes it stays only while still "likely to keep
+    // rising" (its safety net keeps following the price); "slowing" sells it at once (after 5 minutes)
+    const mins = (ctx.now - t.openedAt) / 60_000;
+    const tag = riseTags.get(t.key);
+    if (t.strategy === 'rising' && t.side === 'long' && ((mins >= 20 && tag !== 'strong') || (mins >= 5 && tag === 'fading'))) {
+      w = closePosition(w, t, q.ltp, ctx);
+      return { ...next, closeWhy: tag === 'fading' ? 'Rising now turned to "slowing" — sold' : '20-minute quick trade done (no longer "likely to keep rising")' };
+    }
     if (a.exit === 'quick') {
       w = closePosition(w, t, q.ltp, ctx);
       const losing = (q.ltp - t.entry) * (t.side === 'long' ? 1 : -1) < 0;
@@ -457,8 +466,19 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     const prior = s.chance ?? (s.trusted ? 0.5 : 0.45);
     ideas.push({ key: s.key, symbol: s.symbol, strategy: 'day-buy', side: 'long', price: q.ltp, stop: s.stop, target, ctx: ctxOf(s.key, q, 'day-buy', prior, s.stop, 1), reasons: [`day-trade buy signal at ${s.entry.toFixed(2)}`, s.chance !== undefined ? `self-learning chance ${Math.round(s.chance * 100)}%` : s.trusted ? 'these signals passed the past test' : 'signals not tested yet'] });
   }
-  // 2. "Rising today": up from the open with more buyers — its own safety net under the day's average price
-  for (const r of flow?.rising ?? []) {
+  // 2. "Rising now" (app v1.14): the live list's "likely to keep rising" stocks, with the quick-trade
+  //    plan (+0.6 % / −0.4 %, 20 minutes) and the measured chance from days the model never saw
+  const rise = await getSession('rise');
+  const liveRise = rise && rise.date === today && now - rise.at < 60_000 ? rise.rows.filter((r) => r.tag === 'strong') : [];
+  for (const r of liveRise) {
+    const q = quotes[r.key];
+    if (!fresh(q) || q.ltp >= r.plan.target || q.ltp <= r.plan.stop) continue;
+    const plan = quickPlanFrom(q.ltp, now);
+    const prior = Math.min(0.75, Math.max(0.3, r.measured ?? r.chance ?? 0.5));
+    ideas.push({ key: r.key, symbol: r.symbol, strategy: 'rising', side: 'long', price: q.ltp, stop: plan.stop, target: plan.target, ctx: ctxOf(r.key, q, 'rising', prior, plan.stop, 1), reasons: ['Rising now: likely to keep rising', ...r.reasons.slice(0, 2)] });
+  }
+  // the older list only while the live one has nothing (e.g. no model yet)
+  for (const r of liveRise.length ? [] : (flow?.rising ?? [])) {
     const q = quotes[r.key];
     const f = flowOf(r.key);
     if (!fresh(q)) continue;
@@ -599,7 +619,10 @@ export function runBot(now = Date.now(), force = false): Promise<BotState | null
 
     if (ctx.open && bot.lastRun && now - bot.lastRun > 4 * 60_000 && istDate(bot.lastRun) === ctx.today) bot = { ...bot, lastGap: { from: bot.lastRun, to: now } };
     if (ctx.open) bot = await catchUp(bot, ctx);
-    bot = manageOpen(bot, quotes, ctx);
+    const riseS = await getSession('rise');
+    const riseTags = new Map<string, 'strong' | 'unclear' | 'fading'>();
+    if (riseS && riseS.date === ctx.today && now - riseS.at < 60_000) for (const h of riseS.held) if (h.source === 'auto') riseTags.set(h.key, h.tag);
+    bot = manageOpen(bot, quotes, ctx, riseTags);
     bot = timeExits(bot, quotes, ctx);
     bot = { ...bot, wallet: processWallet(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx).wallet };
     bot = settleClosed(bot, now);

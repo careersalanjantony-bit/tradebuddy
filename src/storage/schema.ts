@@ -309,6 +309,8 @@ export interface LocalStore {
   shortTest: (import('../daytrade/shortScan').ShortTestReport & { at: number }) | null;
   /** past test of the confirmed-breakout rule on the 5-minute history (app v1.9) */
   breakoutTest: (import('../daytrade/breakout').BreakoutTestReport & { at: number }) | null;
+  /** app v1.14: the learned Rising-now model and its test on unseen days */
+  riseModel: import('../rising/momentum').RiseModel | null;
   /** app v1.13: the auto-trader's money protection on past days (old way vs protected) */
   botProtectTest: (import('../bot/protectTest').ProtectTestResult & { at: number; rulesKey: string }) | null;
   /** breakout alerts already sent today (kept across app restarts: never the same alert twice) */

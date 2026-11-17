@@ -9,6 +9,8 @@ import { useLocal, useMarketState, useNow, useSessionValue } from '../hooks';
 import { Icon } from '../components/Icon';
 import { AnimatedNumber, Sparkline, useFlash } from '../components/Motion';
 import { NewsCard } from '../components/Market';
+import { RiseChip } from '../components/RisingNow';
+import type { RiseRow } from '../../background/risingJobs';
 import { openTrade } from '../components/TradeSheet';
 import { meterTone } from '../components/RisingNow';
 import { signalState } from '../../daytrade/live';
@@ -82,7 +84,9 @@ function BestIdea({ go }: { go: Go }) {
     .filter((s: DaySignal) => s.side === 'long' && signalState(s, quotes[s.key]?.ltp ?? null, now) === 'fresh')
     .sort((a, b) => (b.chance ?? 0.5) - (a.chance ?? 0.5));
   const sig = fresh[0];
-  const rise = flow?.rising?.[0];
+  // app v1.14: the live Rising-now list, "likely to keep rising" first
+  const riseS = useSessionValue('rise');
+  const rise = riseS && riseS.date === today ? riseS.rows.find((r) => r.tag === 'strong') ?? riseS.rows.find((r) => r.tag === 'unclear') : undefined;
 
   if (sig) {
     const ltp = quotes[sig.key]?.ltp ?? sig.entry;
@@ -138,18 +142,19 @@ function BestIdea({ go }: { go: Go }) {
     );
   }
   if (rise && market.phase === 'open') {
-    const sym = byKey.get(rise.key)?.trading_symbol ?? rise.key;
+    const sym = rise.symbol;
     return (
-      <section class="idea-card" data-testid="best-idea">
+      <section class={`idea-card ${rise.tag === 'strong' ? 'glow' : ''}`} data-testid="best-idea">
         <div class="idea-head">
           <span class="badge-watch">
-            <Icon name="chart" size={16} /> Rising now — watch
+            <Icon name="chart" size={16} /> Rising now
           </span>
+          <RiseChip tag={rise.tag} measured={rise.measured} />
         </div>
         <div class="idea-symbol">{sym}</div>
         <p class="small muted" style={{ margin: '4px 0 10px' }}>
-          {formatPct(rise.fromOpenPct, 1)} since the open, {rise.meter.label.toLowerCase()}
-          {rise.pace ? `, ${formatNumberIN(rise.pace, 1)}× the usual trading` : ''}. Not a tested buy idea — quick rises often fall back.
+          ₹{formatNumberIN(rise.price)}, {formatPct(rise.fromOpenPct, 1)} since the open. Quick trade: take profit ₹{formatNumberIN(rise.plan.target)}, stop ₹{formatNumberIN(rise.plan.stop)}, sell by {formatTimeIST(rise.plan.sellBy).slice(0, 5)}.
+          {rise.reasons[0] ? ` ${rise.reasons[0]}.` : ''}
         </p>
         <button class="btn grow" type="button" onClick={() => go('daytrade')}>
           See it on Day trade
@@ -175,10 +180,10 @@ function BestIdea({ go }: { go: Go }) {
 }
 
 function RisingCarousel() {
-  const flow = useSessionValue('flow');
+  const rise = useSessionValue('rise');
   const quotes = useQuotes();
-  const byKey = useInstrumentMap();
-  const rows = flow?.rising ?? [];
+  const now = useNow(30_000);
+  const rows = rise && rise.date === istDate(now) ? rise.rows.filter((r) => r.tag !== 'fading').slice(0, 10) : [];
   if (!rows.length) return null;
   return (
     <section data-testid="rising-carousel">
@@ -186,23 +191,22 @@ function RisingCarousel() {
         <Icon name="chart" size={18} /> Rising now
       </div>
       <div class="carousel">
-        {rows.map((r) => {
-          const sym = byKey.get(r.key)?.trading_symbol ?? r.key;
-          return <RiseTile key={r.key} sym={sym} k={r.key} ltp={quotes[r.key]?.ltp ?? null} pct={r.fromOpenPct} label={r.meter.label} />;
-        })}
+        {rows.map((r) => (
+          <RiseTile key={r.key} r={r} ltp={quotes[r.key]?.ltp ?? r.price} />
+        ))}
       </div>
     </section>
   );
 }
 
-function RiseTile({ sym, k, ltp, pct, label }: { sym: string; k: string; ltp: number | null; pct: number; label: Parameters<typeof meterTone>[0] }) {
+function RiseTile({ r, ltp }: { r: RiseRow; ltp: number | null }) {
   const flash = useFlash(ltp);
   return (
-    <button type="button" class="rise-tile" onClick={() => openTrade({ key: k, symbol: sym, side: 'buy', sellByClose: true, source: 'Rising now' })}>
-      <b>{sym}</b>
+    <button type="button" class="rise-tile" onClick={() => openTrade({ key: r.key, symbol: r.symbol, side: 'buy', stop: r.plan.stop, target: r.plan.target, sellByClose: true, product: 'intraday', source: 'Rising now' })}>
+      <b>{r.symbol}</b>
       <span class={`price ${flash}`}>{ltp ? `₹${formatNumberIN(ltp)}` : ''}</span>
-      <span class="ok-text small">▲ {formatPct(pct, 1, false)}</span>
-      <span class={`dot-meter ${meterTone(label)}`}>{label}</span>
+      <span class="ok-text small">▲ {formatPct(r.fromOpenPct, 1, false)}</span>
+      <span class={`dot-meter ${r.tag === 'strong' ? 'good' : 'neutral'}`}>{r.tag === 'strong' ? 'Likely to keep rising' : 'Unclear'}</span>
     </button>
   );
 }

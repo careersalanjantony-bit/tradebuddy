@@ -38,6 +38,36 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.14
+
+- **📈 Rising now — live** (the first card on Day trade, also on Home). Every stock of the five indices
+  is read on each live price (about every 1.5 seconds) from its current 5-minute candle — not after a
+  15-second full-quote round — so a rising stock is listed the moment it qualifies, with a
+  **"Just starting (< 1%)"** view for the early ones.
+- **"Will it keep rising?" tag** on every rising stock: **▲ Likely to keep rising**, **◆ Unclear** or
+  **▼ Slowing**. It answers the owner's quick trade exactly: bought now, does it gain 0.6% before it
+  loses 0.4%, within 20 minutes? A model (logistic regression + small boosted trees, on the phone)
+  learns this from the stored 5-minute history of all scanned stocks — 17 numbers per moment (moves
+  over 5/15/30 minutes, volume against its usual volume at that time of day, price vs the day's average
+  price, place in the day range, candle shape, RSI, short vs longer trend, the whole market). The
+  newest 30% of the days are kept aside; the card shows how "likely" did on those unseen days next to
+  all rising moments and the old Rising-today list, after charges. "Likely" is only used when that
+  band clearly beat the average and made money after charges; otherwise nothing is tagged "likely".
+  Never "100%", never "confirmed". It learns again every day after the market closes.
+- **Quick-trade plan** on each stock: buy around, take profit (+0.6%), stop (−0.4%), sell-by time,
+  the number of shares for your amount, Practice buy (Intraday) and the Upstox steps.
+- **Your stocks now:** practice, "I bought this", real day trades and the auto-trader's stocks get the
+  same reading with advice — "Likely to keep rising — keep, sell if it drops to ₹…", "Unclear — keep
+  a tight stop at ₹…" or "Slowing — take the profit". Alerts: when a stock becomes "likely" (at most 10
+  a day) and when a stock you hold turns to "slowing".
+- **Long-term labels are marked as such:** "Clean uptrend · months", "Few days: Good to buy" — they
+  come from months of daily prices, so a stock can carry them and still be down today. The live tag
+  shows today's picture next to them on the Stocks tab.
+- **Breakout Today is switched off** (card, alerts and the closed-app breakout check).
+- The auto-trader takes "Rising now" quick trades from the "likely" stocks: after 20 minutes it keeps a
+  trade only while it is still "likely to keep rising" (its safety net following the price), and sells
+  at once when it turns to "slowing".
+
 ## New in 1.13
 
 - **Amount to auto-trade.** A box at the top of the Auto-trader: type an amount, or tap **Use my

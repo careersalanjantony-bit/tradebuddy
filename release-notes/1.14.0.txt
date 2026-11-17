@@ -1,0 +1,6 @@
+Rising now — live: every stock is read on each live price, so rising stocks are listed the moment they qualify ("Just starting" view for early ones). It is the first card on Day trade.
+New tag on each rising stock: Likely to keep rising / Unclear / Slowing — learned from past 5-minute prices and tested on days it never saw (the card shows how it did vs the old Rising list). Never a promise.
+Quick-trade plan per stock: take profit +0.6%, stop -0.4%, sell by (20 minutes), shares for your amount, Practice buy.
+Your stocks now: keep / protect at a price / take the profit, with alerts when a stock you hold slows down.
+Long-term labels now say "months" / "Few days" so they are not confused with today's move.
+Breakout Today is switched off.

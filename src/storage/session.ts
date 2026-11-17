@@ -63,6 +63,9 @@ export interface SessionStore {
   /** 5-minute history download progress */
   intradayProgress: { done: number; total: number; running: boolean; at: number; error?: string };
   /** buyers meter + rising-now list (app v1.0) */
+  /** app v1.14: the live Rising-now list and the reading of the stocks you hold */
+  rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[] };
+  riseAlerted: { date: string; keys: string[]; held: Record<string, number> };
   flow: { at: number; stocks: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }>; rising: import('../data/flow').RisingRow[]; error?: string };
   /** market breadth: Nifty 500 up vs down (app v1.4) */
   breadth: { at: number; list: string; advanced: number; declined: number; unchanged: number; total: number };
