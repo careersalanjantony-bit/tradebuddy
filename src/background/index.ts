@@ -32,7 +32,8 @@ import { announce, checkNewPicks, ensureInstruments, fastPoll, pollAndEvaluate, 
 import { invalidateStockCache } from '../data/stockData';
 import { universeKeys } from '../data/universe';
 import { ensureScanLists } from './scanList';
-import { markAlertsSeen, mutateAlerts, recentAlertLog, updateBadge } from '../alerts/engine';
+import { clearAlertLog, markAlertsSeen, mutateAlerts, recentAlertLog, updateBadge } from '../alerts/engine';
+import { clearAlertHistory, dismissAlert } from '../alerts/history';
 import { newId } from '../alerts/rules';
 import { ignoreGap } from '../data/corporateActions';
 import { deletePlan, savePlan, updatePlan } from '../planner/plans';
@@ -432,6 +433,21 @@ const handlers: Handlers = {
     return { done: true };
   },
   'alerts:log': async ({ limit }) => ({ entries: await recentAlertLog(limit ?? 100) }),
+  'alerts:clear': async () => {
+    await clearAlertHistory();
+    await clearAlertLog().catch((err: unknown) => log.warn('Could not clear the price-alert log', { error: err }));
+    await markAlertsSeen();
+    // the copies in the phone's notification list go too (Android: all of TradeBuddy's notifications)
+    const n = chrome.notifications as typeof chrome.notifications & { clearAll?: () => Promise<void> };
+    if (n.clearAll) await n.clearAll().catch(() => undefined);
+    else for (const id of Object.keys((await chrome.notifications.getAll().catch(() => ({}))) ?? {})) await chrome.notifications.clear(id).catch(() => undefined);
+    return { done: true };
+  },
+  'alerts:dismiss': async ({ id }) => {
+    await dismissAlert(id);
+    await chrome.notifications.clear(id).catch(() => undefined);
+    return { done: true };
+  },
   'gaps:ignore': async ({ key, date }) => {
     await ignoreGap(key, date);
     invalidateStockCache(key);

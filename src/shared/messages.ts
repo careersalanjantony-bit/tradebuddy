@@ -121,6 +121,10 @@ export interface ApiMap {
   'alerts:delete': { req: { id: string }; res: { done: true } };
   'alerts:seen': { req: undefined; res: { done: true } };
   'alerts:log': { req: { limit?: number }; res: { entries: Array<import('../storage/db').AlertLogEntry> } };
+  /** app v1.18: Alerts tab "Clear all" — history, price-alert log, unread count and the phone's notification list */
+  'alerts:clear': { req: undefined; res: { done: true } };
+  /** app v1.18: an alert banner was swiped away or closed — not shown again, its phone notification removed */
+  'alerts:dismiss': { req: { id: string }; res: { done: true } };
   /** owner confirms a big one-day move is genuine */
   'gaps:ignore': { req: { key: string; date: string }; res: { done: true } };
   'status:get': { req: undefined; res: BackgroundStatus };

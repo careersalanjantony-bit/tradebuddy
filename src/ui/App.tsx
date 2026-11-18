@@ -22,7 +22,8 @@ import { LearningScreen } from './screens/Learning';
 import { HomeScreen } from './screens/Home';
 import { Icon, type IconName } from './components/Icon';
 import { MotionHost, buzz, celebrate, toast } from './components/Motion';
-import { AlertBanner, routeForAlert } from './components/AlertBanner';
+import { AlertBanner, LAUNCH_QUIET_MS, routeForAlert } from './components/AlertBanner';
+import { AlertDetailHost, openAlertDetail } from './components/AlertDetail';
 import { NewsScreen } from './screens/News';
 import { AccountScreen } from './screens/Account';
 import { Avatar, LockScreen, ProfileSetup } from './components/Lock';
@@ -133,14 +134,22 @@ export function App() {
   const goRef = useRef(go);
   goRef.current = go;
   useEffect(() => {
-    const onClick = (id: string) => goRef.current(routeForAlert(id) as ScreenId);
+    // app v1.18: the screen it belongs to, with the alert's details on top
+    const onClick = (id: string) => {
+      goRef.current(routeForAlert(id) as ScreenId);
+      openAlertDetail({ id });
+    };
     chrome.notifications.onClicked.addListener(onClick);
     return () => chrome.notifications.onClicked.removeListener(onClick);
   }, []);
-  // a practice sale with a profit: a little celebration (and a toast for any sale)
+  // a practice sale with a profit: a little celebration (and a toast for any sale) — only for sales
+  // made while the app is open and on screen. App v1.18: the wallet loads a moment after the app opens;
+  // the sales already in it are old news (they used to pop up as toasts on every start).
   const wallet = useLocal('wallet');
   const seenFills = useRef<number | null>(null);
+  const openedAt = useRef(Date.now());
   useEffect(() => {
+    if (wallet === undefined) return; // still loading
     const fills = wallet?.fills ?? [];
     if (seenFills.current === null) {
       seenFills.current = fills.length;
@@ -148,8 +157,11 @@ export function App() {
     }
     const fresh = fills.slice(seenFills.current);
     seenFills.current = fills.length;
+    const now = Date.now();
     for (const f of fresh) {
       if (f.side !== 'sell' || f.pnl === undefined) continue;
+      // catch-up right after opening, a sale from long ago, or the app in the background: no pop-up
+      if (now - openedAt.current < LAUNCH_QUIET_MS || now - f.at > 60_000 || document.visibilityState !== 'visible') continue;
       if (f.pnl > 0) {
         celebrate();
         void buzz('success');
@@ -269,7 +281,8 @@ export function App() {
       </nav>
       <TradeSheetHost />
       <MotionHost />
-      <AlertBanner open={(id) => go(routeForAlert(id) as ScreenId)} />
+      <AlertBanner />
+      <AlertDetailHost go={go} />
       {settings && !settings.ui.guideSeen && <GuideOverlay go={go} />}
       {settings?.ui.guideSeen && account === null && <ProfileSetup onDone={() => setUnlocked(true)} />}
       {account?.pin && !unlocked && <LockScreen account={account} onUnlock={() => setUnlocked(true)} />}

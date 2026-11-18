@@ -1,3 +1,4 @@
+import { recordAlert, type AlertDetail } from '../alerts/history';
 import { createLogger } from '../lib/log';
 import { appOnScreen } from '../platform/appState';
 import { getSettings } from '../storage/local';
@@ -17,10 +18,22 @@ export interface NotifyOptions {
   message: string;
   requireInteraction?: boolean;
   priority?: 0 | 1 | 2;
+  /** app v1.18: the trade behind a trade alert, for the detail view (stored with the history only) */
+  detail?: AlertDetail;
 }
 
 export async function notify(id: NotificationId, opts: NotifyOptions): Promise<void> {
   try {
+    // app v1.18: every notification goes into the Alerts tab history; the same one is not shown again
+    // within 24 hours (a cleared or dismissed alert must not come back when the app catches up)
+    const fresh = await recordAlert({ id, title: opts.title, message: opts.message, at: Date.now(), ...(opts.detail ? { detail: opts.detail } : {}) }).catch((err: unknown) => {
+      log.warn('Could not store the notification in the history', { id, error: err });
+      return true;
+    });
+    if (!fresh) {
+      log.info(`Notification not shown again (already shown in the last 24 hours): ${opts.title}`, { id });
+      return;
+    }
     await chrome.notifications.create(id, {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icons/icon-128.png'),

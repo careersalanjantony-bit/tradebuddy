@@ -172,6 +172,7 @@ async function alertShorts(ideas: ShortIdea[], now: number): Promise<void> {
       title: `▼ SELL first ${top.symbol} at ${rs(top.plan.entry)} · score ${top.score}${top.score >= 75 ? ' ⭐' : ''}`,
       message: `Buy back if it rises to ${rs(top.plan.stop)} · target 1 ${rs(top.plan.t1)} · target 2 ${rs(top.plan.t2)} · ${top.plan.qty} shares (risk ${rs(top.plan.risk)}). Close by 3:10 pm.${against ? ' Most stocks are rising today — be careful.' : ''}`,
       priority: 2,
+      detail: { symbol: top.symbol, key: top.key, side: 'sell', source: 'Falling now (sell first)', entry: top.plan.entry, stop: top.plan.stop, targets: [top.plan.t1, top.plan.t2], qty: top.plan.qty, risk: top.plan.risk, score: top.score, scoreKind: 'score', reasons: top.reasons.map((r) => r.text), closeBy: '3:10 pm' },
     });
     sent.push(top.key);
   }

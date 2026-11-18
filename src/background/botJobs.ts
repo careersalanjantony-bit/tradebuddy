@@ -777,6 +777,7 @@ async function alertOpen(t: BotTrade): Promise<void> {
     title: `🤖 Auto-trader ${t.side === 'long' ? 'bought' : 'sold first'} ${t.qty} ${t.symbol} at ${px(t.entry)}`,
     message: `${copyLine(copyOf(t))} ${Math.round(t.chance * 100)}% chance · ${STRATEGY_LABEL[t.strategy].toLowerCase()}.`,
     priority: 2,
+    detail: { symbol: t.symbol, key: t.key, side: t.side === 'long' ? 'buy' : 'sell', source: `Auto-trader · ${STRATEGY_LABEL[t.strategy]}`, entry: t.entry, stop: t.stop, targets: t.t1 !== undefined ? [t.t1, t.target] : [t.target], qty: t.qty, risk: Math.round(Math.abs(t.entry - t.stop) * t.qty), score: Math.round(t.chance * 100), scoreKind: 'chance', reasons: t.reasons },
   });
 }
 

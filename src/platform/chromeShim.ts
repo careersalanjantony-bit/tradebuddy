@@ -213,6 +213,8 @@ const shownNotifications = new Map<string, { title: string; message: string }>()
 export interface NotificationBackend {
   show(id: string, title: string, message: string, opts: { requireInteraction?: boolean; priority?: number; onScreen?: boolean }): Promise<void>;
   clear(id: string): Promise<void>;
+  /** app v1.18: remove every notification of the app from the phone's list */
+  clearAll?(): Promise<void>;
 }
 let notificationBackend: NotificationBackend = {
   async show(id, title, message, opts) {
@@ -332,6 +334,13 @@ export function installChromeShim(version: string): void {
         return had;
       },
       getAll: async () => Object.fromEntries([...shownNotifications.keys()].map((k) => [k, true])),
+      /** app v1.18 (not a Chrome API): Alerts tab "Clear all" */
+      clearAll: async () => {
+        const ids = [...shownNotifications.keys()];
+        shownNotifications.clear();
+        if (notificationBackend.clearAll) await notificationBackend.clearAll();
+        else for (const id of ids) await notificationBackend.clear(id);
+      },
       onClicked: onNotificationClicked,
     },
     identity: {

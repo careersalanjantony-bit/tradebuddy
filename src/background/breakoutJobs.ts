@@ -12,6 +12,7 @@ import { createLogger } from '../lib/log';
 import { errorMessage } from '../lib/serialize';
 import { istDate } from '../lib/time';
 import { notify } from '../notify/chrome';
+import type { AlertDetail } from '../alerts/history';
 import { playSound } from '../notify/sound';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
@@ -205,6 +206,12 @@ async function firstTime(id: string, today: string): Promise<boolean> {
   return true;
 }
 
+/** app v1.18: the trade behind a breakout alert, for the alert's detail view */
+function breakoutDetail(sig: BreakoutSignal, source: string): AlertDetail {
+  const p = sig.plan;
+  return { symbol: sig.symbol, key: sig.key, side: 'buy', source, entry: p.entry, stop: p.stop, targets: [p.t1, p.t2], qty: p.qty, risk: p.risk, score: sig.score, scoreKind: 'score', reasons: sig.reasons, closeBy: '3:10 pm' };
+}
+
 async function alertEarly(sig: BreakoutSignal): Promise<void> {
   if (!(await firstTime(`${sig.id}-early`, istDate(sig.at)))) return;
   // one alert per stock and direction across the three scanners (app v1.11)
@@ -214,6 +221,7 @@ async function alertEarly(sig: BreakoutSignal): Promise<void> {
     title: `🚀 Breakout: ${sig.symbol} ${rs(sig.price)} above ${rs(sig.level)} · ${sig.volX.toFixed(1)}× volume`,
     message: `Buy around ${rs(p.entry)} · stop-loss ${rs(p.stop)} · target 1 ${rs(p.t1)} · target 2 ${rs(p.t2)} · ${p.qty} shares (risk ${rs(p.risk)}). Not confirmed yet — the 5-minute candle closes at ${timeText(slotStartMs(sig.at, Math.floor(minutesIST(sig.at) / 5) * 5) + 300_000)}. Sell by 3:10 pm.`,
     priority: 2,
+    detail: breakoutDetail(sig, 'Breakout (not confirmed yet)'),
   });
   await playSound('info');
 }
@@ -226,6 +234,7 @@ async function alertConfirmed(sig: BreakoutSignal): Promise<void> {
     title: `✅ Confirmed breakout: ${sig.symbol} closed above ${rs(sig.level)}`,
     message: `Now ${rs(sig.lastPrice)} · buy around ${rs(p.entry)} · stop-loss ${rs(p.stop)} · targets ${rs(p.t1)} / ${rs(p.t2)} · ${p.qty} shares (risk ${rs(p.risk)}). Skip it if the price has run far above the entry. Sell by 3:10 pm.`,
     priority: 2,
+    detail: breakoutDetail(sig, 'Breakout (confirmed)'),
   });
   await playSound('target');
 }

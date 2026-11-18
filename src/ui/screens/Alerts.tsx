@@ -1,3 +1,4 @@
+import { createPortal } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import type { AlertRule } from '../../alerts/rules';
 import { formatDateTimeIST, formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
@@ -13,6 +14,10 @@ import type { StockData } from '../../data/stockData';
 import { useLocal, useSessionValue, useSettings } from '../hooks';
 import { UpstoxSyncLine } from '../components/Market';
 import { AddPurchaseCard, stopLimitFor } from '../components/Bought';
+import { normalizeHistory, type AlertRecord } from '../../alerts/history';
+import { iconFor } from '../components/AlertBanner';
+import { openAlertDetail } from '../components/AlertDetail';
+import { toast } from '../components/Motion';
 
 const KIND_LABEL: Record<AlertRule['kind'], string> = {
   above: 'Crosses above',
@@ -62,6 +67,7 @@ export function AlertsScreen({ go }: { go: Go }) {
   return (
     <>
       {msg && <div class={`banner ${msg.tone === 'ok' ? 'ok' : 'err'} small`}>{msg.text}</div>}
+      <NotificationHistory log={log} onCleared={() => setLog([])} />
       <UpstoxSyncLine />
       <AddPurchaseCard />
       <section class="card">
@@ -109,16 +115,107 @@ export function AlertsScreen({ go }: { go: Go }) {
         <p class="tiny muted">Alerts are checked on every price refresh (every 2 s while this panel is open, 30 s otherwise) in market hours, only on fresh prices. A price alert fires when the price crosses the level (0.1% band to avoid flapping).</p>
       </section>
 
-      <section class="card">
-        <h2>Alert log</h2>
-        {log.length === 0 && <p class="muted small">No alerts have fired yet.</p>}
-        {log.map((e) => (
-          <div class={`small log-line ${e.critical ? 'critical' : ''}`}>
-            <span class="muted">{formatDateTimeIST(e.ts)}</span> — {e.message}
-          </div>
-        ))}
-      </section>
     </>
+  );
+}
+
+const PAGE = 40;
+
+/**
+ * App v1.18 — every notification the app showed (trade alerts and app messages), newest first. Tap
+ * one for its details. "Clear all" (after a question) empties the list, the older price-alert log and
+ * the phone's notification bar; cleared alerts do not come back.
+ */
+function NotificationHistory({ log, onCleared }: { log: AlertLogEntry[]; onCleared: () => void }) {
+  const history = normalizeHistory(useLocal('alertHistory'));
+  const [shown, setShown] = useState(PAGE);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // price alerts that fired before v1.18 are only in the older log: shown too, until cleared
+  const known = new Set(history.items.map((r) => r.id));
+  const older: AlertRecord[] = log
+    .filter((e) => !known.has(`alert:${e.ruleId}:${e.ts}`) && (history.clearedAt === null || e.ts > history.clearedAt))
+    .map((e) => ({ id: `alert:${e.ruleId}:${e.ts}`, title: e.message, message: '', at: e.ts }));
+  const all = [...history.items, ...older].sort((a, b) => b.at - a.at);
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      await callBackground('alerts:clear');
+      onCleared();
+      setShown(PAGE);
+      toast('All notifications cleared');
+    } catch (err) {
+      toast(errorMessage(err), 'err');
+    } finally {
+      setBusy(false);
+      setAsking(false);
+    }
+  };
+
+  return (
+    <section class="card notif-card" data-testid="notifications">
+      <div class="notif-head">
+        <h2>
+          Notifications {all.length > 0 && <span class="notif-count">{all.length}</span>}
+        </h2>
+        <button class="btn small clear-all" type="button" data-testid="clear-all" disabled={!all.length || busy} onClick={() => setAsking(true)}>
+          Clear all
+        </button>
+      </div>
+      {all.length === 0 ? (
+        <p class="muted small" data-testid="notif-empty">
+          No notifications. Trade alerts and app messages appear here.
+        </p>
+      ) : (
+        <ul class="notif-list">
+          {all.slice(0, shown).map((r) => {
+            const icon = iconFor(r);
+            const title = r.title.startsWith(icon) ? r.title.slice(icon.length).trim() : r.title;
+            return (
+              <li key={r.id}>
+                <button class="notif-row" type="button" data-testid="notif-row" onClick={() => openAlertDetail(r)}>
+                  <span class="notif-icon" aria-hidden="true">
+                    {icon}
+                  </span>
+                  <span class="notif-text">
+                    <b>{title}</b>
+                    {r.message && <span>{r.message}</span>}
+                    <small>{formatDateTimeIST(r.at)}</small>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {all.length > shown && (
+        <button class="btn small" type="button" onClick={() => setShown(shown + PAGE)}>
+          Show more ({all.length - shown})
+        </button>
+      )}
+      {asking &&
+        // drawn over the whole app (the screen's own layer would sit under the bottom bar)
+        createPortal(
+        <div class="sheet-backdrop" onClick={(e) => e.target === e.currentTarget && !busy && setAsking(false)}>
+          <section class="sheet center confirm-sheet" role="alertdialog" aria-label="Clear all notifications" data-testid="clear-confirm">
+            <h2>Clear all notifications?</h2>
+            <p class="small muted">
+              All {all.length} notification{all.length === 1 ? '' : 's'} leave this list and the phone's notification bar. They will not come back. Your trades, alerts you set and settings stay.
+            </p>
+            <div class="row confirm-actions">
+              <button class="btn" type="button" disabled={busy} data-testid="clear-cancel" onClick={() => setAsking(false)}>
+                Cancel
+              </button>
+              <button class="btn danger" type="button" disabled={busy} data-testid="clear-yes" onClick={() => void clear()}>
+                {busy ? 'Clearing…' : 'Clear all'}
+              </button>
+            </div>
+          </section>
+        </div>,
+          document.body,
+        )}
+    </section>
   );
 }
 

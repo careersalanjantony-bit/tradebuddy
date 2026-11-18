@@ -52,6 +52,10 @@ export async function initNative(onResume: () => void): Promise<void> {
     },
     async clear(id) {
       await LocalNotifications.cancel({ notifications: [{ id: numericId(id) }] }).catch(() => undefined);
+      await LocalNotifications.removeDeliveredNotifications({ notifications: [{ id: numericId(id), title: '', body: '' }] }).catch(() => undefined);
+    },
+    async clearAll() {
+      await LocalNotifications.removeAllDeliveredNotifications().catch(() => undefined);
     },
   });
   await LocalNotifications.addListener('localNotificationActionPerformed', (e) => {

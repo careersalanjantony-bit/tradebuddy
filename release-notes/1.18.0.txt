@@ -1,0 +1,4 @@
+No more old "Sold ..." pop-ups every time you open the app. Alerts that arrive while the app is opening go straight to the Alerts tab.
+Swipe an alert away (left, right or up). Tap it to see everything: buy or sell first, entry, stop-loss, targets, shares, risk, score and why it came.
+The Alerts tab now lists every notification. "Clear all" asks first and removes them for good - cleared or dismissed alerts do not come back.
+Every stock page shows Support & resistance: Resistance 2 and 1, the live price, Support 1 and 2 and the major support.

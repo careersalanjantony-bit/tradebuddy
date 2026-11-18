@@ -13,6 +13,7 @@ import { AddStock } from './Watchlist';
 import { ExplainCard, StudyButton } from '../components/Explain';
 import { ShortAnalysis } from '../components/ShortAnalysis';
 import { StockNews } from '../components/StockNews';
+import { LevelsCard } from '../components/LevelsCard';
 
 export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go }) {
   const watchlist = useLocal('watchlist') ?? [];
@@ -118,6 +119,7 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
         </div>
       </section>
 
+      <LevelsCard stockKey={key} snap={s} candles={data?.candles ?? []} />
       {view === 'short' && <ShortAnalysis stockKey={key} sym={sym} data={data ?? undefined} onLines={setShortLines} />}
       {view === 'buy' && s && <ExplainCard symbol={sym} snap={s} />}
       {view === 'buy' && <StockNews stockKey={key} side="buy" />}

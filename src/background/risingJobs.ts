@@ -505,6 +505,7 @@ async function alertRising(rows: RiseRow[], held: HeldRow[], now: number, t: num
         title: `📈 ${r.symbol} likely to keep rising${r.measured !== null ? ` · rose further ${Math.round(r.measured * 100)} of 100 times` : ''}`,
         message: `₹${r.price.toFixed(2)} (${r.fromOpenPct >= 0 ? '+' : ''}${r.fromOpenPct.toFixed(1)}% since the open). Quick trade: buy around ${rs(p.entry)}, take profit ${rs(p.target)}, stop-loss ${rs(p.stop)}, sell by ${hhmm(p.sellBy)}. ${r.reasons.slice(0, 2).join(' · ')}.`,
         priority: 2,
+        detail: { symbol: r.symbol, key: r.key, side: 'buy', source: 'Rising now', entry: p.entry, stop: p.stop, targets: [p.target], qty: null, risk: null, score: r.measured !== null ? Math.round(r.measured * 100) : null, scoreKind: 'chance', reasons: r.reasons, closeBy: hhmm(p.sellBy) },
       });
     }
   }
@@ -731,6 +732,7 @@ async function alertDrive(rows: DriveRow[], now: number, on: boolean): Promise<v
       title: `⚡ ${r.symbol}: holding its opening gap · score ${r.score}`,
       message: `₹${r.price.toFixed(2)} (opened ${r.gapPct >= 0 ? '+' : '−'}${Math.abs(r.gapPct).toFixed(1)}%${r.preRank ? `, #${r.preRank} in the pre-open` : ''}). Buy only above ₹${p.breakout.toFixed(2)} · stop-loss ₹${p.stop.toFixed(2)} · targets ₹${p.t1.toFixed(2)} / ₹${p.t2.toFixed(2)} · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. Not a guarantee — you place the order yourself.`,
       priority: 2,
+      detail: { symbol: r.symbol, key: r.key, side: 'buy', source: 'Early Movers (opening drive)', entry: p.breakout, stop: p.stop, targets: [p.t1, p.t2], qty: r.size.qty, risk: Math.round(r.size.risk), score: r.score, scoreKind: 'score', reasons: r.reasons },
     });
   }
   if (changed) await setSession('earlyAlerted', { date, sent });
@@ -759,6 +761,7 @@ async function alertEarly(events: Array<{ row: EarlyRow; event: Stage }>, now: n
       title: `${event === 'confirmed' ? '✅' : event === 'breakout' ? '🚀' : '🌱'} ${r.symbol}: ${STAGE_WORDS[event]} · score ${r.score}`,
       message: `₹${r.price.toFixed(2)} (${r.changePct >= 0 ? '+' : ''}${r.changePct.toFixed(1)}% today). Buy above ₹${p.breakout.toFixed(2)} · stop-loss ₹${p.stop.toFixed(2)} · targets ₹${p.t1.toFixed(2)} / ₹${p.t2.toFixed(2)} · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. ${r.reasons.slice(0, 2).join(' · ')}. Not a guarantee — you place the order yourself.`,
       priority: 2,
+      detail: { symbol: r.symbol, key: r.key, side: 'buy', source: `Early Movers (${STAGE_WORDS[event]})`, entry: p.breakout, stop: p.stop, targets: [p.t1, p.t2], qty: r.size.qty, risk: Math.round(r.size.risk), score: r.score, scoreKind: 'score', reasons: r.reasons },
     });
   }
   if (changed) await setSession('earlyAlerted', { date, sent });
