@@ -1,0 +1,2 @@
+No buy suggestions against a falling market: when NIFTY 50 is down 0.5% on the day (or 0.3% since the open), Rising now, Early Movers and the opening drive show no "buy" and send no buy alerts - a red banner says why.
+The app now writes down every "likely to keep rising" suggestion and its price 15 and 30 minutes later, and shows its own record. Use real money only if that record shows it works.

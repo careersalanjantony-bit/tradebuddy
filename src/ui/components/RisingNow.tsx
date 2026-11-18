@@ -9,6 +9,7 @@ import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '
 import { openTrade } from './TradeSheet';
 import { IndexTag } from './ScanList';
 import { toast } from './Motion';
+import { suggestionRecord } from '../../early/early';
 
 export const meterTone = (l: MeterLabel): string => (l === 'Buyers strong' || l === 'More buyers' ? 'good' : l === 'Sellers strong' || l === 'More sellers' ? 'bad' : 'neutral');
 
@@ -70,6 +71,8 @@ export function RisingNowCard() {
         Every stock of the five indices is read on each live price. The tag says whether a stock is <b>likely to keep rising</b> for the next 20 minutes: how often similar moments gained{' '}
         {PLAN.target * 100}% before losing {PLAN.stop * 100}% on past days the app did not learn from. Never a promise — protect every trade.
       </p>
+      <MarketGateBanner />
+      <SuggestionRecordLine />
       {held.length > 0 && <HeldList held={held} />}
       <div class="filter-chips" style={{ margin: '6px 0' }}>
         {(
@@ -240,5 +243,31 @@ function ModelLine({ report }: { report: RiseReport | null }) {
         {busy ? 'Learning…' : 'Learn again now'}
       </button>
     </div>
+  );
+}
+
+/** App v1.16.2 — shown while the market is falling: no buy suggestions then. */
+export function MarketGateBanner() {
+  const rise = useSessionValue('rise');
+  const now = useNow(5_000);
+  if (!rise?.weak?.weak || now - rise.at > 60_000) return null;
+  return (
+    <p class="small mv-gate" data-testid="market-gate">
+      🔴 <b>Market falling ({rise.weak.text}) — no buy suggestions now.</b> On days like this most "rising" stocks turn down within minutes. Buy ideas and alerts come back when the market steadies.
+    </p>
+  );
+}
+
+/** App v1.16.2 — the app's own record: its "likely to keep rising" suggestions 15 minutes later. */
+export function SuggestionRecordLine() {
+  const rec = useLocal('riseRecord');
+  const r = suggestionRecord(rec);
+  return (
+    <p class={`small ${r.checked && r.lower >= r.higher ? 'err-text' : ''}`} data-testid="rise-record" style={{ margin: '6px 0' }}>
+      📒 <b>The app's record:</b>{' '}
+      {r.checked
+        ? `${r.checked} suggestions over ${r.days} day${r.days === 1 ? '' : 's'} — ${r.higher} were higher 15 minutes later, ${r.lower} lower (average ${r.avg15! >= 0 ? '+' : '−'}${Math.abs(r.avg15!).toFixed(2)}%).${r.lower >= r.higher ? ' So far they lost more often than they won — use Practice money only, not real money.' : ''}`
+        : 'from today, every suggestion and its price 15 minutes later is written down here — trust it with real money only if this record shows it works.'}
+    </p>
   );
 }

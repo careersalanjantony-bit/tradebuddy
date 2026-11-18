@@ -38,6 +38,17 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.16.2
+
+- **Market gate** (after losses on 18 Nov, when NIFTY fell 0.66% and the morning's risers turned
+  down): while NIFTY 50 is 0.5%+ below yesterday's close, or 0.3%+ below today's open, or the scanned
+  stocks are on average 0.3%+ below their opens, there are **no buy suggestions and no buy alerts**
+  (Rising now shows "unclear — market falling", Early Movers and the opening drive send no alerts). A
+  red banner says why. Advice for stocks you already hold is unchanged.
+- **The app's own record:** every "likely to keep rising" suggestion is written down with its price
+  15 and 30 minutes later (20 market days kept), shown on Rising now and under Home → Early Movers →
+  More. When more of them fell than rose, it says so and points to Practice money.
+
 ## New in 1.16.1
 
 - **Pre-open list is stricter** (after the 18 Nov morning showed stocks with 21–33% buyers on it):

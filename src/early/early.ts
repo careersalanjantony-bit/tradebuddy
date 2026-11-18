@@ -323,3 +323,42 @@ export function scoreEarly(s: Signs): { score: number; reasons: string[]; warnin
   if (l.changePct > 3) (p -= 5), warnings.push(`already +${l.changePct.toFixed(1)}% today`);
   return { score: Math.max(0, Math.min(100, Math.round(p))), reasons, warnings };
 }
+
+// ---------------------------------------------------------------- the market gate (app v1.16.2)
+
+/**
+ * App v1.16.2 — no buy suggestions against a falling market (the owner lost money on 18 Nov buying
+ * "rising" stocks while NIFTY fell 0.66 %: on such days most risers turn down). Fixed in advance:
+ * the market is falling when NIFTY 50 is 0.5 % or more below yesterday's close, or 0.3 % or more below
+ * today's open, or the scanned stocks are on average 0.3 % or more below their opens.
+ */
+export function marketGate(x: { niftyDayPct: number | null; niftyFromOpenPct: number | null; listFromOpenPct: number | null }): { weak: boolean; text: string } {
+  const f = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}%`;
+  if (x.niftyDayPct !== null && x.niftyDayPct <= -0.5) return { weak: true, text: `NIFTY 50 ${f(x.niftyDayPct)} today` };
+  if (x.niftyFromOpenPct !== null && x.niftyFromOpenPct <= -0.3) return { weak: true, text: `NIFTY 50 ${f(x.niftyFromOpenPct)} since the open` };
+  if (x.listFromOpenPct !== null && x.listFromOpenPct <= -0.3) return { weak: true, text: `the scanned stocks ${f(x.listFromOpenPct)} since the open on average` };
+  return { weak: false, text: '' };
+}
+
+/** One suggestion and where its price was 15 and 30 minutes later (the app's own record). */
+export interface SuggestionCheck {
+  key: string;
+  symbol: string;
+  at: number;
+  price: number;
+  p15: number | null;
+  p30: number | null;
+}
+
+/** The record so far: how many suggestions were higher / lower 15 minutes later, and the average move. */
+export function suggestionRecord(days: Array<{ date: string; items: SuggestionCheck[] }> | null | undefined): { days: number; checked: number; higher: number; lower: number; avg15: number | null } {
+  const done = (days ?? []).flatMap((d) => d.items.filter((i) => i.p15 !== null));
+  const moves = done.map((i) => (i.p15! / i.price - 1) * 100);
+  return {
+    days: (days ?? []).filter((d) => d.items.some((i) => i.p15 !== null)).length,
+    checked: done.length,
+    higher: moves.filter((m) => m > 0).length,
+    lower: moves.filter((m) => m < 0).length,
+    avg15: moves.length ? moves.reduce((s, m) => s + m, 0) / moves.length : null,
+  };
+}

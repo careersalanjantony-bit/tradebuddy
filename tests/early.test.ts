@@ -203,3 +203,21 @@ describe('the past test', () => {
     expect(r.live.pnl / r.live.trades).toBeGreaterThan(-50);
   });
 });
+
+describe('v1.16.2: the market gate and the suggestion record', () => {
+  it('falling market = NIFTY −0.5% on the day, or −0.3% since the open, or the list −0.3% since the open', async () => {
+    const { marketGate } = await import('../src/early/early');
+    expect(marketGate({ niftyDayPct: -0.66, niftyFromOpenPct: 0.1, listFromOpenPct: 0.2 })).toEqual({ weak: true, text: 'NIFTY 50 −0.66% today' });
+    expect(marketGate({ niftyDayPct: -0.2, niftyFromOpenPct: -0.35, listFromOpenPct: null }).weak).toBe(true);
+    expect(marketGate({ niftyDayPct: null, niftyFromOpenPct: null, listFromOpenPct: -0.31 }).weak).toBe(true);
+    expect(marketGate({ niftyDayPct: -0.49, niftyFromOpenPct: -0.29, listFromOpenPct: -0.29 }).weak).toBe(false);
+    expect(marketGate({ niftyDayPct: null, niftyFromOpenPct: null, listFromOpenPct: null }).weak).toBe(false);
+  });
+
+  it('record: higher / lower 15 minutes later, only checked suggestions counted', async () => {
+    const { suggestionRecord } = await import('../src/early/early');
+    const it1 = (price: number, p15: number | null) => ({ key: 'k', symbol: 'S', at: 0, price, p15, p30: null });
+    expect(suggestionRecord([{ date: 'd1', items: [it1(100, 101), it1(100, 99), it1(100, 98)] }, { date: 'd2', items: [it1(100, null)] }])).toEqual({ days: 1, checked: 3, higher: 1, lower: 2, avg15: expect.closeTo(-0.6667, 3) });
+    expect(suggestionRecord(null)).toEqual({ days: 0, checked: 0, higher: 0, lower: 0, avg15: null });
+  });
+});

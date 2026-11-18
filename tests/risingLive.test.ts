@@ -126,6 +126,41 @@ describe('Rising now, live', () => {
     expect(titles().filter((t) => /likely to keep rising/.test(t))).toHaveLength(1);
   });
 
+  it('v1.16.2: the suggestion is written down with its price 15 and 30 minutes later (the app’s own record)', async () => {
+    await chrome.storage.local.set({ riseModel: MODEL });
+    await quote(101.6, at('09:46'));
+    await scanRising(at('09:46'));
+    await risingIdle();
+    await quote(101.7, at('09:46', 3));
+    await scanRising(at('09:46', 3));
+    await quote(101.2, at('10:01', 5));
+    await scanRising(at('10:01', 5));
+    const rec = (await chrome.storage.local.get('riseRecord')).riseRecord as Array<{ date: string; items: Array<{ symbol: string; price: number; p15: number | null; p30: number | null }> }>;
+    expect(rec).toHaveLength(1);
+    expect(rec[0]!.items).toEqual([expect.objectContaining({ symbol: 'AAA', price: 101.7, p15: 101.2, p30: null })]);
+  });
+
+  it('v1.16.2: no buy suggestion and no alert while NIFTY falls 0.5%+ — but the advice for a stock you hold stays', async () => {
+    await chrome.storage.local.set({ riseModel: MODEL });
+    const withNifty = async (ltp: number, when: number) => {
+      await quote(ltp, when);
+      const q = (await chrome.storage.session.get('quotes')).quotes as Record<string, unknown>;
+      await chrome.storage.session.set({ quotes: { ...q, 'NSE_INDEX|Nifty 50': { key: 'NSE_INDEX|Nifty 50', ltp: 25_220, open: 25_300, high: 25_350, low: 25_200, volume: null, prevClose: 25_387, fetchedAt: when } } });
+    };
+    await withNifty(101.6, at('09:46'));
+    await scanRising(at('09:46'));
+    await risingIdle();
+    await withNifty(101.7, at('09:46', 3));
+    await scanRising(at('09:46', 3));
+    const rise = (await chrome.storage.session.get('rise')).rise as SessionStore['rise'];
+    expect(rise.weak).toEqual({ weak: true, text: 'NIFTY 50 −0.66% today' });
+    expect(rise.rows[0]).toMatchObject({ tag: 'unclear', since: null });
+    expect(rise.rows[0]!.reasons[0]).toBe('market falling (NIFTY 50 −0.66% today) — no buy');
+    expect(rise.held[0]).toMatchObject({ action: 'keep' });
+    expect(titles().some((t) => /likely to keep rising/.test(t))).toBe(false);
+    expect((await chrome.storage.local.get('riseRecord')).riseRecord ?? null).toBeNull();
+  });
+
   it('a stock you hold falling below the day average: "slowing — take the profit" alert', async () => {
     await quote(101.6, at('09:46'));
     await scanRising(at('09:46'));

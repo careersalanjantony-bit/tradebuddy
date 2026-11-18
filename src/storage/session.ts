@@ -70,7 +70,7 @@ export interface SessionStore {
   /** app v1.16: the pre-open rising candidates (9:00–9:15) and the final top 10 */
   preopen: import('../background/preopenJobs').PreopenState;
   /** app v1.14: the live Rising-now list and the reading of the stocks you hold */
-  rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[] };
+  rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[]; weak?: { weak: boolean; text: string } };
   riseAlerted: { date: string; keys: string[]; held: Record<string, number> };
   flow: { at: number; stocks: Record<string, { buyQty: number; sellQty: number; vwap: number | null; pace: number | null }>; rising: import('../data/flow').RisingRow[]; error?: string };
   /** market breadth: Nifty 500 up vs down (app v1.4) */

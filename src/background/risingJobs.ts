@@ -17,7 +17,8 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { claimAlert } from './ideaGate';
 import { catalystFor, catalystLookup, type NseFiles } from './earlyJobs';
-import { lookAt, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage } from '../early/early';
+import { lookAt, marketGate, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage, type SuggestionCheck } from '../early/early';
+import { NIFTY_KEY } from '../data/indices';
 import { DRIVE, drivePlan, readDrive, scoreDrive, type DriveState } from '../early/preopen';
 import type { Catalyst } from '../early/catalyst';
 import { prevDays } from './mlJobs';
@@ -328,6 +329,13 @@ export async function scanRising(now = Date.now()): Promise<number> {
       }
     }
     const market = cnt >= 20 ? sum / cnt : null;
+    // app v1.16.2: no buy suggestions against a falling market
+    const nifty = quotes[NIFTY_KEY];
+    const gate = marketGate({
+      niftyDayPct: fresh(nifty) && nifty.prevClose ? (nifty.ltp / nifty.prevClose - 1) * 100 : null,
+      niftyFromOpenPct: fresh(nifty) && nifty.open ? (nifty.ltp / nifty.open - 1) * 100 : null,
+      listFromOpenPct: market,
+    });
     // app v1.15: each sector's average move since the open (3+ stocks with a live price)
     const secSum = new Map<string, [number, number]>();
     for (const k of scan.keys) {
@@ -361,6 +369,7 @@ export async function scanRising(now = Date.now()): Promise<number> {
     let driveOut = 0;
     const rows: RiseRow[] = [];
     const reads = new Map<string, RiseRead>();
+    const newChecks: SuggestionCheck[] = [];
     let loaded = 0;
     for (const k of keys) {
       const tr = state.tracks.get(k)!;
@@ -398,9 +407,12 @@ export async function scanRising(now = Date.now()): Promise<number> {
         if (er.row && er.event) earlyEvents.push({ row: er.row, event: er.event });
       }
       if (!x || !isRisingMoment(x) || !scan.tag[k]) continue;
-      if (read.tag === 'strong' && tr.since === null) {
+      // the list shows no buy against a falling market (the reading of stocks you hold is not changed)
+      const shown: RiseRead = read.tag === 'strong' && gate.weak ? { ...read, tag: 'unclear', reasons: [`market falling (${gate.text}) — no buy`, ...read.reasons] } : read;
+      if (shown.tag === 'strong' && tr.since === null) {
         tr.since = now;
         tr.sincePrice = q.ltp;
+        newChecks.push({ key: k, symbol: (await getInstrument(k))?.trading_symbol ?? k, at: now, price: q.ltp, p15: null, p30: null });
       }
       rows.push({
         key: k,
@@ -409,10 +421,10 @@ export async function scanRising(now = Date.now()): Promise<number> {
         price: q.ltp,
         fromOpenPct: q.open ? (q.ltp / q.open - 1) * 100 : 0,
         changePct: q.prevClose ? (q.ltp / q.prevClose - 1) * 100 : 0,
-        tag: read.tag,
-        chance: read.chance,
-        measured: read.measured,
-        reasons: read.reasons,
+        tag: shown.tag,
+        chance: shown.chance,
+        measured: shown.measured,
+        reasons: shown.reasons,
         early: q.open ? (q.ltp / q.open - 1) * 100 < 1 : false,
         since: tr.since,
         sincePrice: tr.sincePrice,
@@ -430,18 +442,43 @@ export async function scanRising(now = Date.now()): Promise<number> {
       const a = holdAdvice(read, q.ltp, h.buyPrice);
       heldRows.push({ key: h.key, symbol: (await getInstrument(h.key))?.trading_symbol ?? h.key, source: h.source, qty: h.qty, buyPrice: h.buyPrice, price: q.ltp, tag: read.tag, chance: read.chance, measured: read.measured, action: a.action, protectAt: a.protectAt, text: a.text, reasons: read.reasons });
     }
-    await setSession('rise', { at: now, date, scanned: scan.keys.length, loaded, modelAt: mdl?.report.at ?? null, rows: top, held: heldRows });
+    await setSession('rise', { at: now, date, scanned: scan.keys.length, loaded, modelAt: mdl?.report.at ?? null, rows: top, held: heldRows, weak: gate });
+    await updateRecord(date, newChecks, quotes, now).catch((err: unknown) => log.debug('Suggestion record not updated', { error: errorMessage(err) }));
     const stageRank: Record<Stage, number> = { confirmed: 3, breakout: 2, setup: 1 };
     earlyRows.sort((a, b) => stageRank[b.stage] - stageRank[a.stage] || b.score - a.score);
     driveRows.sort((a, b) => (b.state === 'holding' ? 1 : 0) - (a.state === 'holding' ? 1 : 0) || b.score - a.score);
     await setSession('early', { at: now, date, rows: earlyRows.slice(0, 30), drive: driveRows.slice(0, 15), driveOut, expired, tooRisky, badNews, capital, maxRisk });
-    await alertEarly(earlyEvents, now, settings.notifications.early !== false).catch((err: unknown) => log.warn('Early Movers alert failed', { error: errorMessage(err) }));
-    await alertDrive(driveEvents, now, settings.notifications.early !== false).catch((err: unknown) => log.warn('Opening-drive alert failed', { error: errorMessage(err) }));
+    // no buy alerts against a falling market (app v1.16.2)
+    await alertEarly(earlyEvents, now, settings.notifications.early !== false && !gate.weak).catch((err: unknown) => log.warn('Early Movers alert failed', { error: errorMessage(err) }));
+    await alertDrive(driveEvents, now, settings.notifications.early !== false && !gate.weak).catch((err: unknown) => log.warn('Opening-drive alert failed', { error: errorMessage(err) }));
     await alertRising(top, heldRows, now, t, settings.notifications.rising).catch((err: unknown) => log.warn('Rising alert failed', { error: errorMessage(err) }));
     return top.length;
   } finally {
     scanning = false;
   }
+}
+
+/**
+ * App v1.16.2 — the app's own record: each stock the moment it first became "likely to keep rising"
+ * and its price 15 and 30 minutes later (kept 20 market days). Genuine live prices only.
+ */
+async function updateRecord(date: string, add: SuggestionCheck[], quotes: Record<string, Quote>, now: number): Promise<void> {
+  const rec = (await getLocal('riseRecord')) ?? [];
+  let day = rec.find((d) => d.date === date);
+  let changed = false;
+  if (!day && add.length) {
+    day = { date, items: [] };
+    rec.push(day);
+  }
+  if (!day) return;
+  for (const c of add) if (!day.items.some((i) => i.key === c.key)) (day.items.push(c), (changed = true));
+  for (const i of day.items) {
+    const q = quotes[i.key];
+    if (!q || !(q.ltp > 0) || now - q.fetchedAt > 60_000) continue;
+    if (i.p15 === null && now >= i.at + 15 * 60_000) (i.p15 = q.ltp), (changed = true);
+    if (i.p30 === null && now >= i.at + 30 * 60_000) (i.p30 = q.ltp), (changed = true);
+  }
+  if (changed) await setLocal('riseRecord', rec.slice(-20));
 }
 
 const rs = (x: number) => `₹${x.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

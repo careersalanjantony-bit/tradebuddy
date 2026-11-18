@@ -194,6 +194,14 @@ export const LOCAL_MIGRATIONS: LocalMigration[] = [
       if (preopenRecord === undefined) await kv.set({ preopenRecord: null });
     },
   },
+  {
+    to: 20,
+    description: 'app v1.16.2: the record of Rising-now suggestions',
+    async up(kv) {
+      const { riseRecord } = await kv.get(['riseRecord']);
+      if (riseRecord === undefined) await kv.set({ riseRecord: null });
+    },
+  },
 ];
 
 export const LOCAL_SCHEMA_VERSION = LOCAL_MIGRATIONS.reduce((m, x) => Math.max(m, x.to), 0);

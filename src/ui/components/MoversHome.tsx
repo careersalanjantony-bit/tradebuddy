@@ -13,6 +13,7 @@ import { useQuotes } from '../data';
 import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '../hooks';
 import { DataLimits, DriveDetail, EarlyDetail, EarlyTestLine, MoneyLine, PreDetail, rs, STAGE } from './EarlyMovers';
 import { Sparkline, toast, useFlash } from './Motion';
+import { MarketGateBanner, SuggestionRecordLine } from './RisingNow';
 
 /**
  * App v1.16 — the main tool, on Home: "🌱 Early Movers". One list that follows the clock:
@@ -73,6 +74,7 @@ export function MoversCard({ go }: { go: Go }) {
         {formatINR(capital, 0)} capital · ₹{maxRisk} risk per trade incl. charges <span class="muted">· change</span>
       </button>
       {money && <MoneyLine capital={capital} maxRisk={maxRisk} />}
+      <MarketGateBanner />
       <div class="mv-tabs" role="tablist">
         <button type="button" role="tab" class={shown === 'pre' ? 'on' : ''} data-movers-tab="pre" onClick={() => setTab('pre')}>
           Pre-open {preRows.length ? `(${preRows.length})` : ''}
@@ -84,6 +86,7 @@ export function MoversCard({ go }: { go: Go }) {
       {shown === 'pre' ? <PreList pre={preToday} phase={phase} marketPhase={market.phase} now={now} /> : <LiveList early={earlyToday} open={market.phase === 'open'} now={now} />}
       <details class="mv-more" data-testid="movers-more">
         <summary class="small">More: past test, record and data limits</summary>
+        <SuggestionRecordLine />
         <Removed early={earlyToday} pre={preToday} />
         <EarlyTestLine />
         <DataLimits />
