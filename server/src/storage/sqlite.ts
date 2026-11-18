@@ -25,6 +25,30 @@ const MIGRATIONS: string[] = [
      data TEXT
    );
    CREATE INDEX server_events_ts ON server_events (ts);`,
+  // 2 (milestone 3): the app's IndexedDB stores, chrome.alarms, and the one-server-per-database lock
+  `CREATE TABLE idb_rows (
+     store TEXT NOT NULL,
+     k TEXT NOT NULL,
+     kj TEXT NOT NULL,
+     v TEXT NOT NULL,
+     i1 TEXT,
+     i2 TEXT,
+     PRIMARY KEY (store, k)
+   ) WITHOUT ROWID;
+   CREATE INDEX idb_rows_i1 ON idb_rows (store, i1) WHERE i1 IS NOT NULL;
+   CREATE INDEX idb_rows_i2 ON idb_rows (store, i2) WHERE i2 IS NOT NULL;
+   CREATE TABLE alarms (
+     name TEXT PRIMARY KEY,
+     scheduled_time INTEGER NOT NULL,
+     period_minutes REAL
+   );
+   CREATE TABLE server_lock (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     pid INTEGER NOT NULL,
+     host TEXT NOT NULL,
+     started_at INTEGER NOT NULL,
+     heartbeat_at INTEGER NOT NULL
+   );`,
 ];
 
 export const DB_SCHEMA_VERSION = MIGRATIONS.length;
@@ -113,6 +137,11 @@ export function openStore(dataDir: string, file = 'tradebuddy.db'): Store {
     close() {
       if (closed) return;
       closed = true;
+      try {
+        db.exec('RELEASE idb_tx'); // an IndexedDB write group still open: save it
+      } catch {
+        /* none open */
+      }
       try {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       } catch {

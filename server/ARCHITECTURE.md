@@ -1,7 +1,29 @@
 # TradeBuddy server — architecture and compatibility plan
 
-Status: milestones 1 and 2 are built and tested (see [README.md](README.md)); milestones 3–5 are next.
-The live feed reuses `src/background/feed.ts` unchanged, driven by `src/market/feedSupervisor.ts`.
+Status: milestones 1, 2 and 3 are built and tested (see [README.md](README.md)); 4 (alerts + FCM) and
+5 (Android server mode) are next. The live feed reuses `src/background/feed.ts` unchanged, driven by
+`src/market/feedSupervisor.ts`; the app's jobs run unchanged through `src/engine/jobs.ts`.
+
+## Milestone 3 as built
+
+* **IndexedDB → SQLite** (`src/storage/idb.ts`): the `idb` calls the app makes, on table `idb_rows`
+  (one row per record; up to two index columns). Keys are encoded as text that sorts in IndexedDB order,
+  so the app's key ranges and cursors work. `src/storage/db.ts` got one small hook, `__setDbProvider`,
+  that the server uses; the phone never calls it. Writes started together are grouped in one SQLite
+  savepoint. Size: the 5-minute history (about 535 stocks × 5 weeks, Nifty 100 × 6 months) and daily
+  candles are a few hundred MB at most on disk — nothing is held in memory.
+* **chrome.alarms → `src/engine/alarms.ts`** (table `alarms`): the app's own `scheduleAll()` sets the
+  daily IST jobs and the 30-second poll; a due alarm fires once (also one missed while the server was
+  off), repeating ones keep their rhythm, and an alarm whose last run is still going is skipped.
+* **Start-up** (`src/engine/jobs.ts`) = `src/background/index.ts` without Chrome: clear stale
+  progress flags, `scheduleAll()`, `catchUp()`, and the timers (Early Movers 60 s, pre-open 10 s, news
+  30 s, `fastPoll` 3 s, learning / past tests when due). Each job checks itself whether it is due.
+* **One server per database** (`src/engine/lock.ts`, table `server_lock`): heartbeat every 10 s; a second
+  start is refused; a crashed server's lock is taken over after 30 s.
+* **ML training** runs in the server process (no Web Worker in Node; the app's own fallback), so a
+  training run can hold the event loop for a few seconds, outside market hours.
+* Not on the server (by design): the Upstox daily login (only the Analytics Token, so no account
+  sync), in-app app updates, sounds; push notifications come in milestone 4.
 Goal: TradeBuddy keeps watching NSE, analysing stocks and making signals with the phone app closed or the
 phone off. One user, one Upstox account, Node 24 on Ubuntu 24.04 (AWS EC2, systemd). **Read-only towards
 the broker** (no order, no GTT) — same rule as the app.

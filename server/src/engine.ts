@@ -4,6 +4,7 @@ import { marketState } from '../../src/data/calendar';
 import { getCalendar, refreshCalendarIfNeeded } from '../../src/data/calendarSync';
 import { INDEX_KEYS } from '../../src/data/indices';
 import { getQuotes, pollLtp, pollQuotes } from '../../src/data/quotes';
+import { __setDbProvider } from '../../src/storage/db';
 import { chromeLocalKV } from '../../src/storage/kv';
 import { getAuth, setLocal, updateSettings } from '../../src/storage/local';
 import { runLocalMigrations } from '../../src/storage/migrations';
@@ -18,6 +19,10 @@ import { createHttpServer } from './http/server';
 import { createLogger, setupLogging, type LineWriter } from './log';
 import { FeedSupervisor } from './market/feedSupervisor';
 import { QuotePoller } from './market/quotePoller';
+import { AlarmScheduler } from './engine/alarms';
+import type { Intelligence } from './engine/jobs';
+import { acquireLock } from './engine/lock';
+import { installKeyRange, SqliteIdb } from './storage/idb';
 import { ChangeHub, SqliteKV } from './storage/kv';
 import { openStore, type Store } from './storage/sqlite';
 import { Ticker } from './util/ticker';
@@ -46,6 +51,10 @@ export interface RunningServer {
   readonly feed: FeedSupervisor | null;
   readonly poller: QuotePoller | null;
   readonly tasks: Ticker[];
+  /** milestone 3: the app's scheduled jobs (chrome.alarms) */
+  readonly scheduler: AlarmScheduler;
+  /** milestone 3: the app's intelligence (null when TB_JOBS=off) */
+  readonly intelligence: Intelligence | null;
   ready(): boolean;
   close(reason: string): Promise<void>;
 }
@@ -59,6 +68,18 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   log.info(`TradeBuddy server ${config.version} starting (Node ${process.version}, pid ${process.pid})`, { dataDir: config.dataDir, liveFeed: config.liveFeed, backgroundTasks: config.backgroundTasks });
 
   const store = openStore(config.dataDir);
+  let lock;
+  try {
+    lock = acquireLock(store.db, now);
+  } catch (err) {
+    store.close();
+    throw err;
+  }
+  // the app's IndexedDB, on SQLite (milestone 3)
+  const idb = new SqliteIdb(store.db);
+  installKeyRange();
+  __setDbProvider(async () => idb as never);
+  const scheduler = new AlarmScheduler(store.db, now);
   const hub = new ChangeHub();
   const local = new SqliteKV(store.db, 'local', { hub, overlay: secretsOverlay(config) });
   const session = new SqliteKV(store.db, 'session', { hub, writeBehindMs: 2_000 });
@@ -67,6 +88,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     session,
     hub,
     version: config.version,
+    alarms: scheduler.api,
     notify: (id, o) => {
       log.info(`Alert: ${o.title ?? id}`, { id, message: o.message });
       store.event('alert', { id, title: o.title ?? null });
@@ -84,13 +106,15 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   let isReady = false;
   const hasToken = !!config.upstoxAnalyticsToken;
 
+  let intelligence: Intelligence | null = null;
   const undo = () => {
     uninstallChrome();
     g.WebSocket = previousWebSocket;
+    __setDbProvider(null);
   };
 
   let port: number;
-  let http: ReturnType<typeof createHttpServer>;
+  let http: ReturnType<typeof createHttpServer> | undefined;
   try {
     const mig = await runLocalMigrations(chromeLocalKV, now());
     if (mig.newerThanCode) log.warn(`Stored data schema v${mig.from} is newer than this build — nothing migrated`);
@@ -125,7 +149,9 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       );
       tasks.push(new Ticker('live-feed', opts.feed?.everyMs ?? 5_000, () => feed!.check(), 3_000));
     }
-    if (config.backgroundTasks && hasToken) {
+    // milestone 2 price polls — with the app's jobs running (TB_JOBS=on) their own 30-second poll and
+    // fast checks do this, with every analysis after it, so this simple poller is not started then
+    if (config.backgroundTasks && hasToken && !config.jobs) {
       poller = new QuotePoller(
         {
           calendar: getCalendar,
@@ -156,7 +182,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       storageInfo: () => ({ localKeys: local.size, sessionKeys: session.size, pendingWrites: session.pendingWrites, writeErrors: local.writeErrors + session.writeErrors }),
       feedHealth: () => feed?.health() ?? null,
       pollerHealth: () => poller?.health() ?? null,
-      tasks: () => tasks.map((t) => t.status()),
+      tasks: () => [...tasks, ...(intelligence?.tasks ?? [])].map((t) => t.status()),
       marketState: async (t) => marketState(t, await getCalendar()),
       calendar: getCalendar,
       quotes: getQuotes,
@@ -167,14 +193,26 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
         return { configured: hasToken, status: hasToken ? (a?.status ?? 'unchecked') : 'missing', checkedAt: a?.checkedAt ?? null, error: a?.error ?? null };
       },
       events: (limit) => store.recentEvents(limit),
+      readLocal: async (k) => (await local.get(k))[k],
+      readSession: async (k) => (await session.get(k))[k],
+      jobs: () => (config.jobs ? { scheduled: scheduler.getAll(), running: scheduler.runningNames(), fired: scheduler.fired, skipped: scheduler.skipped } : null),
       now,
     });
     http = createHttpServer({ host: config.host, port: config.port, apiToken: config.apiToken, router });
     port = await http.listen();
+    if (config.jobs) {
+      // milestone 3: the app's own jobs and timers (loaded only when on)
+      const { startIntelligence } = await import('./engine/jobs');
+      intelligence = startIntelligence({ scheduler, now, ...(opts.startTasks === false ? { startTasks: false } : {}) });
+      await intelligence.ready;
+    }
   } catch (err) {
     log.error('Start-up failed', { error: err });
+    await intelligence?.stop().catch(() => undefined);
+    await http?.close(1_000).catch(() => undefined);
     session.close();
     local.close();
+    lock.release();
     store.close();
     undo();
     throw err;
@@ -193,18 +231,24 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     feed,
     poller,
     tasks,
+    scheduler,
+    intelligence,
     ready: () => isReady,
     close(reason: string) {
       closing ??= (async () => {
         isReady = false;
         log.info(`Stopping (${reason})`);
         store.event('stop', { reason });
-        await http.close(5_000);
+        await http!.close(5_000);
+        // no new job starts; jobs still running may finish (their writes are kept)
+        await intelligence?.stop();
         await Promise.all(tasks.map((t) => t.stop()));
         feed?.stop('server stopping');
+        await new Promise((r) => setImmediate(r)); // let a last group of IndexedDB writes commit
         session.close();
         local.close();
         log.info('Stopped: everything saved');
+        lock.release();
         store.close();
         undo();
       })();

@@ -6,7 +6,7 @@ import type { ChangeHub, SqliteKV } from '../storage/kv';
  *  - notifications → the server's notification service (logged now; push in a later milestone)
  *  - action badge → nothing to show on a server
  *  - runtime → version and id only
- * chrome.alarms is not provided yet: the server schedules its own work (engine.ts).
+ *  - alarms → engine/alarms.ts (persistent, milestone 3), when the app's jobs run on the server
  */
 
 export interface ChromeAdapterOptions {
@@ -15,6 +15,8 @@ export interface ChromeAdapterOptions {
   hub: ChangeHub;
   version: string;
   notify?: (id: string, options: { title?: string; message?: string }) => void;
+  /** milestone 3: chrome.alarms (engine/alarms.ts) */
+  alarms?: unknown;
 }
 
 const area = (kv: SqliteKV) => ({
@@ -32,6 +34,7 @@ export function installChrome(o: ChromeAdapterOptions): () => void {
   const previous = g.chrome;
   g.chrome = {
     storage: { local: area(o.local), session: area(o.session), onChanged: o.hub },
+    ...(o.alarms ? { alarms: o.alarms } : {}),
     notifications: {
       create: async (id: string, options: { title?: string; message?: string }) => {
         o.notify?.(id, options);

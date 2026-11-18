@@ -125,8 +125,19 @@ export function upgradeDb(
 }
 
 let dbPromise: Promise<IDBPDatabase<SwingDB>> | null = null;
+let provider: (() => Promise<IDBPDatabase<SwingDB>>) | null = null;
+
+/**
+ * The TradeBuddy server (Node, no IndexedDB) puts its own storage behind the same calls
+ * (server/src/storage/idb.ts, SQLite). The app never calls this.
+ */
+export function __setDbProvider(p: (() => Promise<IDBPDatabase<SwingDB>>) | null): void {
+  provider = p;
+  dbPromise = null;
+}
 
 export function getDb(name = DB_NAME): Promise<IDBPDatabase<SwingDB>> {
+  if (provider) return provider();
   if (!dbPromise) {
     dbPromise = openDB<SwingDB>(name, DB_VERSION, {
       upgrade: upgradeDb,

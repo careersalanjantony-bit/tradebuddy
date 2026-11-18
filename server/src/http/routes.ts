@@ -35,6 +35,11 @@ export interface ApiDeps {
   apiStatus(): Promise<ApiStatus | undefined>;
   analytics(): Promise<{ configured: boolean; status: string; checkedAt: number | null; error: string | null }>;
   events(limit: number): ServerEvent[];
+  /** milestone 3: the app's stored data, exactly as the app keeps it (chrome.storage.local / session) */
+  readLocal?(key: string): Promise<unknown>;
+  readSession?(key: string): Promise<unknown>;
+  /** milestone 3: the app's scheduled jobs */
+  jobs?(): { scheduled: Array<{ name: string; scheduledTime: number; periodInMinutes?: number }>; running: string[]; fired: number; skipped: number } | null;
   now?: () => number;
 }
 
@@ -77,6 +82,7 @@ export function buildRouter(d: ApiDeps): Router {
         feed: d.feedHealth(),
         poller: d.pollerHealth(),
         tasks: d.tasks(),
+        jobs: d.jobs?.() ?? null,
         readOnly: true,
       },
     };
@@ -123,6 +129,59 @@ export function buildRouter(d: ApiDeps): Router {
   r.add('GET', '/v1/events', ({ query }) => {
     const limit = Math.min(500, Math.max(1, Number(query.get('limit') ?? 50) || 50));
     return { body: { events: d.events(limit) } };
+  });
+
+  // ---------- milestone 3: what the app's own jobs found and keep, in the app's own data structures
+  const local = async (k: string) => (d.readLocal ? ((await d.readLocal(k)) ?? null) : null);
+  const session = async (k: string) => (d.readSession ? ((await d.readSession(k)) ?? null) : null);
+  const answer = (o: Record<string, unknown>) => ({ body: { at: now(), ...o } });
+
+  /** Rising now (with the learned keep/sell tag), Early Movers, the pre-open list and flow risers */
+  r.add('GET', '/v1/rising', async () => {
+    const [rise, early, preopen, flow] = await Promise.all([session('rise'), session('early'), session('preopen'), session('flow')]);
+    const f = flow as { at?: number; rising?: unknown } | null;
+    return answer({ rise, early, preopen, flow: f ? { at: f.at ?? null, rising: f.rising ?? [] } : null });
+  });
+
+  /** "Falling now" sell-first ideas with their plans (entry, buy-back stop, targets, quantity, risk) */
+  r.add('GET', '/v1/falling', async () => {
+    const [shortIdeas, breadth] = await Promise.all([session('shortIdeas'), session('breadth')]);
+    return answer({ shortIdeas, breadth });
+  });
+
+  /** Breakout ideas of today and the day-trade signals (entry, stop-loss, targets) */
+  r.add('GET', '/v1/breakouts', async () => {
+    const [breakouts, daySignals] = await Promise.all([session('breakouts'), session('daySignals')]);
+    return answer({ breakouts, daySignals });
+  });
+
+  /** Your stocks with their latest prices, and what the scanners study */
+  r.add('GET', '/v1/watchlist', async () => {
+    const [watchlist, quotes, scanUniverse] = await Promise.all([local('watchlist'), d.quotes(), session('scanUniverse')]);
+    const keys = Array.isArray(watchlist) ? (watchlist as string[]) : [];
+    return answer({ watchlist: keys, quotes: Object.fromEntries(keys.filter((k) => quotes[k]).map((k) => [k, quotes[k]])), scanUniverse });
+  });
+
+  /** Trade plans (entry, stop-loss, target, quantity), day trades and the auto-trader's trades */
+  r.add('GET', '/v1/plans', async () => {
+    const [plans, dayTrades, bot] = await Promise.all([local('plans'), local('dayTrades'), local('bot')]);
+    const b = bot as { enabled?: boolean; trades?: unknown[] } | null;
+    return answer({ plans: plans ?? [], dayTrades: dayTrades ?? [], autoTrader: b ? { enabled: b.enabled ?? false, trades: b.trades ?? [] } : null });
+  });
+
+  /** Self-learning: the models, their unseen-days tests and the past tests of each scanner */
+  r.add('GET', '/v1/learning', async () => {
+    const keys = ['mlModel', 'riseModel', 'shortModel', 'dayTest', 'breakoutTest', 'earlyTest', 'shortTest', 'botProtectTest'];
+    const values = await Promise.all(keys.map((k) => local(k)));
+    return answer({ ...Object.fromEntries(keys.map((k, i) => [k, values[i]])), progress: await session('mlProgress') });
+  });
+
+  /** Every notification (trade alerts and app messages), the price-alert rules and the unread count */
+  r.add('GET', '/v1/alerts', async ({ query }) => {
+    const [history, rules, unread] = await Promise.all([local('alertHistory'), local('alerts'), session('alertsUnread')]);
+    const limit = Math.min(300, Math.max(1, Number(query.get('limit') ?? 100) || 100));
+    const items = ((history as { items?: unknown[] } | null)?.items ?? []).slice(0, limit);
+    return answer({ history: items, clearedAt: (history as { clearedAt?: number | null } | null)?.clearedAt ?? null, rules: rules ?? [], unread: unread ?? 0 });
   });
 
   return r;

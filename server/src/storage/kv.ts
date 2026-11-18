@@ -183,12 +183,14 @@ export class SqliteKV {
     const keys = [...this.dirty];
     this.dirty.clear();
     this.guard(() => {
-      this.db.exec('BEGIN');
+      // a savepoint, so this also works inside another write (e.g. a running IndexedDB transaction)
+      this.db.exec('SAVEPOINT kv_flush');
       try {
         for (const k of keys) if (this.cache.has(k)) this.upsert.run(this.area, k, JSON.stringify(this.cache.get(k)), now);
-        this.db.exec('COMMIT');
+        this.db.exec('RELEASE kv_flush');
       } catch (err) {
-        this.db.exec('ROLLBACK');
+        this.db.exec('ROLLBACK TO kv_flush');
+        this.db.exec('RELEASE kv_flush');
         for (const k of keys) this.dirty.add(k);
         throw err;
       }

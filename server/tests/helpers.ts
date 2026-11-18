@@ -20,6 +20,7 @@ export function testConfig(dataDir: string, patch: Partial<ServerConfig> = {}): 
     upstoxAnalyticsToken: null,
     liveFeed: false,
     backgroundTasks: false,
+    jobs: false,
     shutdownTimeoutMs: 5000,
     version: 'test',
     ...patch,

@@ -25,6 +25,8 @@ export interface ServerConfig {
   liveFeed: boolean;
   /** download holidays, NSE index lists and prices in the background (off only in tests) */
   backgroundTasks: boolean;
+  /** milestone 3: run the app's own jobs (scans, signals, alerts, learning) on the server */
+  jobs: boolean;
   shutdownTimeoutMs: number;
   version: string;
 }
@@ -73,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
   const liveFeed = flag(env, 'TB_LIVE_FEED', true, problems);
   const backgroundTasks = flag(env, 'TB_BACKGROUND_TASKS', true, problems);
+  const jobs = flag(env, 'TB_JOBS', true, problems);
 
   // systemd may pass several state directories separated by ':'; the first one is ours
   const dataDir = resolve(read(env, 'TB_DATA_DIR') ?? read(env, 'STATE_DIRECTORY')?.split(':')[0] ?? './server-data');
@@ -88,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     upstoxAnalyticsToken: read(env, 'UPSTOX_ANALYTICS_TOKEN'),
     liveFeed,
     backgroundTasks,
+    jobs,
     shutdownTimeoutMs,
     version: APP_VERSION,
   };

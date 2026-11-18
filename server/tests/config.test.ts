@@ -5,7 +5,7 @@ import { ConfigError, loadConfig } from '../src/config';
 describe('server configuration (environment variables)', () => {
   it('has safe defaults: localhost only, API off without a token, live feed on', () => {
     const c = loadConfig({});
-    expect(c).toMatchObject({ host: '127.0.0.1', port: 8787, apiToken: null, upstoxAnalyticsToken: null, liveFeed: true, backgroundTasks: true, logLevel: 'info', shutdownTimeoutMs: 20000 });
+    expect(c).toMatchObject({ host: '127.0.0.1', port: 8787, apiToken: null, upstoxAnalyticsToken: null, liveFeed: true, backgroundTasks: true, jobs: true, logLevel: 'info', shutdownTimeoutMs: 20000 });
     expect(c.dataDir).toBe(resolve('./server-data'));
   });
 

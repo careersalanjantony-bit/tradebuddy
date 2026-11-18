@@ -4,11 +4,13 @@ Keeps watching the NSE market when the phone app is closed or the phone is off. 
 code (no second copy of the trading logic) on Node 24, stores everything in SQLite, and answers a small
 REST API. **Read-only towards Upstox:** it never places, changes or cancels an order or a GTT.
 
-Status: milestone 1 (server, health checks, storage, logging, graceful stop, systemd) and milestone 2
-(live Upstox monitoring: Analytics Token, Market Data Feed V3 with heartbeat and reconnect, REST price
-polls, market hours and holidays, `/v1/market/status`, `/v1/quotes`) are done. The signal endpoints
-(rising, falling, breakouts, watch list, entry / stop-loss / targets, learning, alert history) and push
-notifications are the next milestones — see [ARCHITECTURE.md](ARCHITECTURE.md).
+Status: milestone 1 (server, health checks, storage, logging, graceful stop, systemd), milestone 2
+(live Upstox monitoring: Analytics Token, Market Data Feed V3 with heartbeat and reconnect, market hours
+and holidays, `/v1/market/status`, `/v1/quotes`) and milestone 3 (the app's own jobs on the server:
+history downloads, the 30-second price poll and every check after it, day-trade signals, breakouts,
+Rising now, Falling now / short selling, Early Movers, pre-open, learning, protective stops and targets,
+alerts — on SQLite, with a persistent IST schedule and catch-up) are done. Push notifications (FCM) and
+the Android server mode are next — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Run it on your computer
 
@@ -30,6 +32,7 @@ Checks: `npm run server:typecheck` and `npm run server:test` (also part of `npm 
 | `UPSTOX_ANALYTICS_TOKEN` | — | Upstox Analytics Token (market data only). Empty = no prices. |
 | `TB_HOST` / `TB_PORT` | `127.0.0.1` / `8787` | Where to listen. Keep it local; HTTPS comes from a proxy. |
 | `TB_LIVE_FEED` | `on` | Live feed during pre-open and market hours. |
+| `TB_JOBS` | `on` | The app's own jobs (scans, signals, alerts, learning). `off` = milestone 2 only. |
 | `TB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `TB_DATA_DIR` | `STATE_DIRECTORY` or `./server-data` | SQLite database folder. |
 | `TB_SHUTDOWN_TIMEOUT_MS` | `20000` | Longest graceful stop. |
@@ -67,6 +70,25 @@ group, never 8787.
 
 Update: `cd /opt/tradebuddy && sudo git pull && sudo npm ci && sudo npm run server:build && sudo systemctl restart tradebuddy-server`.
 
+### Updating a milestone 2 server to milestone 3
+
+```bash
+sudo systemctl stop tradebuddy-server
+sudo cp -a /var/lib/tradebuddy /var/lib/tradebuddy.bak-m2      # the database, to go back if needed
+cd /opt/tradebuddy && sudo git fetch && sudo git checkout server-backend && sudo git pull
+sudo npm ci && sudo npm run server:typecheck && sudo npm run server:test && sudo npm run server:build
+echo 'TB_JOBS=on' | sudo tee -a /etc/tradebuddy/server.env      # on is also the default
+sudo systemctl start tradebuddy-server && journalctl -u tradebuddy-server -f
+curl -s -H "Authorization: Bearer $TB_API_TOKEN" http://127.0.0.1:8787/v1/health | head -c 600
+```
+
+The database moves to schema 2 by itself on the first start (new tables only). The first start also
+downloads the price history (daily candles and 5-minute days for about 535 stocks) within Upstox's
+limits — that takes a while; `/v1/health` shows the tasks and jobs meanwhile. To go back: stop the
+service, restore `/var/lib/tradebuddy.bak-m2`, check out the previous commit, build, start (a milestone 2
+server refuses a schema 2 database, so the restore is needed). Only one server may use a database:
+a second start on the same data folder is refused.
+
 What systemd does: starts the server at boot, restarts it 5 s after a crash (not after exit code 78,
 which means a bad setting), sends SIGTERM on stop and waits 30 s. On SIGTERM the server stops taking
 requests, finishes running tasks, closes the feed, saves everything and exits.
@@ -85,6 +107,16 @@ Answers are JSON. 20 wrong tokens from one address within 10 minutes → `429` f
 | `GET /v1/quotes` | Latest prices of every watched instrument; `?keys=NSE_EQ\|INE…,NSE_INDEX\|Nifty 50` for some only |
 | `GET /v1/quotes/{key}` | One instrument (URL-encode the key) |
 | `GET /v1/events?limit=50` | The server's journal: starts, stops, alerts |
+| `GET /v1/rising` | Rising now (`rise`: rows with the learned keep/sell tag, plans, held stocks), Early Movers (`early`), the pre-open list (`preopen`), flow risers |
+| `GET /v1/falling` | Falling now / sell-first ideas (`shortIdeas`: score, reasons, plan with entry, buy-back stop, targets, quantity, risk) and market breadth |
+| `GET /v1/breakouts` | Today's breakout ideas (`breakouts`) and day-trade signals (`daySignals`: entry, stop-loss, target) |
+| `GET /v1/watchlist` | Your stocks with their latest prices, and the scan list summary |
+| `GET /v1/plans` | Trade plans (entry, stop-loss, target, quantity, status), day trades, the auto-trader's trades |
+| `GET /v1/learning` | The learned models and every past test (day trade, breakout, Early Movers, short, auto-trader protection) |
+| `GET /v1/alerts?limit=100` | Every notification (newest first), the price-alert rules, unread count |
+
+The `/v1` signal answers are the app's own stored data structures, unchanged (`at` = when the server
+answered). `/v1/health` also lists the scheduled jobs (`jobs`) and every repeating task.
 
 ## How it works
 
