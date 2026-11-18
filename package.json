@@ -1,7 +1,7 @@
 {
   "name": "tradebuddy",
   "private": true,
-  "version": "1.16.2",
+  "version": "1.17.0",
   "description": "TradeBuddy: personal Android app for NSE day and swing trading ideas, practice money and alerts. Read-only towards the broker.",
   "type": "module",
   "scripts": {
@@ -27,6 +27,7 @@
     "@capawesome-team/capacitor-android-foreground-service": "8.1.0",
     "@capgo/capacitor-inappbrowser": "8.26.2",
     "@capgo/capacitor-native-biometric": "8.9.1",
+    "@fontsource-variable/plus-jakarta-sans": "5.3.0",
     "idb": "8.0.4",
     "lightweight-charts": "5.2.1",
     "preact": "10.29.8"

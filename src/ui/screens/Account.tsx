@@ -68,8 +68,7 @@ export function AccountScreen({ go, unread }: { go: Go; unread: number }) {
 
   return (
     <div class="screen account" data-testid="account">
-      <section class="profile-card" data-tilt>
-        <span class="glare" aria-hidden="true" />
+      <section class="profile-card">
         <Avatar name={a.name} color={a.color} size={68} />
         <div class="profile-text">
           {editing ? (

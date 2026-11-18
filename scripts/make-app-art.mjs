@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Renders the TradeBuddy Android icons and splash screens (replacing Capacitor's default artwork):
- * a green rising line on a dark navy square. Run once after `npx cap add android`, or after changing
- * the design: node scripts/make-app-art.mjs
+ * Renders the TradeBuddy Android icons and splash screens (replacing Capacitor's default artwork), in the
+ * DESIGN.md colours: a mint rising arrow on navy (icons), and the navy brand circle on the light canvas (splash).
+ * Run after changing the design: node scripts/make-app-art.mjs   (PW_CHANNEL=msedge uses an installed browser)
  */
 import { createRequire } from 'node:module';
 import { readdirSync, existsSync } from 'node:fs';
@@ -12,13 +12,15 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const res = fileURLToPath(new URL('../android/app/src/main/res/', import.meta.url));
-const NAVY = '#0f1720';
-const GREEN = '#22c55e';
+const NAVY = '#1e293b'; // DESIGN.md accent-interactive
+const MINT = '#10b981'; // DESIGN.md brand-mint-primary
+const CANVAS = '#f9f9ff'; // DESIGN.md surface-canvas
+const INK = '#111827';
 
 /** the mark, drawn in a 100×100 box */
-const mark = (stroke = 9) => `
-  <polyline points="14,70 38,46 54,60 84,28" fill="none" stroke="${GREEN}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>
-  <polyline points="64,28 84,28 84,48" fill="none" stroke="${GREEN}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>`;
+const mark = (stroke = 9, colour = MINT) => `
+  <polyline points="14,70 38,46 54,60 84,28" fill="none" stroke="${colour}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="64,28 84,28 84,48" fill="none" stroke="${colour}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>`;
 
 const icon = (size, round) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
   ${round ? `<circle cx="50" cy="50" r="50" fill="${NAVY}"/>` : `<rect width="100" height="100" rx="22" fill="${NAVY}"/>`}
@@ -29,9 +31,9 @@ const foreground = (size) => `<svg xmlns="http://www.w3.org/2000/svg" width="${s
 const splash = (w, h) => {
   const s = Math.min(w, h) * 0.28;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <rect width="${w}" height="${h}" fill="${NAVY}"/>
-  <g transform="translate(${(w - s) / 2} ${(h - s) / 2 - s * 0.15}) scale(${s / 100})">${mark()}</g>
-  <text x="${w / 2}" y="${(h + s) / 2 + s * 0.12}" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="${s * 0.22}" fill="#e6edf3">TradeBuddy</text></svg>`;
+  <rect width="${w}" height="${h}" fill="${CANVAS}"/>
+  <g transform="translate(${(w - s) / 2} ${(h - s) / 2 - s * 0.15}) scale(${s / 100})"><circle cx="50" cy="50" r="50" fill="${NAVY}"/><g transform="translate(15 15) scale(0.7)">${mark()}</g></g>
+  <text x="${w / 2}" y="${(h + s) / 2 + s * 0.12}" text-anchor="middle" font-family="'Plus Jakarta Sans', 'Segoe UI', sans-serif" font-weight="800" font-size="${s * 0.22}" fill="${INK}">TradeBuddy</text></svg>`;
 };
 
 const pngSize = (f) => {
@@ -39,7 +41,7 @@ const pngSize = (f) => {
   return [b.readUInt32BE(16), b.readUInt32BE(20)];
 };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
 const page = await browser.newPage();
 async function render(svg, w, h, file) {
   await page.setViewportSize({ width: w, height: h });

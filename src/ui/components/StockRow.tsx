@@ -43,24 +43,33 @@ export function StockRow({
     <div class="stock-row stock-card" data-symbol={symbol} data-trend={s?.trend ?? ''} data-verdict={verdict ?? ''} data-flags={s?.flags.join(',') ?? ''}>
       <button class="stock-main" type="button" onClick={onOpen}>
         <div class="line1">
-          <b>{symbol}</b>
-          <span class="exch" title="National Stock Exchange — all prices here are NSE prices">NSE</span>
-          {indexTag && (
-            <span class={`chip index-tag ${indexTag.replace(/\s+/g, '').toLowerCase()}`} data-testid="row-index" title={`In ${indexTag}`}>
-              {indexTag}
+          <span class="coin" aria-hidden="true">
+            {symbol.slice(0, 2)}
+          </span>
+          <span class="who">
+            <b>{symbol}</b>
+            <span class="tags">
+              <span class="exch" title="National Stock Exchange — all prices here are NSE prices">NSE</span>
+              {indexTag && (
+                <span class={`chip index-tag ${indexTag.replace(/\s+/g, '').toLowerCase()}`} data-testid="row-index" title={`In ${indexTag}`}>
+                  {indexTag}
+                </span>
+              )}
+              {signal && (
+                <span class={`chip day ${signal.side === 'long' ? 'buy' : 'sell'}`} title="Day-trade signal (buy and sell the same day) — see the Day trade tab">
+                  {signal.side === 'long' ? '▲ BUY today' : '▼ SELL today'} {signal.time}
+                </span>
+              )}
+              {badge && <span class="chip pick">{badge}</span>}
+              {rise && <RiseChip tag={rise.tag} measured={rise.measured} />}
             </span>
-          )}
-          {signal && (
-            <span class={`chip day ${signal.side === 'long' ? 'buy' : 'sell'}`} title="Day-trade signal (buy and sell the same day) — see the Day trade tab">
-              {signal.side === 'long' ? '▲ BUY today' : '▼ SELL today'} {signal.time}
-            </span>
-          )}
-          {badge && <span class="chip pick">{badge}</span>}
-          {rise && <RiseChip tag={rise.tag} measured={rise.measured} />}
+          </span>
           <span class="px">
-            {closes.length > 5 && <Sparkline values={closes} width={64} height={24} />}
             <span class={`price ${flash}`}>{price !== null ? `₹${formatNumberIN(price)}` : '—'}</span>
-            <span class={`ch-pill ${ch === null ? '' : ch >= 0 ? 'up' : 'down'}`}>{formatPct(ch)}</span>
+            <span class="px-row">
+              {closes.length > 5 && <Sparkline values={closes} width={56} height={22} />}
+              <span class={`ch-pill ${ch === null ? '' : ch >= 0 ? 'up' : 'down'}`}>{formatPct(ch)}</span>
+            </span>
           </span>
         </div>
         {s ? (

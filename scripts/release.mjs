@@ -13,8 +13,8 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,9 +34,21 @@ const die = (m) => {
 if (!existsSync(apk)) die(`${apk} not found — build it first`);
 if (!existsSync(notesFile)) die(`${notesFile} not found — write the plain-words notes (one per line)`);
 
-// the APK must really be this version
-const aapt = '/opt/android-sdk/build-tools/36.0.0/aapt2';
-if (existsSync(aapt)) {
+// the APK must really be this version (aapt2 from the newest installed Android build-tools; skipped if there is none)
+const win = process.platform === 'win32';
+function findAapt2() {
+  const sdks = [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, win ? join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk') : join(homedir(), 'Android', 'Sdk'), '/opt/android-sdk'];
+  for (const sdk of sdks) {
+    const tools = sdk ? join(sdk, 'build-tools') : '';
+    if (!tools || !existsSync(tools)) continue;
+    const newest = readdirSync(tools).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).at(-1);
+    const exe = newest ? join(tools, newest, win ? 'aapt2.exe' : 'aapt2') : '';
+    if (exe && existsSync(exe)) return exe;
+  }
+  return undefined;
+}
+const aapt = findAapt2();
+if (aapt) {
   const badge = execFileSync(aapt, ['dump', 'badging', apk], { encoding: 'utf8' }).split('\n')[0];
   if (!badge.includes(`versionName='${version}'`)) die(`the APK is not version ${version}: ${badge}`);
 }
@@ -87,7 +99,7 @@ try {
     'git',
     [
       '-c', 'user.name=Claude', '-c', 'user.email=noreply@anthropic.com', 'commit', '-q', '-m',
-      `TradeBuddy ${version}: app file for in-app updates\n\nBuilt from ${head} (${branch}).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_014xkUegGpnukAXVUjWy6cQb`,
+      `TradeBuddy ${version}: app file for in-app updates\n\nBuilt from ${head} (${branch}).\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`,
     ],
     { cwd: dir },
   );

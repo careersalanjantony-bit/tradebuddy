@@ -18,7 +18,8 @@ export interface AccountState {
   lockAfterMin: number;
 }
 
-export const AVATAR_COLORS = ['#6d5dfc', '#3ba3ff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6'];
+/** DESIGN.md palette: mint, navy and slate tones (white initials stay readable on all of them). */
+export const AVATAR_COLORS = ['#10b981', '#1e293b', '#475569', '#059669', '#0f766e', '#334155'];
 export const PIN_LENGTH = 4;
 const ROUNDS = 150_000;
 

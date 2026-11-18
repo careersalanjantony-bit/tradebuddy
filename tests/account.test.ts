@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkPin, hashPin, initials, lockDue, makeBackup, newAccount, readBackup, validPin, waitAfterFails } from '../src/account/account';
+import { AVATAR_COLORS, checkPin, hashPin, initials, lockDue, makeBackup, newAccount, readBackup, validPin, waitAfterFails } from '../src/account/account';
 
 describe('app login', () => {
   it('stores only a salted hash of the PIN and checks it', async () => {
@@ -20,7 +20,7 @@ describe('app login', () => {
   });
 
   it('locks again after the chosen time away; never without a PIN or when set to never', async () => {
-    const a = { ...newAccount('Alan', '#6d5dfc', 0), pin: await hashPin('1234', 1000), lockAfterMin: 1 };
+    const a = { ...newAccount('Alan', AVATAR_COLORS[0]!, 0), pin: await hashPin('1234', 1000), lockAfterMin: 1 };
     expect(lockDue(a, 0, 30_000)).toBe(false);
     expect(lockDue(a, 0, 60_000)).toBe(true);
     expect(lockDue({ ...a, lockAfterMin: -1 }, 0, 9e9)).toBe(false);
@@ -37,7 +37,9 @@ describe('app login', () => {
   it('profile basics', () => {
     expect(initials('Alan Joy')).toBe('AJ');
     expect(initials('  ')).toBe('T');
-    expect(newAccount('', 'nope', 5)).toMatchObject({ name: 'Trader', color: '#6d5dfc', pin: null, lockAfterMin: 1 });
+    // an unknown colour (for example one saved by an older look) becomes the first colour of today's palette
+    expect(newAccount('', 'nope', 5)).toMatchObject({ name: 'Trader', color: AVATAR_COLORS[0], pin: null, lockAfterMin: 1 });
+    expect(newAccount('Alan', '#6d5dfc', 5).color).toBe(AVATAR_COLORS[0]);
   });
 
   it('backup: practice and settings in, keys and tokens never', () => {

@@ -15,7 +15,7 @@ inside the app (see *How it is built*).
 1. Copy `TradeBuddy-<version>.apk` to the phone (or download it there).
 2. Open it. Android asks to **allow installing from this source**. Allow it once, then tap **Install**.
 3. Open **TradeBuddy**. The first-start guide explains the basics in 7 short steps.
-4. **More → Settings**: paste your Upstox **Analytics Token** (Upstox → Developer Apps → Analytics;
+4. **Home → Settings**: paste your Upstox **Analytics Token** (Upstox → Developer Apps → Analytics;
    valid one year, read-only). Prices, history, news and the instant feed work with it.
 5. Optional: the API key + secret and the daily **Log in to Upstox** let the app find the trades you
    make in the Upstox app by itself. The login uses the same redirect URL as the extension
@@ -36,7 +36,26 @@ key using Android's key rotation: on Android 9+ the app is signed with the new k
 signed by the old key, that hands over to the new one. Phones keep their data, and after 1.5.1 they
 refuse files signed with the old key alone (its "rollback" right is off). Android 7–8 keep the old
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
-repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
+repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one (or its path in `TRADEBUDDY_KEYS`) and works
+on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
+comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
+
+## New in 1.17.0
+
+- **A new look for the whole app**, following [`DESIGN.md`](DESIGN.md) (the "Neo-Luminous Fintech" design from the Stitch project
+  "System Design Specification"): a light canvas, white rounded cards, mint green for gains and one red for losses, dark pill buttons
+  and **Plus Jakarta Sans** (bundled, so it works offline). A bar at the top (TradeBuddy, alerts bell, your profile) and five tabs at
+  the bottom — Home, Stocks, **Day trade** (the raised round button in the middle), News and Practice. **Me** and **Trades & alerts**
+  moved to the top bar; Settings, Guide, Learning and the rest are buttons on Home.
+- **Home:** your practice money first (an eye button hides the numbers; Buy and Sell pills), Early Movers right after it, eight
+  shortcut buttons, top movers, the best idea, the auto-trader card, market breadth and the news.
+- **Dark mode is pure black** (`#000000` canvas, near-black cards). Light is the default now; a phone that had Dark chosen shows Light
+  once after this update (Settings → Theme brings Dark back, or Follow system).
+- The app icon, splash picture, notification colour and the Android status bar follow the new colours.
+- Nothing was removed and no numbers changed: every function — the practice wallet, the auto-trader, alerts, the lock and updates —
+  works as in 1.16.2. The "More" list is no longer in the bottom bar, so the Guide and this README now point to Home → Settings.
+- `npm run apk` now works on Windows too (it finds the Android SDK, builds with JDK 21 and runs the `.bat` tools through `cmd.exe`),
+  and `npm run release` finds `aapt2` in the Android SDK on any system.
 
 ## New in 1.16.2
 
@@ -516,7 +535,8 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 | **Stocks** | Nifty 50 / 100 / Midcap 100 / Smallcap 100 / 500 lists with plain-words labels and filters |
 | **More** | Trades & alerts (real Upstox trades, GTT steps), Self-learning details, Guide, Settings, Diagnostics |
 
-Phones get a bottom bar; tablets and laptop-size screens a side menu.
+Phones get a five-tab bottom bar — Home, Stocks, **Day trade** (the raised centre button), News, Practice — with **Trades & alerts**
+(the bell) and **Me** (your profile picture) in the top bar; **More** is inside Me. Tablets and laptop-size screens get a side menu.
 
 ## Self-learning — how it works, honestly
 
@@ -530,7 +550,7 @@ Phones get a bottom bar; tablets and laptop-size screens a side menu.
 - **Check on unseen days:** it learns on the older 2/3 of the days, picks its chance bar on the last
   quarter of those, then trades the newest 1/3 it has never seen. It is used for live signals **only if**
   it made money there **and** beat both the plain rules and simply taking every signal. Otherwise the
-  plain rules stay in charge and the app says so (More → Self-learning).
+  plain rules stay in charge and the app says so (Home → Learning).
 - It learns again every evening (and right after the day-trade test), so it follows the market.
 - Live-only clues (buyers meter, volume pace, news mood) are written to a journal from day one and
   can join the learning once enough days exist.
@@ -560,6 +580,20 @@ Practice money, signals, lists and learning use the same tested code as the brow
   calls), alarms (timer), notifications (Android), Upstox login (in-app browser), HTTP (native, no CORS).
 - New in the app: `src/wallet/` (practice money), `src/ml/` (self-learning), `src/data/flow.ts`
   (buyers meter, rising now), `src/data/sentiment.ts` (news mood), `src/ui/screens/{Practice,Guide,More,Learning}.tsx`.
+
+### Design
+
+The look follows [`DESIGN.md`](DESIGN.md) ("Neo-Luminous Fintech", from the Stitch project "System Design Specification"): a light, airy
+canvas, white rounded cards, mint for gains and dark navy pill buttons, red for losses, Plus Jakarta Sans, a 4 px spacing grid.
+The styles are in `src/ui/styles/`: `tokens.css` (every colour, size and radius from DESIGN.md, in one place), `base.css` (type,
+forms, buttons, chips, cards), `shell.css` (top bar, bottom bar, sheets, lock and guide screens), `home.css` (value card, shortcut
+grid, rows, movers) and `screens.css`. Change a token there and the whole app follows. Notes:
+
+- The dark look is **pure black**: a `#000000` canvas, neutral near-black cards with thin borders, and the same mint and red as the
+  light look. Every light/dark difference is a token in `tokens.css`. Phones start on the light look.
+- Amber is the only colour added (warnings such as "a watch list, not buy signals"): DESIGN.md has no warning colour.
+- The font is bundled (`@fontsource-variable/plus-jakarta-sans`), so the app still talks only to Upstox and NSE.
+- App icon and splash screen are drawn by `node scripts/make-app-art.mjs` in the same colours.
 
 ```bash
 npm install

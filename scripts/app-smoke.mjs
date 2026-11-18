@@ -183,7 +183,8 @@ async function upstox(route) {
   return route.fulfill(json({ status: 'error', errors: [{ error_code: 'X', message: 'not in the fake' }] }, 404));
 }
 
-const browser = await chromium.launch();
+// PW_CHANNEL=msedge (or chrome) runs the test in an installed browser instead of Playwright's own download
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 const page = await ctx.newPage();
 const errors = [];
@@ -411,7 +412,7 @@ await page.screenshot({ animations: 'disabled', path: join(out, 'app-practice-pr
 
 console.log('── Day trade tab: rising now, learning');
 await page.click('.bottom-nav [data-nav="daytrade"]');
-check('page slides in from the side of the tab (Day trade is right of Home)', await until(() => page.evaluate(() => !!document.querySelector('main.page.from-right, main.page.from-left')), 3000));
+check('Day trade is the raised centre button of the bottom bar and is marked as the current tab', await until(() => page.evaluate(() => { const b = document.querySelector('.bottom-nav [data-nav="daytrade"]'); return !!b && b.classList.contains('nav-center') && b.getAttribute('aria-current') === 'page'; }), 3000));
 const rising = await until(async () => !!(await page.$('[data-testid="rising-now"]')), 15000);
 const risingText = ((await page.textContent('[data-testid="rising-now"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('"Rising now — live" reads every stock on each live price, with a tag for whether it is likely to keep rising', rising && risingText.includes('read on each live price') && risingText.includes('likely to keep rising'), risingText.slice(0, 200));
@@ -420,7 +421,7 @@ check('the self-learning line is on the Day trade tab', ((await page.textContent
 check("Day trade starts with today's plan, the current step highlighted (10:30 = buy ideas)", ((await page.textContent('[data-testid="day-plan"] .plan-step.now').catch(() => '')) ?? '').includes('Buy ideas'));
 check('the past test and how-it-works are folded away under one line', !!(await page.$('[data-testid="day-details"]')) && !(await page.$eval('[data-testid="day-details"]', (e) => e.hasAttribute('open'))));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-daytrade.png'), fullPage: true });
-await page.click('.bottom-nav [data-nav="account"]');
+await page.click('.topbar [data-nav="account"]');
 await page.click('[data-go="learning"]');
 await page.waitForSelector('[data-testid="learning-card"]');
 await page.click('[data-testid="learn-now"]');
@@ -435,9 +436,10 @@ await page.waitForSelector('[data-testid="wallet-mini"]');
 check('Home shows the practice money summary', ((await page.textContent('[data-testid="wallet-mini"]')) ?? '').includes('Practice money'));
 await until(async () => !!(await page.$('[data-testid="rising-carousel"] .rise-tile')) && ((await page.textContent('[data-testid="market-pill"]').catch(() => '')) ?? '').includes('Market open'), 15000);
 const homeOrder = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid')));
-check('Home (app v1.16): "🌱 Early Movers" is the first card — above Rising now, the best idea and the practice money', homeOrder[0] === 'early-movers' && homeOrder.indexOf('early-movers') < homeOrder.indexOf('wallet-mini') && homeOrder.indexOf('early-movers') < homeOrder.indexOf('best-idea'), JSON.stringify(homeOrder));
+check('Home (DESIGN.md): the practice-money card comes first, then "🌱 Early Movers" — above Rising now and the best idea', homeOrder[0] === 'wallet-mini' && homeOrder[1] === 'early-movers' && homeOrder.indexOf('early-movers') < homeOrder.indexOf('best-idea'), JSON.stringify(homeOrder));
 check('Home: greeting, market open pill, the best-idea card and the rising-now carousel',((await page.textContent('.home-head')) ?? '').includes('Good') && ((await page.textContent('[data-testid="market-pill"]')) ?? '').includes('Market open') && !!(await page.$('[data-testid="best-idea"]')) && !!(await page.$('[data-testid="rising-carousel"] .rise-tile')));
-check('black theme by default', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+check('light theme by default (DESIGN.md canvas #F9F9FF)', await page.evaluate(() => getComputedStyle(document.body).backgroundColor === 'rgb(249, 249, 255)'), await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+check('Home has the 4×2 shortcut grid', (await page.$$('[data-testid="quick-grid"] .quick')).length === 8);
 await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'news:refresh', payload: undefined }));
 const moods = await until(async () => (await page.$$('[data-testid="news"] [data-mood]')).length > 0, 15000);
 const marks = await page.$$eval('[data-testid="news"] [data-mood]', (els) => els.map((e) => e.getAttribute('data-mood')));
@@ -453,7 +455,7 @@ await revealAll(); await page.screenshot({ animations: 'disabled', path: join(ou
 console.log('── News tab');
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(300);
-check('bottom bar has 6 tabs including News and Me', (await page.$$('.bottom-nav button')).length === 6 && !!(await page.$('.bottom-nav [data-nav="news"]')) && !!(await page.$('.bottom-nav [data-nav="account"]')));
+check('bottom bar has 5 tabs (Home, Stocks, Day trade, News, Practice); alerts and Me are in the top bar', (await page.$$('.bottom-nav button')).length === 5 && !!(await page.$('.bottom-nav [data-nav="news"]')) && !!(await page.$('.topbar [data-nav="account"]')) && !!(await page.$('.topbar [data-nav="alerts"]')));
 await page.click('.bottom-nav [data-nav="news"]');
 await page.waitForSelector('[data-testid="news-screen"]', { timeout: 10000 });
 const newsOk = await until(async () => (await page.$$('[data-testid="news-screen"] .news-item')).length > 0, 15000);
@@ -596,8 +598,8 @@ console.log('── Early Movers (on Home since v1.16)');
 check('Day trade points to Early Movers on Home (no second, crowded copy)', !!(await page.$('[data-testid="early-moved"]')) && !(await page.$('[data-testid="early-movers"]')));
 await page.click('[data-testid="early-moved"]');
 await page.waitForSelector('[data-testid="early-movers"]', { timeout: 8000 }).catch(() => {});
-const moversTop = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid'))[0]);
-check('the link opens Home with Early Movers on top', moversTop === 'early-movers', String(moversTop));
+const moversTop = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid'))[1]);
+check('the link opens Home with Early Movers right under the practice-money card', moversTop === 'early-movers', String(moversTop));
 const liveTab = await page.getAttribute('[data-movers-tab="live"]', 'class').catch(() => '');
 const phaseText = ((await page.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
 const stepsNow = await page.$$eval('[data-testid="movers-steps"] li', (els) => els.map((e) => `${e.className}:${e.textContent}`)).catch(() => []);
@@ -845,7 +847,7 @@ const backY = await page.evaluate(() => `${window.scrollY} (page ${document.docu
 check('opening a stock and coming back keeps the list where you were (scroll position)', target > 100 && onStock && restored, `scrolled to ${target} (${before}); opened ${atOpen.sym.trim()} with the list at ${atOpen.y}, row at ${atOpen.rowTop}; back at ${backY}`);
 
 console.log('── Me: account, lock');
-await page.click('.bottom-nav [data-nav="account"]');
+await page.click('.topbar [data-nav="account"]');
 await page.waitForSelector('[data-testid="account"]', { timeout: 10000 });
 const accText = ((await page.textContent('[data-testid="account"]')) ?? '').replace(/\s+/g, ' ');
 check('Me: profile, practice record, Upstox connection, security, look, alerts, data', ['Alan Joy', 'Your practice record', 'Best trade', 'Upstox connection', 'App lock', 'Look', 'Alerts', 'Your data', 'Copy backup'].every((t) => accText.includes(t)), accText.slice(0, 120));
@@ -878,10 +880,10 @@ const scrolled = await page.evaluate(async () => {
 });
 const scrollInfo = await page.evaluate(() => { const se = document.scrollingElement; const cs = (el) => { const c = getComputedStyle(el); return `${c.overflow}/${c.overflowY}/${c.height}/${c.position}`; }; return `sh ${se.scrollHeight} ch ${se.clientHeight} html ${cs(document.documentElement)} body ${cs(document.body)} app ${cs(document.querySelector('.app'))} content ${cs(document.querySelector('.content'))}`; });
 check('the page scrolls', scrolled > 100, `scrollY ${scrolled} ${scrollInfo}`);
-const shown = await until(() => page.evaluate(() => [...document.querySelectorAll('[data-rv]')].filter((el) => { const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }).every((el) => el.classList.contains('in'))), 4000);
-check('cards scrolled into view appear', shown);
-const pill = await page.evaluate(() => { const n = document.querySelector('.bottom-nav .nav-pill').getBoundingClientRect(); const b = document.querySelector('.bottom-nav [data-nav="today"]').getBoundingClientRect(); return Math.abs((n.left + n.width / 2) - (b.left + b.width / 2)); });
-check('the floating circle sits over the active tab', pill < 4, `${pill.toFixed(1)} px off`);
+const shown = await page.evaluate(() => [...document.querySelectorAll('.screen > *')].every((el) => Number(getComputedStyle(el).opacity) > 0.99));
+check('cards on the screen are fully visible (no hidden-until-scrolled cards)', shown);
+const navInfo = await page.evaluate(() => { const c = document.querySelector('.bottom-nav .nav-center .ic').getBoundingClientRect(); const h = document.querySelector('.bottom-nav [data-nav="today"] .ic').getBoundingClientRect(); return { raise: h.top - c.top, current: document.querySelector('.bottom-nav [aria-current="page"]')?.getAttribute('data-nav') }; });
+check('the Day trade circle is raised above the other tabs and Home is marked as the current tab', navInfo.raise > 10 && navInfo.current === 'today', JSON.stringify(navInfo));
 
 console.log('── Settings: alerts');
 await page.goto(`${base}#/settings`);

@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { isNative } from '../../platform/http';
 
@@ -10,8 +11,8 @@ import { isNative } from '../../platform/http';
 const reduceMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const easeOut = (x: number) => 1 - (1 - x) ** 3;
 
-/** A number that glides to its new value. */
-export function AnimatedNumber({ value, format, ms = 700 }: { value: number; format: (v: number) => string; ms?: number }) {
+/** A number that glides to its new value. `format` may return text or markup (e.g. a lighter decimal part). */
+export function AnimatedNumber({ value, format, ms = 700 }: { value: number; format: (v: number) => ComponentChildren; ms?: number }) {
   const [shown, setShown] = useState(value);
   const from = useRef(value);
   useEffect(() => {
@@ -92,106 +93,8 @@ export async function buzz(kind: 'light' | 'medium' | 'success' = 'light'): Prom
   }
 }
 
-const COLORS = ['#22c55e', '#3ba3ff', '#a78bfa', '#facc15', '#f472b6'];
-
-/** Elements that slide in when they scroll into view (like a Webflow "scroll into view" interaction). */
-const REVEAL = '.card, .idea-card, .hero-card, .holding, .stock-card, .news-item, .rise-tile, .quick, .menu-item, .day-signal, .plan-step, .nudge';
-const RIPPLE = '.btn, .quick, .rise-tile, .menu-item, .stock-card, .chip-btn, .filter-chip, .bottom-nav button, .news-item';
-
-function installGlobalMotion(): () => void {
-  if (reduceMotion() || typeof IntersectionObserver === 'undefined') return () => undefined;
-  const root = document.documentElement;
-  root.classList.add('reveal-ready');
-  let batch = 0;
-  let batchTimer: ReturnType<typeof setTimeout> | null = null;
-  const io = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        const el = e.target as HTMLElement;
-        // elements arriving together come in one after another
-        el.style.setProperty('--rd', `${Math.min(batch, 8) * 55}ms`);
-        batch++;
-        el.classList.add('in');
-        io.unobserve(el);
-      }
-      if (batchTimer) clearTimeout(batchTimer);
-      batchTimer = setTimeout(() => (batch = 0), 120);
-    },
-    { rootMargin: '0px 0px -6% 0px', threshold: 0.06 },
-  );
-  const scan = (node: ParentNode) => {
-    node.querySelectorAll?.(REVEAL).forEach((el) => {
-      if (!el.classList.contains('in') && !(el as HTMLElement).dataset.rv) {
-        (el as HTMLElement).dataset.rv = '1';
-        io.observe(el);
-      }
-    });
-  };
-  scan(document);
-  const mo = new MutationObserver((muts) => {
-    for (const m of muts) m.addedNodes.forEach((n) => n.nodeType === 1 && (scan(n as Element), (n as Element).matches?.(REVEAL) && scan(n.parentNode ?? document)));
-  });
-  mo.observe(document.body, { childList: true, subtree: true });
-  // safety net: anything on screen is shown even if the observer missed it (some phones' web views)
-  const failsafe = () => {
-    document.querySelectorAll('[data-rv]:not(.in)').forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.top < innerHeight && r.bottom > 0) el.classList.add('in');
-    });
-  };
-  addEventListener('scroll', failsafe, { passive: true, capture: true });
-  const failTimer = setInterval(failsafe, 1200);
-
-  // tap ripple
-  const onDown = (e: PointerEvent) => {
-    const el = (e.target as Element | null)?.closest?.(RIPPLE) as HTMLElement | null;
-    if (!el || (el as HTMLButtonElement).disabled) return;
-    const r = el.getBoundingClientRect();
-    const size = Math.max(r.width, r.height) * 2;
-    const dot = document.createElement('span');
-    dot.className = 'ripple';
-    dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
-    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
-    el.style.overflow = 'hidden';
-    el.appendChild(dot);
-    setTimeout(() => dot.remove(), 650);
-  };
-  // tilt + light glare that follows the finger / mouse ([data-tilt])
-  const onMove = (e: PointerEvent) => {
-    const el = (e.target as Element | null)?.closest?.('[data-tilt]') as HTMLElement | null;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    el.style.setProperty('--ry', `${(x - 0.5) * 10}deg`);
-    el.style.setProperty('--rx', `${(0.5 - y) * 8}deg`);
-    el.style.setProperty('--gx', `${x * 100}%`);
-    el.style.setProperty('--gy', `${y * 100}%`);
-    el.classList.add('tilting');
-  };
-  const onLeave = (e: PointerEvent) => {
-    const el = (e.target as Element | null)?.closest?.('[data-tilt]') as HTMLElement | null;
-    if (!el) return;
-    el.classList.remove('tilting');
-    el.style.setProperty('--rx', '0deg');
-    el.style.setProperty('--ry', '0deg');
-  };
-  document.addEventListener('pointerdown', onDown, { passive: true });
-  document.addEventListener('pointermove', onMove, { passive: true });
-  document.addEventListener('pointerup', onLeave, { passive: true });
-  document.addEventListener('pointerout', onLeave, { passive: true });
-  return () => {
-    clearInterval(failTimer);
-    removeEventListener('scroll', failsafe, { capture: true });
-    io.disconnect();
-    mo.disconnect();
-    document.removeEventListener('pointerdown', onDown);
-    document.removeEventListener('pointermove', onMove);
-    document.removeEventListener('pointerup', onLeave);
-    document.removeEventListener('pointerout', onLeave);
-  };
-}
+/** DESIGN.md palette: mint, navy, slate, light mint and the loss red. */
+const COLORS = ['#10b981', '#94a3b8', '#64748b', '#d1fae5', '#ef4444'];
 
 /** A ring that fills to a chance (0–1), drawn on mount. */
 export function ChanceRing({ value, size = 54 }: { value: number; size?: number }) {
@@ -221,7 +124,6 @@ export function BuyersBar({ share }: { share: number | null }) {
 
 export function MotionHost() {
   const [burst, setBurst] = useState(0);
-  useEffect(() => installGlobalMotion(), []);
   const [toasts, setToasts] = useState<Array<{ id: number; text: string; tone: string }>>([]);
   useEffect(() => {
     const onC = () => {

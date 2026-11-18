@@ -1,0 +1,153 @@
+/*
+  TradeBuddy design tokens, taken from DESIGN.md ("Neo-Luminous Fintech", Stitch project "System Design Specification").
+  Light is the baseline. Dark is PURE BLACK: a #000000 canvas, neutral near-black cards with thin borders, and the
+  brand and market colours (mint, red) unchanged. Amber (warnings) is the one colour added: DESIGN.md has no warning
+  colour and the app needs one ("watch list, not buy signals", stale data, etc.).
+  Everything that differs between light and dark is a token here, so no rule elsewhere needs a dark special case.
+*/
+:root {
+  /* DESIGN.md 2 - surface and background */
+  --surface-canvas: #f9f9ff;
+  --surface-card: #ffffff;
+  --surface-container-low: #f0f3ff;
+  --surface-container-high: #e2e8f0;
+  --surface-dark-card: #111827;
+  --surface-dark-card-end: #1f2937;
+  --surface-dark-card-border: #263041;
+
+  /* brand and accent */
+  --brand-mint-primary: #10b981;
+  --brand-mint-subtle: #d1fae5;
+  --brand-mint-faint: #e6fbf2;
+  --accent-interactive: #1e293b;
+
+  /* market status */
+  --trend-bullish-green: #10b981;
+  --trend-bullish-strong: #059669;
+  --trend-bearish-red: #ef4444;
+  --trend-bearish-strong: #dc2626;
+  --neutral-gray: #64748b;
+  --neutral-gray-soft: #94a3b8;
+
+  /* DESIGN.md 3 - typography */
+  --font: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, Inter, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+  --fs-hero: 34px; /* 32-36, weight 700-800, -0.02em */
+  --fs-title: 20px; /* 18-20, weight 600 */
+  --fs-section: 18px;
+  --fs-label: 15px; /* 15-16, weight 600 */
+  --fs-body: 14px;
+  --fs-caption: 13px; /* 12-13, weight 500/400 */
+  --fs-tiny: 12px;
+
+  /* DESIGN.md 4 - layout */
+  --radius-card: 20px;
+  --radius-card-sm: 16px;
+  --radius-tile: 14px;
+  --radius-pill: 9999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --gutter: 16px;
+
+  /* names the screens use */
+  --bg: var(--surface-canvas);
+  --surface: var(--surface-card);
+  --surface-2: var(--surface-container-low);
+  --border: var(--surface-container-high);
+  --fg: #111827;
+  --muted: #6b7280;
+  --muted-2: var(--neutral-gray-soft);
+  --accent: var(--accent-interactive);
+  --accent-fg: #ffffff;
+  --brand: var(--brand-mint-primary);
+  --ok: var(--trend-bullish-green);
+  --ok-ink: var(--trend-bullish-strong);
+  --ok-bg: var(--brand-mint-faint);
+  --err: var(--trend-bearish-red);
+  --err-ink: var(--trend-bearish-strong);
+  --err-bg: #fef2f2;
+  --warn: #f59e0b;
+  --warn-ink: #b45309;
+  --warn-bg: #fffbeb;
+  --info: var(--neutral-gray);
+  --info-bg: var(--surface-container-low);
+  --chip-ink: var(--accent-interactive); /* text of the quiet grey-blue chips */
+  --hero-glow: color-mix(in srgb, var(--brand-mint-subtle) 80%, transparent); /* the soft mint wash on value cards */
+  --nav-ring: var(--brand-mint-subtle); /* ring round the raised Day trade button when it is the current tab */
+  --art-navy: #1e293b; /* the navy shapes in the guide pictures */
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --shadow-up: 0 -6px 24px rgba(15, 23, 42, 0.07);
+  --ring: 0 0 0 3px rgba(16, 185, 129, 0.28);
+  --scrim: rgba(17, 24, 39, 0.45);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  color-scheme: light;
+}
+
+/* dark = pure black (phone set to dark, theme left on "follow the phone") */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --surface-dark-card: #0f0f0f;
+    --surface-dark-card-end: #1b1b1b;
+    --surface-dark-card-border: #2a2a2a;
+    --bg: #000000;
+    --surface: #0a0a0a;
+    --surface-2: #151515;
+    --border: #262626;
+    --fg: #f5f5f5;
+    --muted: #a3a3a3;
+    --muted-2: #858585;
+    --accent: #f5f5f5;
+    --accent-fg: #000000;
+    --ok-ink: #34d399;
+    --ok-bg: rgba(16, 185, 129, 0.14);
+    --err-ink: #f87171;
+    --err-bg: rgba(239, 68, 68, 0.14);
+    --warn-ink: #fbbf24;
+    --warn-bg: rgba(245, 158, 11, 0.14);
+    --info: #a3a3a3;
+    --info-bg: #151515;
+    --chip-ink: #f5f5f5;
+    --hero-glow: rgba(16, 185, 129, 0.2);
+    --nav-ring: rgba(16, 185, 129, 0.4);
+    --art-navy: #475569;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.7);
+    --shadow-up: 0 -6px 24px rgba(0, 0, 0, 0.8);
+    --scrim: rgba(0, 0, 0, 0.72);
+    color-scheme: dark;
+  }
+}
+
+/* dark = pure black (chosen in Me → Look) */
+:root[data-theme='dark'] {
+  --surface-dark-card: #0f0f0f;
+  --surface-dark-card-end: #1b1b1b;
+  --surface-dark-card-border: #2a2a2a;
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-2: #151515;
+  --border: #262626;
+  --fg: #f5f5f5;
+  --muted: #a3a3a3;
+  --muted-2: #858585;
+  --accent: #f5f5f5;
+  --accent-fg: #000000;
+  --ok-ink: #34d399;
+  --ok-bg: rgba(16, 185, 129, 0.14);
+  --err-ink: #f87171;
+  --err-bg: rgba(239, 68, 68, 0.14);
+  --warn-ink: #fbbf24;
+  --warn-bg: rgba(245, 158, 11, 0.14);
+  --info: #a3a3a3;
+  --info-bg: #151515;
+  --chip-ink: #f5f5f5;
+  --hero-glow: rgba(16, 185, 129, 0.2);
+  --nav-ring: rgba(16, 185, 129, 0.4);
+  --art-navy: #475569;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.7);
+  --shadow-up: 0 -6px 24px rgba(0, 0, 0, 0.8);
+  --scrim: rgba(0, 0, 0, 0.72);
+  color-scheme: dark;
+}

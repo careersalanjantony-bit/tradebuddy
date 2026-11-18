@@ -5,7 +5,7 @@ import { askNotificationPermission } from '../../platform/nativeBindings';
 
 /**
  * First-launch guide (owner: "at the start of the app it should guide through an entry level
- * guide to learn the basics"). Short steps, plain words, can be skipped and opened again from More → Guide.
+ * guide to learn the basics"). Short steps, plain words, can be skipped and opened again from Home → Guide.
  */
 
 const ART: Record<string, preact.ComponentChildren> = {
@@ -16,66 +16,66 @@ const ART: Record<string, preact.ComponentChildren> = {
       <polyline class="draw" points="104,44 122,44 122,62" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" pathLength={1} />
       <defs>
         <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#6d5dfc" />
-          <stop offset="1" stop-color="#3ba3ff" />
+          <stop offset="0" style={{ stopColor: 'var(--art-navy)' }} />
+          <stop offset="1" stop-color="#10b981" />
         </linearGradient>
       </defs>
     </svg>
   ),
   money: (
     <svg viewBox="0 0 160 140">
-      <rect x="22" y="40" width="116" height="74" rx="14" fill="#16a34a" class="float" />
+      <rect x="22" y="40" width="116" height="74" rx="14" style={{ fill: 'var(--art-navy)' }} class="float" />
       <circle cx="80" cy="77" r="20" fill="none" stroke="#fff" stroke-width="5" />
       <text x="80" y="85" text-anchor="middle" font-size="24" font-weight="800" fill="#fff">₹</text>
-      <circle cx="122" cy="34" r="12" fill="#facc15" class="float" />
-      <circle cx="38" cy="28" r="8" fill="#facc15" class="float" />
+      <circle cx="122" cy="34" r="12" fill="#10b981" class="float" />
+      <circle cx="38" cy="28" r="8" fill="#10b981" class="float" />
     </svg>
   ),
   day: (
     <svg viewBox="0 0 160 140">
-      <circle cx="80" cy="70" r="46" fill="none" stroke="#3ba3ff" stroke-width="6" opacity="0.35" />
-      <circle class="draw" cx="80" cy="70" r="46" fill="none" stroke="#3ba3ff" stroke-width="6" stroke-linecap="round" pathLength={1} transform="rotate(-90 80 70)" />
+      <circle cx="80" cy="70" r="46" fill="none" stroke="#10b981" stroke-width="6" opacity="0.35" />
+      <circle class="draw" cx="80" cy="70" r="46" fill="none" stroke="#10b981" stroke-width="6" stroke-linecap="round" pathLength={1} transform="rotate(-90 80 70)" />
       <line x1="80" y1="70" x2="80" y2="42" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
       <line x1="80" y1="70" x2="100" y2="80" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
     </svg>
   ),
   idea: (
     <svg viewBox="0 0 160 140">
-      <rect x="24" y="22" width="112" height="96" rx="16" fill="none" stroke="#22c55e" stroke-width="4" class="float" />
-      <rect x="38" y="38" width="44" height="12" rx="6" fill="#22c55e" />
+      <rect x="24" y="22" width="112" height="96" rx="16" fill="none" stroke="#10b981" stroke-width="4" class="float" />
+      <rect x="38" y="38" width="44" height="12" rx="6" fill="#10b981" />
       <rect x="38" y="60" width="84" height="10" rx="5" fill="currentColor" opacity="0.25" />
-      <rect x="38" y="78" width="60" height="10" rx="5" fill="#22c55e" opacity="0.6" />
-      <rect x="38" y="96" width="70" height="10" rx="5" fill="#f05252" opacity="0.6" />
+      <rect x="38" y="78" width="60" height="10" rx="5" fill="#10b981" opacity="0.6" />
+      <rect x="38" y="96" width="70" height="10" rx="5" fill="#ef4444" opacity="0.6" />
     </svg>
   ),
   brain: (
     <svg viewBox="0 0 160 140">
       <circle cx="80" cy="70" r="44" fill="url(#g2)" class="float" />
       <path class="draw" d="M52 78 L68 62 L82 72 L108 50" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" pathLength={1} />
-      <circle cx="118" cy="34" r="6" fill="#a78bfa" class="float" />
-      <circle cx="40" cy="40" r="4" fill="#3ba3ff" class="float" />
+      <circle cx="118" cy="34" r="6" style={{ fill: 'var(--art-navy)' }} class="float" />
+      <circle cx="40" cy="40" r="4" fill="#10b981" class="float" />
       <defs>
         <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#a78bfa" />
-          <stop offset="1" stop-color="#6d5dfc" />
+          <stop offset="0" style={{ stopColor: 'var(--art-navy)', stopOpacity: 0.8 }} />
+          <stop offset="1" style={{ stopColor: 'var(--art-navy)' }} />
         </linearGradient>
       </defs>
     </svg>
   ),
   link: (
     <svg viewBox="0 0 160 140">
-      <rect x="30" y="50" width="46" height="40" rx="20" fill="none" stroke="#3ba3ff" stroke-width="7" class="float" />
-      <rect x="84" y="50" width="46" height="40" rx="20" fill="none" stroke="#6d5dfc" stroke-width="7" class="float" />
+      <rect x="30" y="50" width="46" height="40" rx="20" fill="none" stroke="#10b981" stroke-width="7" class="float" />
+      <rect x="84" y="50" width="46" height="40" rx="20" fill="none" style={{ stroke: 'var(--art-navy)' }} stroke-width="7" class="float" />
       <line class="draw" x1="62" y1="70" x2="98" y2="70" stroke="currentColor" stroke-width="7" stroke-linecap="round" pathLength={1} />
     </svg>
   ),
   bell: (
     <svg viewBox="0 0 160 140">
       <g class="ring">
-        <path d="M52 92c6-6 8-14 8-30a20 20 0 0 1 40 0c0 16 2 24 8 30z" fill="#facc15" />
-        <circle cx="80" cy="100" r="8" fill="#facc15" />
+        <path d="M52 92c6-6 8-14 8-30a20 20 0 0 1 40 0c0 16 2 24 8 30z" fill="#10b981" />
+        <circle cx="80" cy="100" r="8" fill="#10b981" />
       </g>
-      <circle cx="108" cy="44" r="9" fill="#f05252" />
+      <circle cx="108" cy="44" r="9" fill="#ef4444" />
     </svg>
   ),
 };
@@ -178,7 +178,7 @@ const STEPS: Step[] = [
     body: (
       <>
         <p>
-          In <b>More → Settings</b>, paste your Upstox <b>Analytics Token</b> (Upstox Developer Apps → Analytics). It works for one year and only reads prices.
+          On <b>Home → Settings</b>, paste your Upstox <b>Analytics Token</b> (Upstox Developer Apps → Analytics). It works for one year and only reads prices.
         </p>
         <p>
           Optional: log in to Upstox each morning so TradeBuddy finds the trades you make in the Upstox app by itself. It only reads — it never places an order.
@@ -275,7 +275,7 @@ export function GuideOverlay({ go }: { go: Go }) {
   );
 }
 
-/** More → Guide: the same steps again, any time. */
+/** Home → Guide: the same steps again, any time. */
 export function GuideScreen({ go }: { go: Go }) {
   return (
     <div class="screen">

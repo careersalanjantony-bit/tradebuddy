@@ -7,8 +7,10 @@ import { greetingLine } from '../greeting';
 
 /** Round avatar with initials. */
 export function Avatar({ name, color, size = 72 }: { name: string; color: string; size?: number }) {
+  // a colour saved by an older version (not in today's palette) shows as the first palette colour
+  const shade = AVATAR_COLORS.includes(color) ? color : AVATAR_COLORS[0]!;
   return (
-    <span class="avatar" style={{ width: `${size}px`, height: `${size}px`, fontSize: `${size * 0.38}px`, background: `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 55%, #3ba3ff))` }}>
+    <span class="avatar" style={{ width: `${size}px`, height: `${size}px`, fontSize: `${size * 0.38}px`, background: shade }}>
       {initials(name)}
     </span>
   );

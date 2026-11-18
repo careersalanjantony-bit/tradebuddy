@@ -1,0 +1,4 @@
+A new look for the whole app: light and clean, green for gains and red for losses, a bar at the top (alerts bell and your profile) and a bottom bar with a round Day trade button in the middle.
+Home is tidier: your practice money first, then Early Movers, quick buttons, top movers, the best idea, the auto-trader and the news.
+Dark mode is now pure black. If you had Dark chosen, the app shows Light once after this update - pick Dark again in Settings → Theme.
+Everything else works as before: your practice money, settings and login stay, and the app still never places an order.

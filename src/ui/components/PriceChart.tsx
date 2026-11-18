@@ -22,8 +22,8 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
 
   useEffect(() => {
     if (!el.current || !candles.length) return;
-    const fg = css('--fg', '#16191d');
-    const border = css('--border', '#dfe3e8');
+    const fg = css('--fg', '#111827');
+    const border = css('--border', '#e2e8f0');
     const bg = css('--surface', '#ffffff');
     const chart = createChart(el.current, {
       height: 300,
@@ -36,9 +36,9 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
     });
     chartRef.current = chart;
 
-    // the app's own softer green and red (app v1.7)
-    const up = css('--ok', '#2fa36b');
-    const down = css('--err', '#c9505b');
+    // DESIGN.md's mint for gains and red for losses
+    const up = css('--ok', '#10b981');
+    const down = css('--err', '#ef4444');
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: up,
       downColor: down,
@@ -50,13 +50,13 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
 
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    vol.setData(candles.map((c) => ({ time: c.date, value: c.volume, color: c.close >= c.open ? 'rgba(47,163,107,0.3)' : 'rgba(201,80,91,0.3)' })));
+    vol.setData(candles.map((c) => ({ time: c.date, value: c.volume, color: c.close >= c.open ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)' })));
 
     const closes = candles.map((c) => c.close);
     for (const [n, color] of [
-      [20, '#1f6feb'],
-      [50, '#d29922'],
-      [200, '#8250df'],
+      [20, fg],
+      [50, '#64748b'],
+      [200, '#f59e0b'],
     ] as const) {
       const s = smaSeries(closes, n);
       const line = chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: `SMA${n}` });
@@ -83,7 +83,7 @@ export function PriceChart({ candles, supports, resistances, lines }: { candles:
     <div>
       <div ref={el} class="chart" data-testid="chart" />
       <p class="tiny muted">
-        Lines: <span style={{ color: '#1f6feb' }}>SMA20</span> · <span style={{ color: '#d29922' }}>SMA50</span> · <span style={{ color: '#8250df' }}>SMA200</span> · dashed green S = support, red R = resistance. Charts: TradingView Lightweight Charts™ — Copyright © TradingView, Inc.,{' '}
+        Lines: <span style={{ color: 'var(--fg)' }}>SMA20</span> · <span style={{ color: '#64748b' }}>SMA50</span> · <span style={{ color: '#f59e0b' }}>SMA200</span> · dashed green S = support, red R = resistance. Charts: TradingView Lightweight Charts™ — Copyright © TradingView, Inc.,{' '}
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
           tradingview.com
         </a>

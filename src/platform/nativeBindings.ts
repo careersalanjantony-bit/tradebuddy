@@ -30,7 +30,7 @@ async function createChannels(): Promise<void> {
   await make({ id: SYSTEM_CHANNEL, name: "Trade alerts (phone's own sound)", description: 'Buy signals, breakouts, stop-loss, targets and trades found in Upstox', importance: 5, visibility: 1, vibration: true });
   for (const t of TONES) {
     if (!t.file) continue;
-    await make({ id: t.channel, name: `Trade alerts — ${t.name}`, description: `Buy signals, breakouts, stop-loss and targets with the "${t.name}" sound`, importance: 5, visibility: 1, vibration: true, sound: `${t.file}.ogg`, lights: true, lightColor: '#E5484D' });
+    await make({ id: t.channel, name: `Trade alerts — ${t.name}`, description: `Buy signals, breakouts, stop-loss and targets with the "${t.name}" sound`, importance: 5, visibility: 1, vibration: true, sound: `${t.file}.ogg`, lights: true, lightColor: '#10B981' });
   }
   await make({ id: SILENT_CHANNEL, name: 'Trade alerts without sound', description: 'Used when sounds are off in TradeBuddy', importance: 5, visibility: 1, vibration: true, sound: 'tone_silent.ogg' });
   await make({ id: QUIET_CHANNEL, name: 'Alerts while TradeBuddy is open', description: 'The app shows these itself; a quiet copy stays here', importance: 2, visibility: 1, vibration: false });

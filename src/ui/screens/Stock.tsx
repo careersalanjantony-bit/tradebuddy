@@ -34,7 +34,7 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
   const s = data?.snapshot ?? null;
   const plan = plans.find((p) => p.key === key && !p.practice && (p.status === 'planned' || p.status === 'open'));
   const buyLines = useMemo<ChartLine[]>(
-    () => (plan ? [{ price: plan.entry, title: 'Entry', color: '#9aa0a6' }, { price: plan.stop, title: 'Stop', color: '#c23a48' }, { price: plan.target, title: 'Target', color: '#2fa36b' }] : []),
+    () => (plan ? [{ price: plan.entry, title: 'Entry', color: '#64748b' }, { price: plan.stop, title: 'Stop', color: '#ef4444' }, { price: plan.target, title: 'Target', color: '#10b981' }] : []),
     [plan?.entry, plan?.stop, plan?.target],
   );
   const lines = view === 'short' ? shortLines : buyLines;

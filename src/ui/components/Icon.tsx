@@ -25,6 +25,9 @@ const PATHS: Record<string, string> = {
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 9a7 7 0 0 1 14 0',
   calendar: 'M4 6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm0 4h16M8 3v4m8-4v4',
+  eye: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  eyeoff: 'M3 3l18 18M10.6 6.1A9.9 9.9 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.7 7.7A16.5 16.5 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.3-1M9.9 9.9a3 3 0 0 0 4.2 4.2',
+  swap: 'M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7',
 };
 
 export type IconName = keyof typeof PATHS;

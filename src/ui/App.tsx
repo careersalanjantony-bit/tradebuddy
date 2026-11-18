@@ -25,18 +25,21 @@ import { MotionHost, buzz, celebrate, toast } from './components/Motion';
 import { AlertBanner, routeForAlert } from './components/AlertBanner';
 import { NewsScreen } from './screens/News';
 import { AccountScreen } from './screens/Account';
-import { LockScreen, ProfileSetup } from './components/Lock';
+import { Avatar, LockScreen, ProfileSetup } from './components/Lock';
 import { lockDue } from '../account/account';
 import { scrollMemory } from './persist';
 
-/** Every screen. `main` ones are in the bottom bar on a phone; the rest are under "More". */
+/**
+ * Every screen. The five `main` ones are in the bottom bar (Day trade is the raised centre button);
+ * Me and Trades & alerts sit in the top bar; the rest are under Me → More.
+ */
 const SCREENS = [
   { id: 'today', label: 'Home', icon: 'home', main: true },
-  { id: 'daytrade', label: 'Day trade', icon: 'bolt', main: true },
-  { id: 'practice', label: 'Practice', icon: 'wallet', main: true },
   { id: 'watchlist', label: 'Stocks', icon: 'list', main: true },
+  { id: 'daytrade', label: 'Day trade', icon: 'bolt', main: true },
   { id: 'news', label: 'News', icon: 'news', main: true },
-  { id: 'account', label: 'Me', icon: 'user', main: true },
+  { id: 'practice', label: 'Practice', icon: 'wallet', main: true },
+  { id: 'account', label: 'Me', icon: 'user', main: false },
   { id: 'more', label: 'More', icon: 'more', main: false },
   { id: 'swing', label: 'Hold a few days', icon: 'calendar', main: false },
   { id: 'alerts', label: 'Trades & alerts', icon: 'bell', main: false },
@@ -205,24 +208,21 @@ export function App() {
     default:
       content = <DiagnosticsScreen />;
   }
-  const activeMain = MORE_IDS.includes(route) ? 'account' : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
-  // pages slide in from the side of the tab you came from
-  const tabIndex = MAIN.findIndex((s) => s.id === activeMain);
-  const lastTab = useRef(tabIndex);
-  const slide = tabIndex > lastTab.current ? 'from-right' : tabIndex < lastTab.current ? 'from-left' : '';
+  // the bottom bar marks the tab you are in; Me, alerts and the other "More" screens mark the top-bar button instead
+  const activeMain = MORE_IDS.includes(route) ? null : HOME_IDS.includes(route) ? 'today' : route === 'stock' ? 'watchlist' : route;
+  const meActive = MORE_IDS.includes(route) && route !== 'alerts';
   useEffect(() => {
-    lastTab.current = tabIndex;
     void buzz('light');
-  }, [tabIndex]);
+  }, [activeMain]);
   const sideItems = SCREENS.filter((s) => s.id !== 'more' && s.icon && !(simple && (s.id === 'diagnostics') && route !== s.id));
 
   return (
     <div class={`app ${account?.pin && !unlocked ? 'locked' : ''}`}>
       <aside class="side-nav" aria-label="Screens">
         <div class="brand">
-          <span class="logo">
+          <span class="brandmark">
             <Icon name="up" size={18} />
-          </span>{' '}
+          </span>
           TradeBuddy
         </div>
         {sideItems.map((s) => (
@@ -233,26 +233,37 @@ export function App() {
         ))}
       </aside>
       <div class="content">
+        <header class="topbar">
+          <div class="brand">
+            <span class="brandmark">
+              <Icon name="up" size={18} />
+            </span>
+            TradeBuddy
+          </div>
+          <div class="topbar-actions">
+            <button type="button" class="top-btn" data-nav="alerts" aria-label="Trades and alerts" aria-current={route === 'alerts' ? 'page' : undefined} onClick={() => go('alerts')}>
+              <Icon name="bell" size={20} />
+              {unread > 0 && <span class="count">{unread}</span>}
+            </button>
+            <button type="button" class="top-btn avatar-btn" data-nav="account" aria-label="Me" aria-current={meActive ? 'page' : undefined} onClick={() => go('account')}>
+              {account ? <Avatar name={account.name} color={account.color} size={40} /> : <Icon name="user" size={20} />}
+            </button>
+          </div>
+        </header>
         <StatusBar />
         {route !== 'settings' && route !== 'today' && route !== 'practice' && route !== 'guide' && route !== 'more' && route !== 'learning' && <LoginBanner onOpenSettings={() => go('settings')} />}
-        <main key={`${route}/${param ?? ''}`} class={`page ${slide}`}>
+        <main key={`${route}/${param ?? ''}`} class="page">
           {content}
         </main>
         <Disclaimer />
       </div>
-      <nav class="bottom-nav" aria-label="Main screens" style={{ '--tabs': MAIN.length, '--tab': Math.max(0, MAIN.findIndex((s) => s.id === activeMain)) }}>
-        <span class="nav-pill" aria-hidden="true">
-          <span class="pill-icon" key={activeMain}>
-            <Icon name={(MAIN.find((s) => s.id === activeMain)?.icon ?? 'home') as IconName} size={26} />
-          </span>
-        </span>
+      <nav class="bottom-nav" aria-label="Main screens">
         {MAIN.map((s) => (
-          <button type="button" data-nav={s.id} aria-current={activeMain === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
+          <button type="button" class={s.id === 'daytrade' ? 'nav-center' : ''} data-nav={s.id} aria-current={activeMain === s.id ? 'page' : undefined} onClick={() => go(s.id)}>
             <span class="ic">
-              <Icon name={s.icon as IconName} size={22} />
+              <Icon name={s.id === 'daytrade' ? 'swap' : (s.icon as IconName)} size={s.id === 'daytrade' ? 26 : 22} />
             </span>
             <span class="lbl">{s.label}</span>
-            {s.id === 'account' && unread > 0 && <span class="count">{unread}</span>}
           </button>
         ))}
       </nav>
