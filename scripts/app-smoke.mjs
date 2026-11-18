@@ -944,11 +944,14 @@ console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second ph
   const pre = await p2.evaluate(async () => (await chrome.storage.session.get('preopen')).preopen ?? null);
   check('9:06: the pre-open is read from Upstox Full Market Quotes V3 (IEP, matched quantity, buy / sell) and ranked', ranked && (mock.fullQuoteCalls ?? 0) > 0 && pre?.phase === 'ranking', pre ? `${pre.counts.withIep} with a pre-open price, ${pre.counts.listed} listed: ${pre.rows.map((r) => `${r.symbol} ${r.gapPct.toFixed(1)}% (${r.score})`).join(', ')}` : 'none');
   check('only stocks 1%+ above yesterday, best points first (ICICIBANK, below yesterday, is not there)', !!pre && pre.rows.every((r) => r.gapPct >= 1) && pre.rows.every((r, i, a) => i === 0 || a[i - 1].score >= r.score) && !pre.rows.some((r) => r.symbol === 'ICICIBANK'), pre?.rows.map((r) => r.symbol).join(','));
+  check('v1.16.1: only stocks with buyers clearly ahead (60%+ of the waiting quantity) — BSE, +4.5% but 50/50, is left out and counted', !!pre && pre.rows.every((r) => r.buyShare === null || r.buyShare >= 0.6) && !pre.rows.some((r) => r.symbol === 'BSE') && (pre.counts.sellers ?? 0) >= 1, pre ? `left out for sellers: ${pre.counts.sellers}` : 'none');
   await until(async () => (await p2.$$('[data-testid="pre-item"]')).length >= 3, 8000);
   const preTab = (await p2.getAttribute('[data-movers-tab="pre"]', 'class').catch(() => '')) ?? '';
   const pill = ((await p2.textContent('[data-testid="movers-pill"]').catch(() => '')) ?? '').trim();
   const phaseText2 = ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
   check('Home before 9:15: the Pre-open tab is shown, marked PRE-OPEN, "Ranked — orders still coming in"', preTab.includes('on') && pill === 'PRE-OPEN' && phaseText2.startsWith('Ranked'), `${pill} · ${phaseText2}`);
+  const watchText = ((await p2.textContent('[data-testid="pre-watch"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check('the list says plainly: a watch list, not buy signals — do not buy at 9:15, buy only a stock that turns ⚡ Holding gap', /A watch list, not buy signals/.test(watchText) && /Do not buy at 9:15/.test(watchText) && /⚡ Holding gap/.test(watchText), watchText.slice(0, 140));
   const firstLine = ((await p2.textContent('[data-testid="pre-item"] .mv-row').catch(() => '')) ?? '').replace(/\s+/g, ' ');
   check('each candidate is one line: rank, symbol, pre-open price, buyers %, gap and score', /^1/.test(firstLine.trim()) && /pre-open ₹/.test(firstLine) && /buyers \d+%/.test(firstLine) && /\+\d/.test(firstLine), firstLine.slice(0, 120));
   await p2.click('[data-testid="pre-item"] .mv-row');

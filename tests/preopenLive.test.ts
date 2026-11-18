@@ -17,8 +17,8 @@ import type { SessionStore } from '../src/storage/session';
 
 const DAY = '2026-11-17'; // Tuesday
 const at = (hhmm: string, s = 0) => istEpoch(DAY, hhmm, s);
-const K = { A: 'NSE_EQ|INE000AAA011', B: 'NSE_EQ|INE000BBB011', C: 'NSE_EQ|INE000CCC011', D: 'NSE_EQ|INE000DDD011', E: 'NSE_EQ|INE000EEE011' };
-const SYM: Record<string, string> = { [K.A]: 'AAA', [K.B]: 'BBB', [K.C]: 'CCC', [K.D]: 'DDD', [K.E]: 'EEE' };
+const K = { A: 'NSE_EQ|INE000AAA011', B: 'NSE_EQ|INE000BBB011', C: 'NSE_EQ|INE000CCC011', D: 'NSE_EQ|INE000DDD011', E: 'NSE_EQ|INE000EEE011', F: 'NSE_EQ|INE000FFF011', G: 'NSE_EQ|INE000GGG011' };
+const SYM: Record<string, string> = { [K.A]: 'AAA', [K.B]: 'BBB', [K.C]: 'CCC', [K.D]: 'DDD', [K.E]: 'EEE', [K.F]: 'FFF', [K.G]: 'GGG' };
 const empty = { members: [], source: 'nse' as const, fetchedAt: 0 };
 
 /** what the pre-open auction shows now, per stock */
@@ -44,7 +44,7 @@ beforeEach(async () => {
     marketCalendar: null,
     auth: { status: 'logged_out' },
     secrets: { upstoxAnalyticsToken: 'analytics-test-token' },
-    scanLists: { at: Date.now(), lists: { nifty50: { members: [member('AAA', 'IT'), member('BBB', 'IT'), member('CCC', 'IT'), member('DDD', 'Bank'), member('EEE', 'IT')], source: 'nse', fetchedAt: 0 }, nifty100: empty, midcap100: empty, smallcap100: empty, nifty500: empty } },
+    scanLists: { at: Date.now(), lists: { nifty50: { members: [member('AAA', 'IT'), member('BBB', 'IT'), member('CCC', 'IT'), member('DDD', 'Bank'), member('EEE', 'IT'), member('FFF', 'Pharma'), member('GGG', 'Pharma')], source: 'nse', fetchedAt: 0 }, nifty100: empty, midcap100: empty, smallcap100: empty, nifty500: empty } },
     // Upstox news, already read for every stock: results for AAA, trouble for CCC
     catalysts: {
       at: at('08:30'),
@@ -70,10 +70,14 @@ beforeEach(async () => {
   }
   auction = {
     [K.A]: { iep: 103, ieq: 3000, buy: 9000, sell: 3000, imb: 4000 },
-    [K.B]: { iep: 101.5, ieq: 800, buy: 5000, sell: 4800 },
+    [K.B]: { iep: 101.5, ieq: 800, buy: 7000, sell: 3000 },
     [K.C]: { iep: 104, ieq: 2500, buy: 8000, sell: 2000 },
     [K.D]: { iep: 100.4, ieq: 500, buy: 3000, sell: 3000 },
     [K.E]: { iep: 102.2, ieq: 1500, buy: 6000, sell: 3000 },
+    // up 2 %, but 79 % of the waiting quantity is selling (like DALBHARAT on 18 Nov): bearish, never listed
+    [K.F]: { iep: 102, ieq: 2000, buy: 2100, sell: 7900 },
+    // up 4 % at first, then the pre-open price slides (see morning())
+    [K.G]: { iep: 104, ieq: 2000, buy: 8000, sell: 2000 },
   };
   vi.stubGlobal(
     'fetch',
@@ -117,27 +121,35 @@ beforeEach(async () => {
   );
 });
 
+/** GGG's pre-open price: 104 until 9:04, then sliding to 102.6 — sellers stepping in */
+const GGG: Record<string, number> = { '09:05:30': 103.6, '09:06': 103.2, '09:07': 102.9, '09:08:30': 102.6 };
+
 async function morning(): Promise<void> {
   await preopenTick(at('08:50'));
   await settle();
   for (const t of ['09:01', '09:02', '09:03', '09:04', '09:05:30', '09:06', '09:07', '09:08:30', '09:09', '09:10', '09:11', '09:12']) {
+    if (GGG[t]) auction[K.G]!.iep = GGG[t]!;
     const [hh, mm, ss] = t.split(':');
     await preopenTick(at(`${hh}:${mm}`, Number(ss ?? 0)));
   }
 }
 
 describe('Pre-open rising candidates, live (9:00–9:15)', () => {
-  it('reads Upstox every 15 s from 9:00 and ranks with the fixed points; bad news and gaps under 1% are left out', async () => {
+  it('reads Upstox every 15 s from 9:00 and ranks with the fixed points; bad news, gaps under 1%, sellers waiting and a falling pre-open price are left out', async () => {
     await preopenTick(at('08:50'));
     await settle();
     expect(quoteCalls).toBe(0); // nothing is asked before 9:00
     await preopenTick(at('09:01'));
     let pre = await session('preopen');
-    expect(pre).toMatchObject({ date: DAY, phase: 'collecting', counts: { scanned: 5, withIep: 5, listed: 3, badNews: 1 } });
+    expect(pre).toMatchObject({ date: DAY, phase: 'collecting', counts: { scanned: 7, withIep: 7, listed: 4, badNews: 1, sellers: 1, falling: 0 } });
+    expect(pre.rows.some((r) => r.symbol === 'FFF')).toBe(false);
+    expect(pre.rows.some((r) => r.symbol === 'GGG')).toBe(true);
     expect(quoteCalls).toBe(1);
     await morning();
     pre = await session('preopen');
     expect(pre.phase).toBe('discovery');
+    // GGG slid more than 0.5 % from its pre-open high: out
+    expect(pre.counts).toMatchObject({ sellers: 1, falling: 1, listed: 3 });
     expect(pre.rows.map((r) => r.symbol)).toEqual(['AAA', 'EEE', 'BBB']);
     const a = pre.rows[0]!;
     expect(a).toMatchObject({ rank: 1, iep: 103, ieq: 3000, imb: 4000, rp: 100, buyQty: 9000, sellQty: 3000, prevClose: 100, src: 'quote', name: 'AAA Ltd', industry: 'IT', index: 'Nifty 50' });

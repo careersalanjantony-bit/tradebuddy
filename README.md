@@ -38,6 +38,16 @@ refuse files signed with the old key alone (its "rollback" right is off). Androi
 key. **No keys are in this repository any more:** they live in the private `tradebuddy-keys`
 repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to this one.
 
+## New in 1.16.1
+
+- **Pre-open list is stricter** (after the 18 Nov morning showed stocks with 21–33% buyers on it):
+  a stock is listed only when its pre-open price is 1%+ above yesterday **and** at least 60% of the
+  waiting quantity is buying **and** its pre-open price has not fallen more than 0.5% from its high
+  since 9:02. Stocks left out for sellers waiting or a falling pre-open price are counted on the card.
+- The list says plainly that it is **a watch list, not buy signals**: do not buy at 9:15; buy only a
+  stock that turns ⚡ Holding gap in "Live now", with its stop-loss. A warning when the whole list
+  opens lower on average.
+
 ## New in 1.16
 
 - **🌱 Early Movers is now the first card on Home** — the main trading tool, one clean list that

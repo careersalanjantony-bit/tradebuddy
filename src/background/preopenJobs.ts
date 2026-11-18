@@ -77,7 +77,7 @@ export interface PreopenState {
   phase: PrePhase;
   rows: PreRow[];
   final: { at: number; rows: PreRow[] } | null;
-  counts: { scanned: number; withIep: number; listed: number; badNews: number };
+  counts: { scanned: number; withIep: number; listed: number; badNews: number; sellers?: number; falling?: number };
   /** average pre-open gap of every scanned stock with a price (20+), % */
   marketGap: number | null;
   quoteAt: number | null;
@@ -225,13 +225,17 @@ async function rank(now: number, phase: PrePhase, scan: Awaited<ReturnType<typeo
   // 3. each stock's points
   const read: Array<{ k: string; r: PreRead; c: Catalyst | null }> = [];
   let badNews = 0;
+  let sellers = 0;
+  let falling = 0;
   for (const g of gaps) {
     const c = catalystOf(g.key);
     const v = mem.vol.get(g.key) ?? { prevVolRatio: null, avgDailyVol: null };
     const r = readPreopen({ prevClose: quotes[g.key]!.prevClose!, snaps: mem.snaps.get(g.key)!, catalyst: c ? { tone: c.tone, kind: c.kind } : null, prevVolRatio: v.prevVolRatio, avgDailyVol: v.avgDailyVol, sectorGap: bySector.get(g.key) ?? null, now });
     if (!r) continue;
     if (!r.listed) {
-      if (r.why?.startsWith('bad news') && r.gapPct >= PRE.minGapPct) badNews++;
+      if (r.out === 'news' && r.gapPct >= PRE.minGapPct) badNews++;
+      if (r.out === 'sellers') sellers++;
+      if (r.out === 'falling') falling++;
       continue;
     }
     read.push({ k: g.key, r, c });
@@ -286,7 +290,7 @@ async function rank(now: number, phase: PrePhase, scan: Awaited<ReturnType<typeo
         message: `${final.rows
           .slice(0, 5)
           .map((r) => `${r.rank}. ${r.symbol} ${r.gapPct >= 0 ? '+' : '−'}${Math.abs(r.gapPct).toFixed(1)}% (score ${r.score})`)
-          .join(' · ')}. Watch them at the open: buy only if one holds above its opening price. Not a guarantee — you place every order yourself.`,
+          .join(' · ')}. A watch list, not buy signals: do not buy at 9:15 — buy only a stock that turns ⚡ (holding above its opening price with heavy buying), with its stop-loss. Not a guarantee — you place every order yourself.`,
         priority: 2,
       }).catch(() => undefined);
     }
@@ -298,7 +302,7 @@ async function rank(now: number, phase: PrePhase, scan: Awaited<ReturnType<typeo
     phase,
     rows: rows.slice(0, PRE.top),
     final,
-    counts: { scanned: scan.keys.length, withIep: gaps.length, listed: read.length, badNews },
+    counts: { scanned: scan.keys.length, withIep: gaps.length, listed: read.length, badNews, sellers, falling },
     marketGap,
     quoteAt: mem.quoteAt || null,
     quoteError: mem.quoteError,

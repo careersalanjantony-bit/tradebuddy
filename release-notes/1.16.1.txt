@@ -1,0 +1,3 @@
+Pre-open list is stricter: a stock is listed only when at least 60% of the waiting orders are buys and its pre-open price is not falling from its high. Stocks with more sellers waiting (bearish) are left out and counted.
+The list now says plainly: a watch list, not buy signals. Do not buy at 9:15 - buy only a stock that turns "Holding gap" in Live now, with its stop-loss.
+A warning when the whole market is opening weak.

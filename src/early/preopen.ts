@@ -21,6 +21,11 @@ import { playTrade, type GroupResult } from './earlyTest';
  *   its sector's pre-open gap .................. 10
  *   IEP steady near the end of the pre-open .... 5
  *
+ * Listed only when (app v1.16.1, the plan's screening rules, after the 18 Nov morning showed stocks with
+ * 21–33 % buyers on the list): the IEP is 1 %+ above yesterday, at least 60 % of the waiting quantity is
+ * buying, and the IEP has not fallen more than 0.5 % from its high since 9:02 (sellers stepping in).
+ * Bad news: never. The points then rank what is left.
+ *
  * The weights were set in advance (the owner's plan of 17 Nov 2026), not fitted to past winners — they
  * are points, NOT a chance of rising. Schedule: a first list at 9:05, re-checked when order entry
  * closes (9:08), recalculated while the price is discovered, the final top 10 fixed at 9:13.
@@ -40,6 +45,11 @@ export const PRE = {
   finalT: 9 * 60 + 13,
   openT: 9 * 60 + 15,
   minGapPct: 1,
+  /** app v1.16.1 — listed only with clearly more buying than selling waiting (60 %+ of the waiting quantity) */
+  minBuyShare: 0.6,
+  /** …and only while the pre-open price has not fallen more than this (%) from its high since 9:02 */
+  maxFallPct: 0.5,
+  fallFromT: 9 * 60 + 2,
   top: 10,
 } as const;
 
@@ -102,6 +112,10 @@ export interface PreRead {
   listed: boolean;
   /** why not listed */
   why?: string;
+  /** which rule kept it out */
+  out?: 'gap' | 'sellers' | 'falling' | 'news';
+  /** highest pre-open price since 9:02 */
+  iepHigh: number | null;
   gapPct: number;
   iep: number;
   ieq: number | null;
@@ -179,7 +193,7 @@ export function readPreopen(x: PreIn): PreRead | null {
   });
 
   // 4. news (15) — bad news is not listed at all
-  if (x.catalyst?.tone === 'bad') return { listed: false, why: `bad news (${x.catalyst.kind})`, gapPct, iep: last.iep, ieq: last.ieq, buyShare, ieqTrend, iepRangePct: null, score: 0, parts, warnings };
+  if (x.catalyst?.tone === 'bad') return { listed: false, why: `bad news (${x.catalyst.kind})`, out: 'news', iepHigh: null, gapPct, iep: last.iep, ieq: last.ieq, buyShare, ieqTrend, iepRangePct: null, score: 0, parts, warnings };
   parts.push({ id: 'news', label: 'News since yesterday', pts: x.catalyst?.tone === 'good' ? 15 : 0, max: 15, text: x.catalyst ? `${x.catalyst.kind}${x.catalyst.tone === 'good' ? ' (good)' : ' (neutral)'}` : 'no headline in Upstox news' });
 
   // 5. yesterday's volume (10)
@@ -220,8 +234,17 @@ export function readPreopen(x: PreIn): PreRead | null {
   parts.push({ id: 'stable', label: 'Pre-open price steady', pts: stablePts, max: 5, text: stableText });
 
   const score = Math.round(parts.reduce((s, p) => s + p.pts, 0));
-  const listed = gapPct >= PRE.minGapPct;
-  return { listed, ...(listed ? {} : { why: `pre-open gap ${sgn(gapPct, 2)}% — under ${PRE.minGapPct}%` }), gapPct, iep: last.iep, ieq: last.ieq, buyShare, ieqTrend, iepRangePct, score, parts, warnings };
+  // the listing rules: up 1 %+, buyers clearly ahead, pre-open price not falling from its high
+  const since = x.snaps.filter((s) => minuteOf(s.at) >= PRE.fallFromT);
+  const iepHigh = since.length ? Math.max(...since.map((s) => s.iep)) : null;
+  const falling = since.length >= 3 && iepHigh !== null && last.iep < iepHigh * (1 - PRE.maxFallPct / 100);
+  if (falling) warnings.push(`pre-open price fell from ₹${iepHigh!.toFixed(2)} to ₹${last.iep.toFixed(2)}`);
+  let out: PreRead['out'];
+  let why: string | undefined;
+  if (gapPct < PRE.minGapPct) (out = 'gap'), (why = `pre-open gap ${sgn(gapPct, 2)}% — under ${PRE.minGapPct}%`);
+  else if (buyShare !== null && buyShare < PRE.minBuyShare) (out = 'sellers'), (why = `only ${Math.round(buyShare * 100)}% of the waiting quantity is buying — sellers are waiting (bearish)`);
+  else if (falling) (out = 'falling'), (why = `pre-open price falling from its high — sellers stepping in`);
+  return { listed: !out, ...(out ? { out, why } : {}), iepHigh, gapPct, iep: last.iep, ieq: last.ieq, buyShare, ieqTrend, iepRangePct, score, parts, warnings };
 }
 
 const fmtQty = (q: number) => (q >= 100_000 ? `${(q / 100_000).toFixed(2)} lakh` : Math.round(q).toLocaleString('en-IN'));

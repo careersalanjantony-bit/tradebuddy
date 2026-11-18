@@ -171,6 +171,24 @@ describe('pre-open points (the owner’s weights, set in advance — not a chanc
     expect(sellers.warnings).toContain('more sellers than buyers waiting');
   });
 
+  it('listed only with buyers clearly ahead (60%+ of the waiting quantity) and a pre-open price not falling from its high', () => {
+    // 18 Nov: DALBHARAT +2.0% with 21% buyers was on the list — now it is not
+    const bearish = readPreopen(base({ snaps: snaps('09:10', 102, 102, 20_000, 40_000, 21_000, 79_000) }))!;
+    expect(bearish).toMatchObject({ listed: false, out: 'sellers' });
+    expect(bearish.why).toContain('21% of the waiting quantity is buying');
+    expect(readPreopen(base({ snaps: snaps('09:10', 103, 103, 20_000, 40_000, 60_000, 40_000) }))!.listed).toBe(true);
+    expect(readPreopen(base({ snaps: snaps('09:10', 103, 103, 20_000, 40_000, 59_000, 41_000) }))!.out).toBe('sellers');
+    // unknown buy / sell quantities: not refused for that (shown as not available)
+    expect(readPreopen(base({ snaps: snaps('09:10', 103, 103, 20_000, 40_000).map((x) => ({ ...x, buy: null, sell: null })) }))!.listed).toBe(true);
+    // 4 % at 9:02, sliding to 2.6 % by 9:10: out, with the prices in the warning
+    const sliding = readPreopen(base({ snaps: snaps('09:10', 104.2, 102.6, 20_000, 40_000) }))!;
+    expect(sliding).toMatchObject({ listed: false, out: 'falling' });
+    expect(sliding.warnings.some((w) => /pre-open price fell from ₹10\d\.\d\d to ₹102\.60/.test(w))).toBe(true);
+    // the first two minutes' jumps do not count (orders are still arriving)
+    const early = snaps('09:10', 103, 103, 20_000, 40_000).map((x) => (x.at < at('09:02') ? { ...x, iep: 106 } : x));
+    expect(readPreopen(base({ snaps: early }))!.listed).toBe(true);
+  });
+
   it('IEP steadiness: a jumpy or slipping pre-open price loses its 5 points', () => {
     // steady at 104 until two minutes ago, then down to 103
     const falling = snaps('09:10', 104, 104, 20_000, 40_000).map((x, i, all) => (i >= all.length - 8 ? { ...x, iep: Math.round((104 - (i - (all.length - 9)) * 0.125) * 100) / 100 } : x));

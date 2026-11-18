@@ -1390,3 +1390,4 @@ body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: n
 .chip.early-stage.waiting { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
 .reason-pill.warn { background: color-mix(in srgb, var(--warn) 16%, var(--surface-2)); color: var(--warn); }
 @media (prefers-reduced-motion: reduce) { .mv-tabs button { transition: none; } }
+.mv-watch { margin: 0 0 8px; padding: 8px 10px; border-radius: 10px; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }

@@ -170,11 +170,20 @@ function PreList({ pre, phase, marketPhase, now }: { pre: import('../../backgrou
   const opened = phase === 'open';
   return (
     <div>
+      <p class="small mv-watch" data-testid="pre-watch">
+        👀 <b>A watch list, not buy signals.</b> Pre-open prices are only orders — they can be cancelled until 9:08, and many gap-ups fall back in the first minutes.{' '}
+        <b>Do not buy at 9:15.</b> Buy only a stock that turns <b>⚡ Holding gap</b> in "Live now" (above its opening price with heavy buying), with its stop-loss.
+      </p>
+      {pre!.marketGap !== null && pre!.marketGap < -0.2 && (
+        <p class="small err-text" style={{ margin: '0 0 6px' }} data-testid="pre-weak">
+          ⚠ The market is opening weak (the whole list {formatPct(pre!.marketGap, 2)} on average) — gap-ups fade more often on days like this.
+        </p>
+      )}
       <p class="tiny muted" style={{ margin: '0 0 6px' }} data-testid="pre-status">
         {pre!.final ? `Final list, fixed at ${formatTimeIST(pre!.final.at).slice(0, 5)}.` : `Updated ${formatTimeIST(pre!.at)} — ${phase === 'collecting' ? 'early read, the ranking starts at 9:05' : 'changes until 9:13'}.`} {pre!.counts.listed} of{' '}
-        {pre!.counts.withIep} stocks are 1%+ above yesterday
-        {pre!.marketGap !== null ? `; the whole list ${pre!.marketGap >= 0 ? '+' : '−'}${Math.abs(pre!.marketGap).toFixed(2)}% on average` : ''}
-        {pre!.counts.badNews ? `; ${pre!.counts.badNews} left out for bad news` : ''}.
+        {pre!.counts.withIep} stocks are 1%+ above yesterday with buyers clearly ahead
+        {pre!.marketGap !== null ? `; the whole list ${pre!.marketGap >= 0 ? '+' : '−'}${Math.abs(pre!.marketGap).toFixed(2)}% on average` : ''}. Left out:{' '}
+        {pre!.counts.sellers ?? 0} with more sellers than buyers waiting, {pre!.counts.falling ?? 0} whose pre-open price was falling, {pre!.counts.badNews} with bad news.
       </p>
       <div class="mv-list" data-testid="pre-list">
         {rows.map((r) => (
