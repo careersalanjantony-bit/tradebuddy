@@ -192,6 +192,27 @@ async function publish(date: string, fresh: DaySignal[], now: number): Promise<v
       title: `${s.ml && s.chance !== undefined && s.chance >= 0.6 ? '⭐ Strong idea — ' : s.trusted || s.ml ? '' : 'Practice idea — '}${s.side === 'long' ? '▲ BUY' : '▼ SELL first'} ${s.symbol} at ${rs(s.entry)}${s.chance !== undefined ? ` · ${Math.round(s.chance * 100)}% chance` : ''}`,
       message: `${s.side === 'long' ? `Take profit at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} · sell if it falls to ${rs(s.stop)}` : `Buy back at ${s.target !== null ? rs(s.target) : 'the 3:10 pm close'} for the profit · buy back if it rises to ${rs(s.stop)}`} · close by 3:10 pm.${s.inNews ? ' This company is in the news today — be extra careful.' : ''}${s.caution ? ` ${s.caution}` : ''}${extra} Open the Day trade tab.`,
       priority: 2,
+      detail: {
+        symbol: s.symbol,
+        key: s.key,
+        side: s.side === 'long' ? 'buy' : 'sell',
+        source: 'Day trade',
+        entry: s.entry,
+        stop: s.stop,
+        targets: s.target !== null ? [s.target] : [],
+        qty: null,
+        risk: null,
+        score: s.chance !== undefined ? Math.round(s.chance * 100) : null,
+        scoreKind: 'chance',
+        reasons: [
+          s.side === 'long' ? `Broke above the first 15 minutes' high (${rs(s.orHigh)})` : `Broke below the first 15 minutes' low (${rs(s.orLow)})`,
+          `Volume ${s.rvol.toFixed(1)}× its usual in the first 15 minutes`,
+          ...(s.buyers ? [`Buyers meter: ${s.buyers}`] : []),
+          ...(s.inNews ? ['In the news today — be extra careful'] : []),
+          ...(s.caution ? [s.caution] : []),
+        ],
+        closeBy: '3:10 pm',
+      },
     });
     sounded = true;
   }

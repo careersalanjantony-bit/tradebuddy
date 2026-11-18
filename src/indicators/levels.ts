@@ -68,6 +68,19 @@ export function clusterLevels(points: SwingPoint[], width: number): Level[] {
 }
 
 /**
+ * App v1.18 — "major support": the floor the stock bounced from most often in the past year, below the
+ * nearer supports. Same swing lows and the same grouping as `supportResistance`, over a longer window;
+ * the level with the most bounces wins (the higher one on a tie). Null when there is none below `below`.
+ */
+export function majorSupport(candles: Candle[], below: number, atrValue: number, opts: { k?: number; lookback?: number; clusterAtr?: number } = {}): Level | null {
+  const { k = 3, lookback = 250, clusterAtr = 0.5 } = opts;
+  const width = Math.max(atrValue * clusterAtr, 0);
+  const floors = clusterLevels(swingLows(candles.slice(-lookback), k), width).filter((l) => l.price < below);
+  if (!floors.length) return null;
+  return floors.reduce((best, l) => (l.touches > best.touches || (l.touches === best.touches && l.price > best.price) ? l : best));
+}
+
+/**
  * Nearest support (below price) and resistance (above price) from swing points in the last
  * `lookback` sessions, clustered within `clusterAtr × ATR`. Returns up to `count` of each,
  * nearest first.

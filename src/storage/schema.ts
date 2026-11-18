@@ -336,6 +336,8 @@ export interface LocalStore {
   account: import('../account/account').AccountState | null;
   /** practice money (app v1.0); null until first used */
   wallet: import('../wallet/wallet').WalletState | null;
+  /** app v1.18: every notification shown (Alerts tab history), what was seen, dismissed and cleared */
+  alertHistory: import('../alerts/history').AlertHistory;
 }
 
 export type LocalKey = keyof LocalStore;

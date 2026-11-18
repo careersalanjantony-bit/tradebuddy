@@ -114,6 +114,11 @@ export async function evaluateEndOfDay(closes: Map<string, { close: number; sma2
   return firings;
 }
 
+/** app v1.18: the Alerts tab's "Clear all" also empties the older price-alert log. */
+export async function clearAlertLog(): Promise<void> {
+  await (await getDb()).clear('alertLog');
+}
+
 export async function recentAlertLog(limit = 100) {
   const db = await getDb();
   const out = [];

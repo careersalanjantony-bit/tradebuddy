@@ -182,3 +182,9 @@ body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: n
 .guide-dl dd { margin: 2px 0 0; }
 .timeline { padding-left: 18px; margin: 6px 0; }
 .timeline li { margin: 6px 0; }
+
+/* app v1.18: swipe a banner away (left, right or up). The entry animation must not keep its end
+   state, or it would override the finger's position. */
+.alert-banner { animation-fill-mode: backwards; touch-action: none; user-select: none; -webkit-user-select: none; transition: transform 0.22s var(--ease), opacity 0.22s var(--ease); }
+.alert-banner.dragging { transition: none; }
+.alert-banner.leaving { pointer-events: none; }

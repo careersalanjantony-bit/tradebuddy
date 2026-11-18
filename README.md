@@ -40,6 +40,24 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.18.0
+
+- **No old pop-ups on opening.** The practice wallet loads a moment after the app opens, and its earlier sales
+  used to show as "Sold …" toasts on every start. Only sales made while the app is open and on screen show now,
+  and alerts made in the first 8 seconds after opening (or coming back to the app) go to the Alerts tab without
+  a banner.
+- **Alert banners:** swipe left, right or up to dismiss (a short drag springs back; the banner does not hide
+  while touched). Tap one — or the phone notification — for the details: stock, BUY / SELL first, entry,
+  stop-loss, targets, quantity, risk, score or chance, and the reasons. The trade alerts (day trade, sell-first,
+  breakout, Rising now, Early Movers, auto-trader) carry these details; older alerts are read from their text.
+- **Alerts tab:** a Notifications list with every alert and app message, newest first; **Clear all** asks first,
+  then empties it, the older price-alert log and TradeBuddy's notifications in the phone's notification bar.
+  The same alert is shown only once in 24 hours, so dismissed or cleared alerts do not come back
+  (`src/alerts/history.ts`).
+- **Support & resistance on every stock page:** Resistance 2 and 1, the live price (live feed / price polls),
+  Support 1 and 2 — the app's existing levels, unchanged — and a new **major support**: the floor the stock
+  bounced from most often in the past year, below Support 2 (same swing lows and grouping, 250 days).
+
 ## New in 1.17.0
 
 - **A new look for the whole app**, following [`DESIGN.md`](DESIGN.md) (the "Neo-Luminous Fintech" design from the Stitch project
