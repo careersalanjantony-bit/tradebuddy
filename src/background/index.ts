@@ -52,6 +52,7 @@ import { testProtect } from './botTest';
 import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
 import { earlyTick, refreshNseFiles, refreshPremarket, sweepCatalysts, testEarly } from './earlyJobs';
 import { preopenTick } from './preopenJobs';
+import { INTRADAY_EVERY_MS, intradayTick, testIntradayIfDue } from './intradayJobs';
 import { analyzeShort, trainShortModelIfDue } from './shortJobs';
 import { startNewsChecks } from './newsJobs';
 
@@ -107,6 +108,10 @@ ready.then(() => {
   setInterval(() => earlyTick(), 60_000);
   // app v1.16: the pre-open rising candidates (9:00–9:15) — every 10 s (returns at once outside 8:45–3:35)
   setInterval(() => void preopenTick().catch(() => undefined), 10_000);
+  // app v1.19: the Intraday scanner — every 15 s, 9:15–3:15 (returns at once outside); its past test once a day
+  setInterval(() => void intradayTick().catch((err: unknown) => log.warn('Intraday scan failed', { error: err })), INTRADAY_EVERY_MS);
+  setTimeout(() => void testIntradayIfDue().catch(() => undefined), 100_000);
+  setInterval(() => void testIntradayIfDue().catch(() => undefined), 3600_000);
 }).catch(() => undefined);
 // News: last time's headlines at once, then a download every 15 / 45 minutes (app v1.7).
 ready.then(() => startNewsChecks()).catch(() => undefined);
@@ -323,6 +328,11 @@ const handlers: Handlers = {
     return { catalysts: c ? Object.keys(c.byKey).length : 0, nse: !!n };
   },
   'preopen:refresh': async () => ({ listed: await preopenTick(Date.now(), true) }),
+  'intraday:refresh': async () => ({ rows: await intradayTick(Date.now(), true) }),
+  'intraday:test': async () => {
+    const r = await testIntradayIfDue(Date.now(), true);
+    return { ok: !!r, trades: r?.trades ?? 0, days: r?.days ?? 0 };
+  },
   'early:test': async () => {
     const r = (await testEarly(Date.now(), true)) as { days?: number } | null;
     return { ok: !!r, days: r?.days ?? 0 };

@@ -25,7 +25,7 @@ export interface InAppAlert {
 export function routeForAlert(id: string): string {
   if (/^alert:(bo|day|daypractice|short|test-bo)-/.test(id)) return 'daytrade';
   if (/^alert:(practice|wallet|closed|sold)-/.test(id)) return 'practice';
-  if (/^alert:(pick|advice)-/.test(id)) return 'today';
+  if (/^alert:(pick|advice|intraday)-/.test(id)) return 'today';
   if (/^alert:rising-/.test(id)) return 'watchlist';
   if (/^alert:update-/.test(id)) return 'account';
   if (/^alert:test-/.test(id) || id === 'login-reminder' || id === 'session-expired' || id === 'analytics-invalid') return 'settings';

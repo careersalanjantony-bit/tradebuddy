@@ -40,6 +40,28 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.19.0
+
+- **Intraday scanner** (Home → Early Movers → **Intraday**, was "Live now"): stocks that start rising
+  during the session — also ones that opened flat (URBANCO and SUNTV on 18 Nov were missed by the pre-open
+  list). Every NSE EQ-series stock in the instrument list (BE / T2T and other series are not in it, so they
+  never get a signal) is checked every 15 s from 9:15 to 3:15: prices from the live feed where fresh, the
+  rest from Full Market Quotes V3 (risers every round, the quiet rest in four turns — inside Upstox's limits),
+  today's official 5-minute candles for the risers, the last 20 daily candles for the usual volume.
+- Seven checks, 100 points: +1 % from yesterday's close, volume 1.5× its usual for the time of day, above
+  VWAP, a 5-minute close above the first 15 minutes' high (breakout time shown), 5-minute EMA 9 above
+  EMA 21, a strong last candle, 55 %+ of the waiting quantity buying. **BUY** when they line up and the
+  stock is not stretched (more than 7 % up, 2.5 % above VWAP or 1.5 % above EMA 9 = no chase), before 2:45,
+  market not falling; **WAIT** with what is missing; **NO TRADE** below VWAP, already up too much, stale
+  price, too thin, too late. Plan: entry, stop-loss (VWAP / last lows, 0.4–2 %), target at 1 : 2, shares
+  for your Early Movers capital and risk (charges included). Tap for the numbers, the checks and the
+  stock's support & resistance with the live price.
+- One BUY alert per stock per day (and not twice within 30 minutes across scanners). The opening-gap picks
+  and setups of Early Movers stay, below the Intraday list.
+- **Past test** under More: the same rules replayed on the stored 5-minute history — first BUY of a
+  stock-day at the next candle's open plus slippage, exit at stop-loss, target or 3:15, Upstox charges
+  (`src/intraday/scanner.ts`, `backtest.ts`, `background/intradayJobs.ts`).
+
 ## New in 1.18.0
 
 - **No old pop-ups on opening.** The practice wallet loads a moment after the app opens, and its earlier sales

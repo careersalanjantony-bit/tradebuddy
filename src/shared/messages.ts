@@ -121,6 +121,9 @@ export interface ApiMap {
   'alerts:delete': { req: { id: string }; res: { done: true } };
   'alerts:seen': { req: undefined; res: { done: true } };
   'alerts:log': { req: { limit?: number }; res: { entries: Array<import('../storage/db').AlertLogEntry> } };
+  /** app v1.19: the Intraday scanner now (also outside its 15-second rhythm) and its past test */
+  'intraday:refresh': { req: undefined; res: { rows: number } };
+  'intraday:test': { req: undefined; res: { ok: boolean; trades: number; days: number } };
   /** app v1.18: Alerts tab "Clear all" — history, price-alert log, unread count and the phone's notification list */
   'alerts:clear': { req: undefined; res: { done: true } };
   /** app v1.18: an alert banner was swiped away or closed — not shown again, its phone notification removed */
