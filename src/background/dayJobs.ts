@@ -75,8 +75,10 @@ export async function syncIntradayAll(now = Date.now()): Promise<{ ok: number; f
     }));
     let loggedErrors = 0;
     const { ok, failed, pending } = await runHistoryBatch('intraday', window, stocks, async ({ key, parameter }) => {
-      const n = await syncIntraday(key, parameter, now);
-      if (n > 20) await pruneIntraday(key, parameter, now);
+      await syncIntraday(key, parameter, now);
+      // A normal refresh adds one session. Run retention before marking the stock complete,
+      // including when a restart has already committed its newest candles.
+      await pruneIntraday(key, parameter, now);
     }, (key, err) => {
       if (loggedErrors++ < 3) log.warn(`5-minute history failed for ${key}`, { error: err });
     });

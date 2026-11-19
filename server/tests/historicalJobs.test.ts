@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as dailyJobs from '../../src/background/dataJobs';
 import * as learning from '../../src/background/mlJobs';
-import { intradayHistoryWindow } from '../../src/background/dayJobs';
+import { intradayHistoryWindow, syncIntradayAll } from '../../src/background/dayJobs';
 import { historyNeedsResume, runHistoryBatch, withHistoryJob } from '../../src/background/historicalJobs';
 import { retryDailyHistory, runJob } from '../../src/background/scheduler';
 import * as candles from '../../src/data/candles';
 import * as quotes from '../../src/data/quotes';
-import { istEpoch } from '../../src/lib/time';
-import { updateSettings } from '../../src/storage/local';
+import * as intraday from '../../src/data/intraday';
+import { addDays, istEpoch } from '../../src/lib/time';
+import { getDb } from '../../src/storage/db';
+import { setLocal, updateSettings } from '../../src/storage/local';
 import { UpstoxError } from '../../src/upstox/errors';
+import { noIndexLists } from '../../tests/scanHelpers';
 import { startServer, type RunningServer } from '../src/engine';
 import { getJson, logCapture, tempDir, testConfig } from './helpers';
 
@@ -84,6 +87,31 @@ describe('historical job checkpoints', () => {
     const monday = await intradayHistoryWindow(istEpoch('2026-11-23', '10:00'));
     const tuesday = await intradayHistoryWindow(istEpoch('2026-11-24', '10:00'));
     expect([saturday, monday, tuesday]).toEqual(['2026-11-20', '2026-11-20', '2026-11-23']);
+  });
+
+  it('prunes expired candles during an incremental 5-minute refresh', async () => {
+    const key = 'A';
+    const sessions = 25;
+    const today = '2026-11-19';
+    const expired = addDays(today, -intraday.calendarDaysFor(sessions) - 31);
+    const latest = addDays(today, -1);
+    const db = await getDb();
+    const bars = { key, t: [555], o: [100], h: [101], l: [99], c: [100], v: [10] };
+    await db.put('intraday', { ...bars, date: expired });
+    await setLocal('watchlist', [key]);
+    await setLocal('scanLists', noIndexLists());
+    await updateSettings({ dayTrade: { testSessions: sessions } });
+    const sync = vi.spyOn(intraday, 'syncIntraday').mockImplementation(async () => {
+      await db.put('intraday', { ...bars, date: latest });
+      return 1;
+    });
+    try {
+      await expect(syncIntradayAll(istEpoch(today, '00:30'))).resolves.toEqual({ ok: 1, failed: 0 });
+      expect(await db.get('intraday', [key, expired])).toBeUndefined();
+      expect(await db.get('intraday', [key, latest])).toEqual({ ...bars, date: latest });
+    } finally {
+      sync.mockRestore();
+    }
   });
 
   it('the scheduler rolls an unfinished prior daily window forward after a restart', async () => {
