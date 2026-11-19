@@ -3,7 +3,7 @@ import { adviceForPlan } from '../advisor/forPlan';
 import type { TradePlan } from '../storage/schema';
 import { marketState, pollDue } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
-import { syncCandles } from '../data/candles';
+import { dailyHistoryWindow, syncCandles } from '../data/candles';
 import { refreshCorporateActions } from '../data/corporateActions';
 import { countInstruments, findBySymbol, getInstrument, refreshInstruments } from '../data/instruments';
 import { SEED_SYMBOLS } from '../data/instrumentsParse';
@@ -16,10 +16,11 @@ import { errorMessage } from '../lib/serialize';
 import { istDate, istEpoch } from '../lib/time';
 import { notify } from '../notify/chrome';
 import { playSound } from '../notify/sound';
-import { getLocal, getSettings, setLocal } from '../storage/local';
+import { getLocal, getSettings, patchScheduleJob, setLocal } from '../storage/local';
 import { getDb } from '../storage/db';
 import { getSession, setSession } from '../storage/session';
 import { UpstoxError } from '../upstox/errors';
+import { runHistoryBatch, withHistoryJob } from './historicalJobs';
 import { checkPracticeTrades } from './practiceJobs';
 import { dayTick } from './dayJobs';
 import { ensureFeed, feedFresh, setFeedListener } from './feed';
@@ -76,39 +77,29 @@ export async function syncStock(key: string, now = Date.now(), corpMaxAgeMs = 20
   return { fetched: r.fetched, lastDate: r.lastDate };
 }
 
-let syncRunning: Promise<{ ok: number; failed: string[] }> | null = null;
-
-/** History for every tracked stock (studied list + your stocks + trades). One run at a time; progress in session storage. */
-export function syncAllTracked(now = Date.now()): Promise<{ ok: number; failed: string[] }> {
-  syncRunning ??= (async () => {
-    const keys = await trackedKeys();
-    const own = new Set([...((await getLocal('watchlist')) ?? []), ...((await getLocal('plans')) ?? []).map((p) => p.key)]);
-    const failed: string[] = [];
-    let ok = 0;
-    await setSession('syncProgress', { done: 0, total: keys.length, running: true, at: Date.now() });
-    try {
-      for (const key of keys) {
-        try {
-          await syncStock(key, now, own.has(key) ? 20 * 3600_000 : 7 * 24 * 3600_000);
-          ok++;
-        } catch (err) {
-          if (err instanceof UpstoxError && err.kind === 'not_logged_in') throw err;
-          failed.push(key);
-          log.warn(`Candle sync failed for ${key}`, { error: err });
-        }
-        if ((ok + failed.length) % 5 === 0) await setSession('syncProgress', { done: ok + failed.length, total: keys.length, running: true, at: Date.now() });
-      }
-    } finally {
-      await setSession('syncProgress', { done: ok + failed.length, total: keys.length, running: false, at: Date.now() });
-    }
-    return { ok, failed };
-  })().finally(() => {
-    syncRunning = null;
-  });
-  return syncRunning;
+export async function dailyHistoryBatchWindow(now: number): Promise<string> {
+  const [{ today, final, closingRecheck }, { data }] = await Promise.all([
+    getCalendar().then((cal) => dailyHistoryWindow(cal, now)),
+    getSettings(),
+  ]);
+  const phase = closingRecheck ? 'close-recheck' : final ? 'close' : 'open';
+  return `${today}:${phase}:${data.candleHistoryYears}`;
 }
 
-
+/** History for every tracked stock. Serialize different windows and join duplicate requests. */
+export async function syncAllTracked(now = Date.now()): Promise<{ ok: number; failed: string[]; pending: number }> {
+  const window = await dailyHistoryBatchWindow(now);
+  return withHistoryJob('daily', window, async () => {
+    const keys = await trackedKeys();
+    const own = new Set([...((await getLocal('watchlist')) ?? []), ...((await getLocal('plans')) ?? []).map((p) => p.key)]);
+    const stocks = keys.map((key) => ({ key, parameter: own.has(key) ? 20 * 3600_000 : 7 * 24 * 3600_000 }));
+    const { ok, failed, pending } = await runHistoryBatch('daily', window, stocks,
+      async ({ key, parameter }) => void (await syncStock(key, now, parameter)),
+      (key, err) => log.warn(`Candle sync failed for ${key}`, { error: err }),
+    );
+    return { ok, failed: [...failed, ...pending], pending: pending.length };
+  });
+}
 
 /**
  * Price poll + intraday alerts. Runs every 30 s from an alarm; does work in pre-open/open, and once
@@ -269,8 +260,9 @@ export async function fastPoll(now = Date.now()): Promise<{ polled: number; skip
  * After the close (spec §7.4, §10, §12): sync candles for every tracked stock, run end-of-day
  * alerts, scan the watchlist and send one summary notification per day.
  */
-export async function runEndOfDay(now = Date.now()): Promise<{ synced: number; failed: number; shortlist: string[] }> {
-  const { ok, failed } = await syncAllTracked(now);
+export async function runEndOfDay(now = Date.now(), requireCompleteHistory = false): Promise<{ synced: number; failed: number; shortlist: string[] }> {
+  const { ok, failed, pending } = await syncAllTracked(now);
+  if (requireCompleteHistory && pending) throw new Error(`Daily history has ${pending} stock(s) pending retry`);
   const [settings, cal, quotes, watchlist] = await Promise.all([getSettings(), getCalendar(), getQuotes(), getLocal('watchlist')]);
   const closes = new Map<string, { close: number; sma20: number | null }>();
   const shortlist: string[] = [];
@@ -295,8 +287,7 @@ export async function runEndOfDay(now = Date.now()): Promise<{ synced: number; f
       title: shortlist.length ? `Evening scan: ${shortlist.length} on the shortlist` : 'Evening scan: no setups today',
       message: shortlist.length ? shortlist.slice(0, 6).join(', ') : 'No watchlist stock has a valid setup. Open the Shortlist for details.',
     });
-    const all = (await getLocal('scheduleState')) ?? {};
-    await setLocal('scheduleState', { ...all, 'eod-candles': { ...all['eod-candles'], lastNotifiedAt: now } });
+    await patchScheduleJob('eod-candles', { lastNotifiedAt: now });
   }
   log.info(`End of day: ${ok} synced, ${failed.length} failed, shortlist: ${shortlist.join(', ') || 'none'}`);
   return { synced: ok, failed: failed.length, shortlist };
@@ -393,15 +384,16 @@ export async function morningDue(now = Date.now()): Promise<boolean> {
   const today = istDate(now);
   if (!m.session.trading || m.session.closeAt === undefined || now < istEpoch(today, '09:20') || now >= m.session.closeAt) return false;
   const state = (await getLocal('scheduleState'))?.['morning-recheck'];
-  return !(state?.lastSuccessAt && state.lastSuccessAt >= istEpoch(today, '09:20'));
+  return (state?.lastSuccessFor ?? state?.lastSuccessAt ?? 0) < istEpoch(today, '09:20');
 }
 
-/** True when today's end-of-day job should still run (trading day, after 16:00, not yet done today). */
+/** Each trading day has an initial close sync at 16:00 and one publication recheck at 18:00. */
 export async function eodDue(now = Date.now()): Promise<boolean> {
   const cal = await getCalendar();
   const m = marketState(now, cal);
   const today = istDate(now);
   if (!m.session.trading || now < istEpoch(today, '16:00')) return false;
   const state = (await getLocal('scheduleState'))?.['eod-candles'];
-  return !(state?.lastSuccessAt && state.lastSuccessAt >= istEpoch(today, '16:00'));
+  const scheduledFor = now >= istEpoch(today, '18:00') ? istEpoch(today, '18:00') : istEpoch(today, '16:00');
+  return (state?.lastSuccessFor ?? state?.lastSuccessAt ?? 0) < scheduledFor;
 }

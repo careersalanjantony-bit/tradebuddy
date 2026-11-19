@@ -1,6 +1,8 @@
 import type { MarketCalendar, MarketState } from '../../../src/data/calendar';
 import type { Quote } from '../../../src/data/quotesParse';
 import type { ApiStatus } from '../../../src/storage/session';
+import type { historyJobProgress } from '../../../src/background/historicalJobs';
+import type { historicalRequestDiagnostics } from '../../../src/upstox/client';
 import type { FeedHealth } from '../market/feedSupervisor';
 import type { QuotePollerHealth } from '../market/quotePoller';
 import type { ServerEvent } from '../storage/sqlite';
@@ -33,6 +35,7 @@ export interface ApiDeps {
   quotes(): Promise<Record<string, Quote>>;
   lastPoll(): Promise<{ at: number; ok: boolean; count: number; error?: string } | undefined>;
   apiStatus(): Promise<ApiStatus | undefined>;
+  historical?(): Promise<Awaited<ReturnType<typeof historyJobProgress>> & { rateLimit: Awaited<ReturnType<typeof historicalRequestDiagnostics>> }>;
   analytics(): Promise<{ configured: boolean; status: string; checkedAt: number | null; error: string | null }>;
   events(limit: number): ServerEvent[];
   /** milestone 3: the app's stored data, exactly as the app keeps it (chrome.storage.local / session) */
@@ -66,7 +69,9 @@ export function buildRouter(d: ApiDeps): Router {
   r.add('GET', '/v1/health', async () => {
     const t = now();
     const mem = process.memoryUsage();
-    const [market, analytics, apiStatus, lastPoll] = await Promise.all([d.marketState(t), d.analytics(), d.apiStatus(), d.lastPoll()]);
+    const [market, analytics, apiStatus, lastPoll, historical] = await Promise.all([
+      d.marketState(t), d.analytics(), d.apiStatus(), d.lastPoll(), d.historical?.(),
+    ]);
     return {
       body: {
         status: d.ready() && d.dbOk() ? 'ok' : 'degraded',
@@ -78,7 +83,7 @@ export function buildRouter(d: ApiDeps): Router {
         memoryMb: { rss: Math.round(mem.rss / 1048576), heapUsed: Math.round(mem.heapUsed / 1048576) },
         database: { ok: d.dbOk(), ...d.dbInfo(), ...d.storageInfo() },
         market: { phase: market.phase, label: market.label },
-        upstox: { analyticsToken: analytics, api: apiStatus ?? null, lastPoll: lastPoll ?? null },
+        upstox: { analyticsToken: analytics, api: apiStatus ?? null, lastPoll: lastPoll ?? null, historical: historical ?? null },
         feed: d.feedHealth(),
         poller: d.pollerHealth(),
         tasks: d.tasks(),
