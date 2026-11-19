@@ -1,0 +1,4 @@
+New "Intraday" tab in Early Movers (was "Live now"): every NSE stock (EQ series - never BE / T2T) is checked every 15 seconds from 9:15 to 3:15 for fresh momentum, also stocks that opened flat.
+Each stock gets BUY, WAIT or NO TRADE with the reason: % from yesterday, volume vs usual, VWAP, the break above the first 15 minutes' high, the 5-minute trend and candle, and buyers vs sellers. It does not chase stocks that already ran too far.
+Tap a stock for breakout time, price, volume surge, VWAP, entry, stop-loss, target, risk : reward, shares - and its support and resistance with the live price.
+One alert per stock per day. A past test on the stored 5-minute history is under "More". Not a guarantee - you place every order yourself.

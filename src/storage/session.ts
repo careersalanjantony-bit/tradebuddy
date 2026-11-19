@@ -69,6 +69,10 @@ export interface SessionStore {
   earlyAlerted: { date: string; sent: string[] };
   /** app v1.16: the pre-open rising candidates (9:00–9:15) and the final top 10 */
   preopen: import('../background/preopenJobs').PreopenState;
+  /** app v1.19: the Intraday scanner's latest round (every 15 s, 9:15–3:15) */
+  intraday: import('../background/intradayJobs').IntradayState;
+  /** app v1.19: Intraday BUY alerts sent today (one per stock) */
+  intradayAlerted: { date: string; keys: string[] };
   /** app v1.14: the live Rising-now list and the reading of the stocks you hold */
   rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[]; weak?: { weak: boolean; text: string } };
   riseAlerted: { date: string; keys: string[]; held: Record<string, number> };

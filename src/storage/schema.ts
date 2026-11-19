@@ -338,6 +338,8 @@ export interface LocalStore {
   wallet: import('../wallet/wallet').WalletState | null;
   /** app v1.18: every notification shown (Alerts tab history), what was seen, dismissed and cleared */
   alertHistory: import('../alerts/history').AlertHistory;
+  /** app v1.19: the Intraday scanner's past test on the stored 5-minute history (once a day) */
+  intradayTest: import('../intraday/backtest').IntradayTestReport | null;
 }
 
 export type LocalKey = keyof LocalStore;

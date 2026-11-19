@@ -98,5 +98,6 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     scanLists: null,
     ideaAlerts: null,
     alertHistory: { items: [], clearedAt: null, seen: {}, dismissed: {} },
+    intradayTest: null,
   };
 }

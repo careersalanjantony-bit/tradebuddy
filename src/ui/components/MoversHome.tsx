@@ -14,13 +14,15 @@ import { useLocal, useMarketState, useNow, useSessionValue, useSettings } from '
 import { DataLimits, DriveDetail, EarlyDetail, EarlyTestLine, MoneyLine, PreDetail, rs, STAGE } from './EarlyMovers';
 import { Sparkline, toast, useFlash } from './Motion';
 import { MarketGateBanner, SuggestionRecordLine } from './RisingNow';
+import { IntradayList, IntradayTestLine } from './IntradayScanner';
 
 /**
  * App v1.16 — the main tool, on Home: "🌱 Early Movers". One list that follows the clock:
  *   before 9:00   good news since yesterday's close (the pre-open starts at 9:00);
  *   9:00–9:15     the pre-open rising candidates — ranked from 9:05, final top 10 at 9:13;
- *   from 9:15     "Live now": the final picks that hold their opening gap (no waiting for 9:20), then
- *                 setups, live breakouts and confirmed breakouts all day.
+ *   from 9:15     "Intraday" (app v1.19; was "Live now"): the Intraday scanner — momentum during the
+ *                 session among every NSE EQ stock, every 15 s — and below it, as before, the final
+ *                 picks that hold their opening gap, setups, live breakouts and confirmed breakouts.
  * Each row is one line; tap it for the numbers, the plan sized for your capital and risk, and how to
  * place it yourself in Upstox. Past test, record and data limits sit behind one "More" at the bottom.
  */
@@ -51,10 +53,13 @@ export function MoversCard({ go }: { go: Go }) {
   const preToday = pre && pre.date === today ? pre : null;
   const earlyToday = early && early.date === today ? early : null;
   const preRows = preToday ? (preToday.final?.rows ?? preToday.rows) : [];
-  const liveCount = (earlyToday?.drive?.length ?? 0) + (earlyToday?.rows.length ?? 0);
+  const intraday = useSessionValue('intraday');
+  const intraToday = intraday && intraday.date === today ? intraday : null;
+  const liveCount = (intraToday ? intraToday.counts.buy + intraToday.counts.wait : 0) + (earlyToday?.drive?.length ?? 0) + (earlyToday?.rows.length ?? 0);
   const capital = settings?.dayTrade.earlyCapitalInr ?? 10_000;
   const maxRisk = settings?.dayTrade.earlyRiskInr ?? 50;
-  const isLive = (market.phase === 'open' && !!early && now - early.at < 15_000) || (market.phase === 'pre_open' && !!pre && now - pre.at < 30_000);
+  const isLive =
+    (market.phase === 'open' && ((!!early && now - early.at < 15_000) || (!!intraToday && now - intraToday.at < 30_000))) || (market.phase === 'pre_open' && !!pre && now - pre.at < 30_000);
   const pill = market.phase === 'pre_open' ? (isLive ? 'PRE-OPEN' : 'WAITING') : market.phase === 'open' ? (isLive ? 'LIVE' : 'WAITING') : 'CLOSED';
   return (
     <section class="card movers-card" data-testid="early-movers">
@@ -80,15 +85,24 @@ export function MoversCard({ go }: { go: Go }) {
           Pre-open {preRows.length ? `(${preRows.length})` : ''}
         </button>
         <button type="button" role="tab" class={shown === 'live' ? 'on' : ''} data-movers-tab="live" onClick={() => setTab('live')}>
-          Live now {liveCount ? `(${liveCount})` : ''}
+          Intraday {liveCount ? `(${liveCount})` : ''}
         </button>
       </div>
-      {shown === 'pre' ? <PreList pre={preToday} phase={phase} marketPhase={market.phase} now={now} /> : <LiveList early={earlyToday} open={market.phase === 'open'} now={now} />}
+      {shown === 'pre' ? (
+        <PreList pre={preToday} phase={phase} marketPhase={market.phase} now={now} />
+      ) : (
+        <>
+          <IntradayList open={market.phase === 'open'} now={now} go={go} />
+          <h3 class="mv-sub">Opening picks &amp; setups</h3>
+          <LiveList early={earlyToday} open={market.phase === 'open'} now={now} />
+        </>
+      )}
       <details class="mv-more" data-testid="movers-more">
         <summary class="small">More: past test, record and data limits</summary>
         <SuggestionRecordLine />
         <Removed early={earlyToday} pre={preToday} />
         <EarlyTestLine />
+        <IntradayTestLine />
         <DataLimits />
         <button class="link-btn small" type="button" onClick={() => go('daytrade')}>
           Rising now, buy ideas and day trades → Day trade

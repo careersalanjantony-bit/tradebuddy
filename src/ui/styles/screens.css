@@ -349,3 +349,26 @@
 .levels .sup dd { color: var(--err-ink); }
 .levels .now { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 6px 0; padding: 12px 0; }
 .levels .now dd { font-size: var(--fs-section); font-weight: 800; color: var(--fg); padding: 0 4px; }
+
+/* ---------- app v1.19: Intraday scanner (Early Movers → Intraday tab) */
+.intra-head { margin: 4px 0 6px; }
+.intra-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.intra-filters .chip { cursor: pointer; border: 1px solid var(--border); background: var(--surface); }
+.intra-filters .chip.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.chip.intra-call { font-weight: 700; letter-spacing: 0.02em; }
+.chip.intra-call.call-buy { color: var(--ok-ink); background: var(--ok-bg); }
+.chip.intra-call.call-wait { color: var(--warn-ink); background: var(--warn-bg); }
+.chip.intra-call.call-no { color: var(--muted); background: var(--surface-2); }
+.intra-detail { padding: 6px 2px 10px; display: flex; flex-direction: column; gap: var(--space-2); }
+.intra-why { margin: 0; }
+.intra-why.call-buy b { color: var(--ok-ink); }
+.intra-why.call-wait b { color: var(--warn-ink); }
+.intra-why.call-no b { color: var(--muted); }
+.intra-checks { list-style: none; margin: 0; padding: 0; font-size: var(--fs-caption); line-height: 1.5; }
+.intra-checks li.ok span { color: var(--ok-ink); font-weight: 700; }
+.intra-checks li.no { color: var(--muted); }
+.intra-checks li.no span { color: var(--err-ink); font-weight: 700; }
+.intra-checks li.unknown { color: var(--muted-2); }
+.intra-detail .levels-card { margin: 0; box-shadow: none; border: 1px solid var(--border); }
+.mv-sub { margin: var(--space-4) 0 var(--space-2); font-size: var(--fs-label); }
+.mv-score.off { color: var(--muted-2); background: var(--surface-2); }
