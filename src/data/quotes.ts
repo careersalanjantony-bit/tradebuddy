@@ -62,6 +62,27 @@ export async function pollQuotes(keys: string[], now = Date.now()): Promise<Reco
   }
 }
 
+/**
+ * App v1.20 — the price of ONE stock now (LTP v3 + OHLC v3), merged into the stored quotes. For a stock
+ * opened in the order window or on its page that the app does not follow yet. Does not touch the
+ * status of the regular price poll. Returns null when Upstox sends no price for it.
+ */
+export async function pollOne(key: string, now = Date.now()): Promise<Quote | null> {
+  const query = { instrument_key: key };
+  const [ltp, ohlc] = await Promise.all([
+    upstoxRequest<unknown>('/v3/market-quote/ltp', { tokenKind: 'market', query, attempts: 2 }),
+    upstoxRequest<unknown>('/v3/market-quote/ohlc', { tokenKind: 'market', query: { ...query, interval: '1d' }, attempts: 2 }),
+  ]);
+  const q = mergeQuotes(ltp, ohlc, now)[key];
+  if (!q) return null;
+  const prev = await getQuotes();
+  // keep what the live feed added (VWAP, waiting quantities) when it is newer
+  const old = prev[key];
+  if (old && old.fetchedAt > q.fetchedAt) return old;
+  await setSession('quotes', { ...prev, [key]: { ...(old ?? {}), ...q } });
+  return q;
+}
+
 /** Number of requests one price poll needs for these keys (500 per call). */
 export const quoteChunks = (keys: string[]): number => Math.max(1, Math.ceil(keys.length / 500));
 

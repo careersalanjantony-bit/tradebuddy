@@ -31,7 +31,8 @@ import { syncPortfolio } from './portfolioJobs';
 import { announce, checkNewPicks, ensureInstruments, fastPoll, pollAndEvaluate, runEndOfDay, syncAllTracked, syncStock } from './dataJobs';
 import { invalidateStockCache } from '../data/stockData';
 import { universeKeys } from '../data/universe';
-import { ensureScanLists } from './scanList';
+import { ensureScanLists, watchKey } from './scanList';
+import { pollOne } from '../data/quotes';
 import { clearAlertLog, markAlertsSeen, mutateAlerts, recentAlertLog, updateBadge } from '../alerts/engine';
 import { clearAlertHistory, dismissAlert } from '../alerts/history';
 import { newId } from '../alerts/rules';
@@ -275,6 +276,23 @@ const handlers: Handlers = {
       return await pollAndEvaluate(true);
     } catch (err) {
       throw new Error(friendlyMessage(err, redirectUri()));
+    }
+  },
+  /**
+   * App v1.20 — a stock opened in the order window or on its page: its price now, and kept live while
+   * it is on screen (polled with the others, in the live feed) even when the app does not follow it.
+   */
+  'quotes:watch': async ({ key }) => {
+    const now = Date.now();
+    if (typeof key !== 'string' || !/^(NSE|BSE)_(EQ|INDEX)\|/.test(key)) return { ok: false, error: 'Unknown stock.' };
+    await watchKey(key, now);
+    try {
+      const q = await pollOne(key, now);
+      void ensureFeed(now).catch(() => undefined);
+      return q ? { ok: true, ltp: q.ltp, fetchedAt: q.fetchedAt } : { ok: false, error: 'Upstox sent no price for this stock right now.' };
+    } catch (err) {
+      if (err instanceof UpstoxError && err.kind === 'not_logged_in') return { ok: false, error: 'Live prices need the Upstox login or the Analytics Token (Settings).' };
+      return { ok: false, error: friendlyMessage(err, redirectUri()) };
     }
   },
   'eod:run': async () => {

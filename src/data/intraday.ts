@@ -153,13 +153,17 @@ export function pruneIntraday(key: string, sessions: number, now = Date.now()): 
   });
 }
 
-/** Today's 5-minute bars so far (current trading day). */
-export function fetchTodayBars(key: string, now = Date.now()): Promise<Bars | null> {
+/**
+ * Today's bars so far (current trading day): 5-minute candles, or 1-minute ones with `minutes` = 1
+ * (app v1.20, the Intraday SELL confirmation). The same request already running is shared, never
+ * sent twice at once (one per stock, day and candle size).
+ */
+export function fetchTodayBars(key: string, now = Date.now(), minutes: 1 | 5 = INTRADAY_INTERVAL): Promise<Bars | null> {
   const date = istDate(now);
-  const id = `${key}:${date}`;
+  const id = `${key}:${date}:${minutes}`;
   const active = liveRequests.get(id);
   if (active) return active;
-  const request = upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}`, { tokenKind: 'market' })
+  const request = upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${minutes}`, { tokenKind: 'market' })
     .then((data) => parseIntraday(data).get(date) ?? null)
     .finally(() => liveRequests.delete(id));
   liveRequests.set(id, request);

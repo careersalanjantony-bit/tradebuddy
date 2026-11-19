@@ -54,6 +54,8 @@ export interface ApiMap {
   /** fast refresh (every 5 s while the side panel is open, market hours only) */
   'quotes:fast': { req: undefined; res: { polled: number; skipped?: string } };
   'quotes:refresh': { req: undefined; res: { polled: number; skipped?: string } };
+  /** app v1.20: one stock's live price now, kept live while it is on screen */
+  'quotes:watch': { req: { key: string }; res: { ok: boolean; ltp?: number; fetchedAt?: number; error?: string } };
   'eod:run': { req: undefined; res: { synced: number; failed: number; shortlist: string[] } };
   /** run the "new top pick" check now (Diagnostics / tests) */
   'picks:check': { req: undefined; res: { announced: string[] } };

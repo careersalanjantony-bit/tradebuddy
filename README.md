@@ -40,6 +40,34 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.20.0
+
+- **Intraday SELL (sell first, buy back later)** next to BUY, from a separate engine
+  (`src/intraday/short.ts`; the BUY rules in `scanner.ts` are unchanged). It looks at falling Nifty 500
+  stocks (the brokers' Intraday-short lists; BE / T2T never reach the scanner) and at risers trading
+  below VWAP. Nine checks, never one alone: below VWAP, 5-minute EMA 9 under EMA 20, lower highs and lows,
+  selling volume (1.5× usual with heavy red candles), weaker than NIFTY (1 pt) and its sector (0.5 pt),
+  RSI 25–45 (1-minute candles), a 5-minute close below the opening-range low or yesterday's low — or a
+  failed breakout above the opening-range high — and confirmation by the last red 5-minute candle and
+  the 1-minute candles. No new shorts while the market rises, near the lower price band, when stretched
+  or oversold, or after 2:45. Plan: sell at the price, buy-back stop above (VWAP / recent highs,
+  0.4–2 %), target 1 and 2 at 1× and 2× the risk, shares for your Early Movers risk with charges.
+- Filters **All / BUY / SELL / WAIT / NO TRADE** with live counts (each stock has one call, the counts
+  add up). Tap a SELL for its numbers and reasons, **Sell first (practice)** (always Intraday, never your
+  Delivery shares) and **Buy back**; its stock page opens on the Sell-first view with the scanner's plan
+  on the chart.
+- Alerts: new BUY, new SELL, then each followed — target (1 and 2 for a SELL), stop-loss, signal
+  invalidated — each once (`followStep` in `background/intradayJobs.ts`).
+- **New in-app alert card** (`components/AlertBanner.tsx`, `ui/alertCard.ts`): what happened (NEW BUY /
+  NEW SHORT-SELL OPPORTUNITY, TARGET REACHED, STOP-LOSS HIT…), the stock and score, entry, stop-loss,
+  targets, shares and maximum risk on separate lines, View stock / Dismiss, a large close button, the
+  timer inside the card. It sits under the top bar and the page moves down while it shows, so nothing is
+  covered; more alerts stack behind it ("+2 more").
+- **Fixed "price loading…"** in the Practice order window: any stock opened there (or on its page) now
+  gets its own live price (`quotes:watch` → `pollOne`, and it joins the price polls and the live feed while
+  on screen). A price older than a minute is never shown while the market is open; a failure says why
+  and offers Retry.
+
 ## New in 1.19.0
 
 - **Intraday scanner** (Home → Early Movers → **Intraday**, was "Live now"): stocks that start rising

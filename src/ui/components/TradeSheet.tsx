@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Suggestion } from '../../background/botJobs';
 import { STRATEGY_LABEL } from '../../bot/brain';
 import { searchInstruments } from '../../data/instrumentsParse';
-import { formatINR, formatNumberIN } from '../../lib/format';
+import { formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
 import { callBackground } from '../../shared/messages';
 import { termsFor } from '../../wallet/tiers';
@@ -22,7 +22,8 @@ import {
   type Validity,
 } from '../../wallet/wallet';
 import { useInstruments, useQuotes } from '../data';
-import { useLocal, useMarketState } from '../hooks';
+import { useLocal, useMarketState, useNow } from '../hooks';
+import { priceView } from '../priceView';
 import { Icon } from './Icon';
 import { buzz, toast } from './Motion';
 
@@ -40,6 +41,8 @@ export interface TradePrefill {
   qty?: number;
   stop?: number | null;
   target?: number | null;
+  /** app v1.20: sell-first target 1 (half) */
+  t1?: number | null;
   sellByClose?: boolean;
   source?: string;
   product?: Product;
@@ -63,6 +66,12 @@ export function TradeSheetHost() {
 
 const r2 = (x: number) => Math.round(x * 20) / 20;
 const PRODUCTS: Product[] = ['delivery', 'intraday', 'mtf'];
+/** app v1.20: the price request gives up after this long and offers Retry */
+const PRICE_TIMEOUT_MS = 12_000;
+
+/** Waits for a promise at most `ms`. */
+const within = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Upstox did not answer within ${Math.round(ms / 1000)} seconds.`)), ms))]);
 const TYPES: Array<[OrderType, string]> = [
   ['market', 'Market'],
   ['limit', 'Limit'],
@@ -103,7 +112,7 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
   const [trigger, setTrigger] = useState('');
   const [stop, setStop] = useState(prefill.stop ? String(prefill.stop) : '');
   const [target, setTarget] = useState(prefill.target ? String(prefill.target) : '');
-  const [t1, setT1] = useState('');
+  const [t1, setT1] = useState(prefill.t1 ? String(prefill.t1) : '');
   const [sellByClose, setSellByClose] = useState(prefill.sellByClose ?? (prefill.product === 'intraday' ? true : false));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -113,10 +122,31 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
 
   const results = useMemo(() => (instruments && query.trim() ? searchInstruments(instruments.filter((i) => i.instrument_type === 'EQ'), query, 8) : []), [instruments, query]);
   const quote = stock ? quotes[stock.key] : undefined;
-  const ltp = quote?.ltp ?? null;
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
+  const open = market.phase === 'open';
+  // app v1.20: the chosen stock's live price — fetched for any stock (followed or not), kept live while
+  // the window is open, never shown when stale; an error offers Retry
+  const now = useNow(1_000);
+  const marketLive = open || market.phase === 'pre_open';
+  const [priceBusy, setPriceBusy] = useState(false);
+  const [priceErr, setPriceErr] = useState<string | null>(null);
+  const loadSeq = useRef(0);
+  const loadPrice = (key: string) => {
+    const seq = ++loadSeq.current;
+    setPriceBusy(true);
+    setPriceErr(null);
+    void within(callBackground('quotes:watch', { key }), PRICE_TIMEOUT_MS)
+      .then((r) => {
+        if (seq === loadSeq.current && !r.ok) setPriceErr(r.error ?? 'No price from Upstox.');
+      })
+      .catch((e: unknown) => seq === loadSeq.current && setPriceErr(errorMessage(e)))
+      .finally(() => seq === loadSeq.current && setPriceBusy(false));
+  };
+  const pv = priceView(quote, marketLive, now, priceBusy, priceErr);
+  const ltp = pv.ltp;
   const prev = quote?.prevClose ?? null;
   const free = availableCash(wallet, quotes);
-  const open = market.phase === 'open';
   const q = Math.floor(Number(qty) || 0);
 
   // what this stock is held as (Upstox keeps Delivery, Intraday and MTF apart)
@@ -144,8 +174,21 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
     if (best) setProduct(best);
   }, [stock?.key]);
   useEffect(() => {
-    // a stock that is not followed yet gets prices as soon as it is chosen
-    if (stock && ltp === null) void callBackground('quotes:refresh').catch(() => undefined);
+    // app v1.20: every chosen stock gets its price at once and stays live while the window is open (the
+    // old refresh polled only followed stocks, so a stock from the Intraday list stayed "price loading…")
+    if (!stock) {
+      loadSeq.current++;
+      setPriceBusy(false);
+      setPriceErr(null);
+      return undefined;
+    }
+    loadPrice(stock.key);
+    // still no fresh price (e.g. the feed missed it): ask again every 15 seconds
+    const t = setInterval(() => {
+      const q = quotesRef.current[stock.key];
+      if (!q || Date.now() - q.fetchedAt > 20_000) loadPrice(stock.key);
+    }, 15_000);
+    return () => clearInterval(t);
   }, [stock?.key]);
   useEffect(() => {
     // Intraday: close by itself at 3:10 pm unless you untick it; other products keep their own choice
@@ -348,18 +391,32 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
         )}
 
         {stock ? (
-          <div class="row stock-pick" data-testid="trade-stock">
-            <b>{stock.symbol}</b> <span class="exch">NSE</span>
-            {picked && <span class={`sug-chance ${picked.side}`}>{Math.round(picked.chance * 100)}%</span>}
-            <span class="spacer" />
-            <span class="big-num">{ltp ? `₹${formatNumberIN(ltp)}` : 'price loading…'}</span>
-            {change !== null && <span class={`small ${change >= 0 ? 'ok-text' : 'err-text'}`}>{`${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}</span>}
-            {!prefill.key && (
-              <button class="link-btn small" type="button" onClick={() => (setStock(null), setPicked(null))}>
-                change
-              </button>
+          <>
+            <div class="row stock-pick" data-testid="trade-stock">
+              <b>{stock.symbol}</b> <span class="exch">{stock.key.startsWith('BSE_') ? 'BSE' : 'NSE'}</span>
+              {picked && <span class={`sug-chance ${picked.side}`}>{Math.round(picked.chance * 100)}%</span>}
+              <span class="spacer" />
+              <span class={`big-num price-${pv.state}`} data-testid="trade-price" data-state={pv.state}>
+                {pv.state === 'loading' && <i class="spin" aria-hidden="true" />}
+                {pv.text}
+              </span>
+              {change !== null && <span class={`small ${change >= 0 ? 'ok-text' : 'err-text'}`}>{`${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}</span>}
+              {!prefill.key && (
+                <button class="link-btn small" type="button" onClick={() => (setStock(null), setPicked(null))}>
+                  change
+                </button>
+              )}
+            </div>
+            {pv.state === 'closed' && quote && <p class="tiny muted price-note">Market closed — the last traded price (read {formatTimeIST(quote.fetchedAt)}).</p>}
+            {pv.state === 'error' && (
+              <p class="small err-text price-note" data-testid="trade-price-error">
+                {priceErr ?? 'No fresh price from Upstox.'}{' '}
+                <button class="link-btn small" type="button" data-testid="trade-price-retry" onClick={() => loadPrice(stock.key)}>
+                  Retry
+                </button>
+              </p>
             )}
-          </div>
+          </>
         ) : (
           <label class="field">
             <span>{side === 'buy' ? 'Or find a stock' : 'Or find any stock to sell first'}</span>
@@ -600,9 +657,10 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
           )}
           {!open && <div class="tiny muted">Market closed: this is an after-market order (AMO) — it works when the market opens.</div>}
         </div>
-        <button class={`btn primary block ${side}`} type="button" disabled={busy || !stock || q < 1 || (sellFirst && !open)} data-testid="trade-submit" onClick={() => void submit()}>
+        <button class={`btn primary block ${side}`} type="button" disabled={busy || !stock || q < 1 || (sellFirst && !open) || ((type === 'market' || sellFirst) && open && !ltp)} data-testid="trade-submit" onClick={() => void submit()}>
           {busy ? 'Placing…' : `${label} (practice)`}
         </button>
+        {stock && open && !ltp && (type === 'market' || sellFirst) && <p class="tiny muted" style={{ margin: '4px 0 0' }}>A market order needs a live price — waiting for it.</p>}
         {msg && (
           <p class={`small ${msg.ok ? 'ok-text' : 'err-text'}`} data-testid="trade-msg">
             {msg.text}
