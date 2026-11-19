@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { DriveRow, EarlyRow } from '../../background/risingJobs';
 import type { PreRow } from '../../background/preopenJobs';
-import { PHASE_WORDS, prePhase, type PrePhase } from '../../early/preopen';
+import { prePhase, type PrePhase } from '../../early/preopen';
 import { minutesIST } from '../../daytrade/live';
 import { formatINR, formatPct, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
@@ -28,15 +28,6 @@ import { IntradayList, IntradayTestLine } from './IntradayScanner';
  */
 
 type Tab = 'pre' | 'live';
-
-const STEPS: Array<{ t: number; label: string }> = [
-  { t: 9 * 60, label: '9:00 orders' },
-  { t: 9 * 60 + 5, label: '9:05 ranked' },
-  { t: 9 * 60 + 8, label: '9:08 entry closes' },
-  { t: 9 * 60 + 13, label: '9:13 final 10' },
-  { t: 9 * 60 + 15, label: '9:15 open' },
-  { t: 9 * 60 + 20, label: '9:20 setups' },
-];
 
 export function MoversCard({ go }: { go: Go }) {
   const now = useNow(2_000);
@@ -71,10 +62,7 @@ export function MoversCard({ go }: { go: Go }) {
           {pill}
         </span>
       </div>
-      <Timeline t={market.phase === 'open' || market.phase === 'pre_open' ? t : -1} />
-      <p class="small mv-phase" data-testid="movers-phase">
-        {market.phase === 'open' || market.phase === 'pre_open' ? PHASE_WORDS[phase] : market.phase === 'before_open' ? 'Pre-open starts at 9:00 — the list fills itself.' : 'Market closed — the next pre-open list starts at 9:00 on the next market day.'}
-      </p>
+      {/* app v1.20.1: the 9:00 → 9:20 timeline and its status line are gone (owner: the earlier, simpler look) */}
       <button type="button" class="mv-money" data-testid="movers-money" onClick={() => setMoney(!money)}>
         {formatINR(capital, 0)} capital · ₹{maxRisk} risk per trade incl. charges <span class="muted">· change</span>
       </button>
@@ -112,23 +100,6 @@ export function MoversCard({ go }: { go: Go }) {
         Points, not a chance of rising. Never a guarantee — the app does not place orders; you do, in Upstox.
       </p>
     </section>
-  );
-}
-
-function Timeline({ t }: { t: number }) {
-  return (
-    <ol class="mv-steps" aria-label="Pre-open schedule" data-testid="movers-steps">
-      {STEPS.map((s, i) => {
-        const next = STEPS[i + 1];
-        const state = t < 0 ? '' : t >= s.t && (!next || t < next.t) ? 'now' : t >= s.t ? 'done' : '';
-        return (
-          <li class={state}>
-            <i aria-hidden="true" />
-            <span>{s.label}</span>
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 

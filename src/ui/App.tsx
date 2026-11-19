@@ -65,6 +65,12 @@ const HOME_IDS: ScreenId[] = ['today', 'swing'];
 // the app restores scroll positions itself; the browser's own restore on Back would fight it
 if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual';
 
+/** The room an in-app alert card takes above the page right now (px; 0 without a card). */
+function alertSpace(): number {
+  if (typeof document === 'undefined') return 0;
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--alert-space')) || 0;
+}
+
 function restoreScroll(y: number): () => void {
   let stopped = false;
   const stop = () => {
@@ -90,7 +96,8 @@ function restoreScroll(y: number): () => void {
 
 export function App() {
   // each screen's scroll position is saved the moment you leave it (before the next screen is drawn)
-  const [route, param, go] = useHashRoute(IDS, 'today', (from) => scrollMemory.set(from, window.scrollY));
+  // app v1.20.1: remembered without the room an alert card takes at that moment (it may be gone on return)
+  const [route, param, go] = useHashRoute(IDS, 'today', (from) => scrollMemory.set(from, Math.max(0, window.scrollY - alertSpace())));
   const unread = useSessionValue('alertsUnread') ?? 0;
   const settings = useSettings();
   // the app's own login: PIN / fingerprint lock (app v1.3)
@@ -127,7 +134,7 @@ export function App() {
     const from = prevRoute.current;
     prevRoute.current = route;
     const saved = scrollMemory.get(route);
-    if ((from === 'stock' || from === 'planner') && route !== 'stock' && saved && saved > 0) return restoreScroll(saved);
+    if ((from === 'stock' || from === 'planner') && route !== 'stock' && saved && saved > 0) return restoreScroll(saved + alertSpace());
     window.scrollTo(0, 0);
     return undefined;
   }, [route, param]);

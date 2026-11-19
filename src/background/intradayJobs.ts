@@ -76,6 +76,8 @@ export interface IntradayState {
   /** app v1.20: why there are no shorts now (rising market), if so */
   shortGate?: string | null;
   error?: string;
+  /** app v1.20.1: what was still arriving from Upstox when this round was saved (it comes next round) */
+  slow?: string[];
 }
 
 /** app v1.20: an announced signal, followed until its target, stop-loss or invalidation */
@@ -171,17 +173,58 @@ async function usualVolume(key: string, date: string): Promise<number | null> {
   return avg;
 }
 
+/**
+ * App v1.20.1 — every round finishes within these times (ms) and saves the list with what it has.
+ * Before, a round waited for every Upstox request; on a phone that was busy (the morning's history
+ * download, or Upstox's request limit reached) one round could wait for many minutes and the list
+ * stayed empty. Requests that take longer go on in the background and are used by the next round.
+ */
+const BUDGET = { quotes: 12_000, bars: 6_000, history: 2_000, bars1: 4_000 };
+/** a round older than this is given up waiting for (the next one starts; only the newest saves) */
+const STUCK_MS = 60_000;
+let runningSince = 0;
+let runId = 0;
+let quotesJob: Promise<void> | null = null;
+let quotesError: string | null = null;
+let barsJob: Promise<void> | null = null;
+let historyJob: Promise<void> | null = null;
+let bars1Job: Promise<void> | null = null;
+
+/** True when `p` finished within `ms` (it keeps running otherwise). */
+const finishedWithin = (p: Promise<unknown>, ms: number): Promise<boolean> =>
+  Promise.race([p.then(
+    () => true,
+    () => true,
+  ), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+
 /** One scan (paced: at most every 15 s; `force` = now). Returns how many stocks were classified. */
 export function intradayTick(now = Date.now(), force = false): Promise<number> {
-  if (running) return running;
+  if (running && Date.now() - runningSince < STUCK_MS) return running;
+  if (running) log.warn('An Intraday round took over a minute — starting a new one');
   if (!force && now - lastRun < INTRADAY_EVERY_MS - 500) return Promise.resolve(0);
-  running = scan(now, force).finally(() => {
-    running = null;
-  });
-  return running;
+  const id = ++runId;
+  runningSince = Date.now();
+  const p = scan(now, force, id)
+    .catch(async (err: unknown) => {
+      // app v1.20.1: a failed round still leaves the list (last good rows) with the reason
+      if (id === runId) await saveFailure(now, err).catch(() => undefined);
+      throw err;
+    })
+    .finally(() => {
+      if (running === p) running = null;
+    });
+  running = p;
+  return p;
 }
 
-async function scan(now: number, force: boolean): Promise<number> {
+async function saveFailure(now: number, err: unknown): Promise<void> {
+  const date = istDate(now);
+  const prev = await getSession('intraday');
+  const base: IntradayState = prev?.date === date ? prev : { date, at: now, universe: 0, priced: 0, candidates: 0, rows: [], counts: { buy: 0, sell: 0, wait: 0, noTrade: 0 }, gate: null };
+  await setSession('intraday', { ...base, at: now, error: `last round failed: ${errorMessage(err)}` });
+}
+
+async function scan(now: number, force: boolean, id = runId): Promise<number> {
   const cal = await getCalendar();
   const m = marketState(now, cal);
   const t = minutesIST(now);
@@ -213,14 +256,27 @@ async function scan(now: number, force: boolean): Promise<number> {
   const hotSet = new Set(hot);
   const turn = round++ % 4;
   const cold = need.filter((k, idx) => !hotSet.has(k) && idx % 4 === turn);
-  try {
-    for (const part of chunk([...hot, ...cold], 500)) {
-      const data = await upstoxRequest<unknown>('/v3/market-quote/quotes', { tokenKind: 'market', query: { instrument_key: part.join(',') }, attempts: 1 });
-      for (const [k, s] of parseFullQuotes(data, Date.now())) snaps.set(k, s);
-    }
-  } catch (err) {
-    error = err instanceof UpstoxError && err.kind === 'not_logged_in' ? 'Upstox prices need the Analytics Token or the daily login' : `prices: ${errorMessage(err)}`;
+  // app v1.20.1: the price requests go on in the background when Upstox is slow; this round waits
+  // at most BUDGET.quotes and uses what has arrived (one price download at a time)
+  const slow: string[] = [];
+  if (!quotesJob) {
+    const keys = [...hot, ...cold];
+    quotesJob = (async () => {
+      try {
+        for (const part of chunk(keys, 500)) {
+          const data = await upstoxRequest<unknown>('/v3/market-quote/quotes', { tokenKind: 'market', query: { instrument_key: part.join(',') }, attempts: 1 });
+          for (const [k, s] of parseFullQuotes(data, Date.now())) snaps.set(k, s);
+        }
+        quotesError = null;
+      } catch (err) {
+        quotesError = err instanceof UpstoxError && err.kind === 'not_logged_in' ? 'Upstox prices need the Analytics Token or the daily login' : `prices: ${errorMessage(err)}`;
+      }
+    })().finally(() => {
+      quotesJob = null;
+    });
   }
+  if (!(await finishedWithin(quotesJob ?? Promise.resolve(), BUDGET.quotes))) slow.push('prices');
+  if (quotesError) error = quotesError;
 
   // 2. one view per stock: price, previous close, volume, VWAP, waiting buy / sell
   const view = new Map<string, Snap & { inst: Instrument }>();
@@ -258,26 +314,39 @@ async function scan(now: number, force: boolean): Promise<number> {
   const slot = Math.floor(t / 5) * 5;
   const riserDue = candidates.filter(([k]) => barsCache.get(k)?.slot !== slot).slice(0, 12);
   const fallerDue = fallers.filter(([k]) => barsCache.get(k)?.slot !== slot && !riserDue.some(([r]) => r === k)).slice(0, 8);
-  await pool([...riserDue, ...fallerDue], 4, async ([k]) => {
-    try {
-      const b = await fetchTodayBars(k, now);
-      if (b) barsCache.set(k, { slot, bars: b });
-    } catch {
-      /* keep the last candles; tried again next candle */
-    }
-  });
-  let synced = 0;
-  for (const [k] of [...candidates, ...fallers]) {
-    if ((await usualVolume(k, date)) !== null || synced >= 2) continue;
-    synced++;
-    try {
-      await syncCandles(k, cal, now);
-      avgVol.delete(k);
-      await usualVolume(k, date);
-    } catch {
-      /* no history yet: the volume check stays unknown (no BUY / SELL without it) */
-    }
+  // app v1.20.1: candles and the usual-volume history also go on in the background past their budget
+  const due = [...riserDue, ...fallerDue];
+  if (due.length && !barsJob) {
+    barsJob = pool(due, 4, async ([k]) => {
+      try {
+        const b = await fetchTodayBars(k, now);
+        if (b) barsCache.set(k, { slot, bars: b });
+      } catch {
+        /* keep the last candles; tried again next candle */
+      }
+    }).finally(() => {
+      barsJob = null;
+    });
   }
+  if (barsJob && !(await finishedWithin(barsJob, BUDGET.bars))) slow.push('candles');
+  const missing: string[] = [];
+  for (const [k] of [...candidates, ...fallers]) if ((await usualVolume(k, date)) === null) missing.push(k);
+  if (missing.length && !historyJob) {
+    historyJob = (async () => {
+      for (const k of missing.slice(0, 2)) {
+        try {
+          await syncCandles(k, cal, now);
+          avgVol.delete(k);
+          await usualVolume(k, date);
+        } catch {
+          /* no history yet: the volume check stays unknown (no BUY / SELL without it) */
+        }
+      }
+    })().finally(() => {
+      historyJob = null;
+    });
+  }
+  if (historyJob && !(await finishedWithin(historyJob, BUDGET.history))) slow.push('volume history');
 
   // 4. the market gates (no buys while the market falls, no shorts while it rises), then the calls
   const nifty = live[NIFTY_KEY];
@@ -385,17 +454,26 @@ async function scan(now: number, force: boolean): Promise<number> {
     if (trig && row.call !== 'NO TRADE' && bars1Cache.get(k)?.minute !== t) near.push([k, v]);
   }
   if (near.length) {
-    await pool(near.slice(0, 6), 3, async ([k, v]) => {
-      try {
-        const b1 = await fetchTodayBars(k, now, 1);
-        if (!b1) return;
-        bars1Cache.set(k, { minute: t, bars: b1 });
-        const row = safely(k, () => classifyShort(shortIn(k, v, completed1(b1, t))));
-        if (row) sellRows.set(k, row);
-      } catch {
-        /* no 1-minute candles: the confirmation waits */
-      }
-    });
+    const want = near.slice(0, 6);
+    if (!bars1Job) {
+      bars1Job = pool(want, 3, async ([k]) => {
+        try {
+          const b1 = await fetchTodayBars(k, now, 1);
+          if (b1) bars1Cache.set(k, { minute: t, bars: b1 });
+        } catch {
+          /* no 1-minute candles: the confirmation waits */
+        }
+      }).finally(() => {
+        bars1Job = null;
+      });
+    }
+    if (bars1Job && !(await finishedWithin(bars1Job, BUDGET.bars1))) slow.push('1-minute candles');
+    for (const [k, v] of want) {
+      const b1 = bars1Cache.get(k);
+      if (!b1 || t - b1.minute > 2) continue;
+      const row = safely(k, () => classifyShort(shortIn(k, v, completed1(b1.bars, t))));
+      if (row) sellRows.set(k, row);
+    }
   }
 
   // one call per stock (BUY and SELL are never the same stock)
@@ -425,7 +503,10 @@ async function scan(now: number, force: boolean): Promise<number> {
     gate: gate.weak ? gate.text : null,
     shortGate: rising.strong ? rising.text : null,
     ...(error || skipped ? { error: [error, skipped ? `${skipped} stock(s) could not be read this round` : null].filter(Boolean).join(' · ') } : {}),
+    ...(slow.length ? { slow } : {}),
   };
+  // a newer round has started meanwhile (this one was given up as stuck): it saves, not this one
+  if (id !== runId) return rows.length;
   await setSession('intraday', state);
   await alertBuys(sorted, now, settings.dayTrade.alerts);
   await alertSells(sorted, now, settings.dayTrade.alerts);
@@ -653,7 +734,7 @@ export function testIntradayIfDue(now = Date.now(), force = false): Promise<Intr
 }
 
 /** Tests only. */
-export function __resetIntraday(): void {
+export function __resetIntraday(budget?: Partial<typeof BUDGET>): void {
   universe = null;
   snaps.clear();
   barsCache.clear();
@@ -662,4 +743,8 @@ export function __resetIntraday(): void {
   round = 0;
   lastRun = 0;
   running = null;
+  runningSince = 0;
+  quotesJob = barsJob = historyJob = bars1Job = null;
+  quotesError = null;
+  Object.assign(BUDGET, { quotes: 12_000, bars: 6_000, history: 2_000, bars1: 4_000 }, budget ?? {});
 }

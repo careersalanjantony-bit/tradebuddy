@@ -16,7 +16,21 @@ public class MainActivity extends BridgeActivity {
         // milestone 4: is this build set up for Firebase push (google-services.json)?
         registerPlugin(PushSetupPlugin.class);
         super.onCreate(savedInstanceState);
+        sameTextSizeOnEveryPhone();
         preferHighRefreshRate();
+    }
+
+    /**
+     * App v1.20.1 (owner: "every device displays this same UI"): the app's text no longer grows or
+     * shrinks with Android's font-size setting, which differs from phone to phone and made the same
+     * screen wrap and look different. Pages are laid out at 100 %, like the reference phone.
+     */
+    private void sameTextSizeOnEveryPhone() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().getSettings().setTextZoom(100);
+        } catch (Throwable ignored) {
+            // keep the phone's default
+        }
     }
 
     @Override

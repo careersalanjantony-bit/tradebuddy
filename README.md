@@ -40,6 +40,25 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.20.1
+
+- **The Intraday list shows on every phone.** A stock whose 5-minute candles had not loaded yet (after
+  9:30) made the scanner stop the whole round (`classifyIntraday` read the opening-range high when there
+  was none), so on some phones the list stayed empty. That stock is now an honest WAIT, and one stock that
+  cannot be read is skipped instead of ending the round. Each round also saves the list within a few
+  seconds with what it has; prices, candles and usual-volume history that are still on their way from
+  Upstox keep loading in the background and are used by the next round ("Still arriving from Upstox: …").
+  The BUY and SELL rules are unchanged.
+- **The filters always show** (All / BUY / SELL / WAIT / NO TRADE, 0 when there are no stocks yet), all
+  five in one row on narrow phones.
+- **Home is back to the earlier look:** the Early Movers step timeline is removed.
+- **Same text size on every phone:** the app no longer follows the phone's font-size setting
+  (`setTextZoom(100)` in `MainActivity.java`), so every phone shows the same layout.
+- Opening a stock and coming back keeps the list where you were, also while alert cards are showing.
+- A SELL's follow-up alerts (target, stop-loss, invalidated) have their own ids
+  (`alert:intraday-sell-<event>-…`): with a BUY and a SELL on the same stock the same day, the second
+  stop-loss alert was never shown.
+
 ## New in 1.20.0
 
 - **Intraday SELL (sell first, buy back later)** next to BUY, from a separate engine

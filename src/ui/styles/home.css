@@ -173,6 +173,7 @@
 .mv-steps li.now { color: var(--fg); font-weight: 700; }
 .mv-steps li.now i { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 25%, transparent); }
 .mv-phase { margin: 6px 0 var(--space-2); font-weight: 600; }
+.movers-card > .row + .mv-money { margin-top: var(--space-3); }
 .mv-money { display: block; width: 100%; text-align: left; font-size: var(--fs-caption); padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius-tile); background: transparent; color: var(--fg); margin-bottom: var(--space-2); }
 .mv-tabs { margin: 4px 0 var(--space-3); }
 .mv-list { display: flex; flex-direction: column; gap: var(--space-2); }

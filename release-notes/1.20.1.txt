@@ -1,0 +1,7 @@
+Fixed: the Intraday list staying empty on some phones. One stock whose candles had not loaded yet stopped the whole scan; now that stock waits and the rest of the list shows.
+The list now appears within a few seconds even when Upstox is slow, and says what is still loading.
+The BUY, SELL, WAIT and NO TRADE filters always show on Home, also before the first stocks arrive, all in one row.
+Home is back to the earlier look: the Early Movers timeline is removed.
+The app looks the same on every phone: it no longer changes with the phone's font-size setting.
+Fixed: a SELL's stop-loss or target alert could be missed when the same stock had a BUY earlier that day.
+The BUY and SELL rules are unchanged. Not a guarantee - you place every order yourself.

@@ -173,8 +173,8 @@ unzip -l "$APK" | grep -i -E 'service.?account|adminsdk|private_key' || echo "no
 ```
 
 Install over the current app (same signing key, data kept): `adb install -r "$APK"`, or copy the file
-to the phone and open it. (This APK is built from the M4 branch, i.e. app 1.20.0 plus cloud alerts — the
-same version number as the published 1.20.0, so Android installs it over that one. If a newer app version
+to the phone and open it. (This APK is built from the M4 branch, i.e. app 1.20.1 plus cloud alerts — the
+same version number as the published 1.20.1, so Android installs it over that one. If a newer app version
 has been published since, merge `app-v1` into this branch first: Android refuses an older version.)
 
 ## 11. Pair the phone
