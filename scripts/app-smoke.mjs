@@ -607,9 +607,10 @@ await page.waitForSelector('[data-testid="early-movers"]', { timeout: 8000 }).ca
 const moversTop = await page.evaluate(() => [...document.querySelectorAll('[data-testid="home"] > section')].map((c) => c.getAttribute('data-testid'))[1]);
 check('the link opens Home with Early Movers right under the practice-money card', moversTop === 'early-movers', String(moversTop));
 const liveTab = await page.getAttribute('[data-movers-tab="live"]', 'class').catch(() => '');
-const phaseText = ((await page.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
-const stepsNow = await page.$$eval('[data-testid="movers-steps"] li', (els) => els.map((e) => `${e.className}:${e.textContent}`)).catch(() => []);
-check('market open: "Live now" is shown, the schedule strip marks 9:20 setups as the current step', (liveTab ?? '').includes('on') && /Market open/.test(phaseText) && stepsNow.some((x) => x.startsWith('now:') && x.includes('9:20')), `${phaseText} · ${stepsNow.join(' | ')}`);
+// app v1.20.1: the 9:00 → 9:20 timeline and its status line are gone; the Intraday filters are always there
+const timelineGone = !(await page.$('[data-testid="movers-steps"]')) && !(await page.$('[data-testid="movers-phase"]'));
+const homeChips = await page.$$eval('[data-testid="early-movers"] [data-testid="intraday-filters"] .chip', (els) => els.map((e) => e.textContent.trim().replace(/\s+\d+$/, ''))).catch(() => []);
+check('market open: the Intraday tab is shown, no timeline, and the five filters right under its header', (liveTab ?? '').includes('on') && timelineGone && homeChips.join(',') === 'All,BUY,SELL,WAIT,NO TRADE', `${timelineGone ? 'no timeline' : 'timeline still there'} · ${homeChips.join(',')}`);
 const moneyLine = ((await page.textContent('[data-testid="movers-money"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 await page.click('[data-testid="movers-money"]');
 const moneyText = ((await page.textContent('[data-testid="early-money"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
@@ -828,7 +829,7 @@ await page.evaluate(() =>
     'click',
     () => {
       const r = document.querySelector('[data-smoke-open="1"]');
-      window.__atLeave = { y: window.scrollY, rowTop: r ? Math.round(r.getBoundingClientRect().top) : null };
+      window.__atLeave = { y: window.scrollY, rowTop: r ? Math.round(r.getBoundingClientRect().top) : null, cards: document.querySelectorAll('[data-testid="alert-banner"]').length, space: getComputedStyle(document.documentElement).getPropertyValue('--alert-space').trim() };
     },
     { once: true, capture: true },
   ),
@@ -849,8 +850,11 @@ const restored = await until(
     }, atOpen),
   6000,
 );
-const backY = await page.evaluate(() => `${window.scrollY} (page ${document.documentElement.scrollHeight}, hash ${location.hash}, filter ${localStorage.getItem('tb:stocks.filter')})`);
-check('opening a stock and coming back keeps the list where you were (scroll position)', target > 100 && onStock && restored, `scrolled to ${target} (${before}); opened ${atOpen.sym.trim()} with the list at ${atOpen.y}, row at ${atOpen.rowTop}; back at ${backY}`);
+const backY = await page.evaluate((sym) => {
+  const r = [...document.querySelectorAll('[data-testid="auto-list"] > *')].find((el) => (el.getAttribute('data-symbol') ?? el.textContent?.slice(0, 12) ?? '') === sym);
+  return `${window.scrollY} (page ${document.documentElement.scrollHeight}, row at ${r ? Math.round(r.getBoundingClientRect().top) : 'none'}, alert cards ${document.querySelectorAll('[data-testid="alert-banner"]').length}, space ${getComputedStyle(document.documentElement).getPropertyValue('--alert-space').trim() || '0'}, hash ${location.hash}, filter ${localStorage.getItem('tb:stocks.filter')})`;
+}, atOpen.sym);
+check('opening a stock and coming back keeps the list where you were (scroll position)', target > 100 && onStock && restored, `scrolled to ${target} (${before}); opened ${atOpen.sym.trim()} with the list at ${atOpen.y}, row at ${atOpen.rowTop} (alert cards ${atOpen.cards ?? '?'}, space ${atOpen.space || '0'}); back at ${backY}`);
 
 console.log('── Me: account, lock');
 await page.click('.topbar [data-nav="account"]');
@@ -956,8 +960,8 @@ console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second ph
   await until(async () => (await p2.$$('[data-testid="pre-item"]')).length >= 3, 8000);
   const preTab = (await p2.getAttribute('[data-movers-tab="pre"]', 'class').catch(() => '')) ?? '';
   const pill = ((await p2.textContent('[data-testid="movers-pill"]').catch(() => '')) ?? '').trim();
-  const phaseText2 = ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
-  check('Home before 9:15: the Pre-open tab is shown, marked PRE-OPEN, "Ranked — orders still coming in"', preTab.includes('on') && pill === 'PRE-OPEN' && phaseText2.startsWith('Ranked'), `${pill} · ${phaseText2}`);
+  const preStatus = ((await p2.textContent('[data-testid="pre-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check('Home before 9:15: the Pre-open tab is shown, marked PRE-OPEN, its list says it changes until 9:13', preTab.includes('on') && pill === 'PRE-OPEN' && /changes until 9:13/.test(preStatus), `${pill} · ${preStatus.slice(0, 80)}`);
   const watchText = ((await p2.textContent('[data-testid="pre-watch"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
   check('the list says plainly: a watch list, not buy signals — do not buy at 9:15, buy only a stock that turns ⚡ Holding gap', /A watch list, not buy signals/.test(watchText) && /Do not buy at 9:15/.test(watchText) && /⚡ Holding gap/.test(watchText), watchText.slice(0, 140));
   const firstLine = ((await p2.textContent('[data-testid="pre-item"] .mv-row').catch(() => '')) ?? '').replace(/\s+/g, ' ');
@@ -984,11 +988,17 @@ console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second ph
   const rec2 = await p2.evaluate(async () => (await chrome.storage.local.get('preopenRecord')).preopenRecord ?? []);
   check('9:13: the final list is fixed, one alert ("ready for 9:15") and the day is written to the record', fixed && Object.keys(notes2).includes('alert:preopen-final-2026-11-17') && rec2.length === 1 && rec2[0].rows.length === fin?.final?.rows.length, fin?.final ? fin.final.rows.map((r) => r.symbol).join(', ') : 'not fixed');
   await until(async () => /Final list, fixed at 09:13/.test((await p2.textContent('[data-testid="pre-status"]').catch(() => '')) ?? ''), 6000);
-  await until(async () => ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim().startsWith('Final top 10'), 6000);
   const finText = ((await p2.textContent('[data-testid="pre-status"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
-  const finPhase = ((await p2.textContent('[data-testid="movers-phase"]').catch(() => '')) ?? '').trim();
-  check('Home shows "Final top 10 for the open" and "Final list, fixed at 09:13"', /Final list, fixed at 09:13/.test(finText) && finPhase.startsWith('Final top 10'), `${finPhase} · ${finText.slice(0, 100)}`);
+  check('Home shows "Final list, fixed at 09:13"', /Final list, fixed at 09:13/.test(finText), finText.slice(0, 100));
   await p2.screenshot({ animations: 'disabled', path: join(out, 'app-preopen-final.png') });
+  // app v1.20.1: no Intraday stocks yet — the five filters are still shown, with 0
+  await p2.click('[data-movers-tab="live"]');
+  await p2.waitForSelector('[data-testid="intraday-filters"]', { timeout: 4000 }).catch(() => {});
+  const emptyChips = await p2.$$eval('[data-testid="intraday-filters"] .chip', (els) => els.map((e) => e.textContent.trim())).catch(() => []);
+  check('Intraday with no stocks yet: the filters are still there (All 0, BUY 0, SELL 0, WAIT 0, NO TRADE 0)', emptyChips.join(' | ') === 'All 0 | BUY 0 | SELL 0 | WAIT 0 | NO TRADE 0', emptyChips.join(' | '));
+  const oneRow = await p2.$eval('[data-testid="intraday-filters"]', (el) => new Set([...el.children].map((c) => Math.round(c.getBoundingClientRect().top))).size === 1 && el.scrollWidth <= el.clientWidth + 1).catch(() => false);
+  check('…all five in one row on a phone screen, nothing cut off', oneRow);
+  await p2.screenshot({ animations: 'disabled', path: join(out, 'app-intraday-empty.png') });
   const overflow2 = await p2.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   check('no sideways scrolling on the pre-open screen', !overflow2);
   mock.preopen = false;
@@ -1052,6 +1062,8 @@ console.log('── Intraday BUY / SELL, alert cards and the order-window price 
   await p3.waitForSelector('[data-testid="intraday-filters"]', { timeout: 8000 }).catch(() => {});
   const chips = await p3.$$eval('[data-testid="intraday-filters"] .chip', (els) => els.map((e) => e.textContent.trim())).catch(() => []);
   check('Intraday: five filters with their live counts — All, BUY, SELL, WAIT, NO TRADE (they add up)', chips.join(' | ') === 'All 4 | BUY 1 | SELL 1 | WAIT 1 | NO TRADE 1', chips.join(' | '));
+  const fits = await p3.$eval('[data-testid="intraday-filters"]', (el) => el.scrollWidth <= el.clientWidth + 1).catch(() => false);
+  check('…all five fit in one row (nothing cut off)', fits);
   await p3.click('[data-intra-filter="SELL"]');
   const sellRows = await p3.$$eval('[data-testid="intraday-item"]', (els) => els.map((e) => `${e.getAttribute('data-symbol')}:${e.getAttribute('data-call')}`)).catch(() => []);
   check('the SELL filter shows only the SELL stock', sellRows.join(',') === 'SBIN:SELL', sellRows.join(','));

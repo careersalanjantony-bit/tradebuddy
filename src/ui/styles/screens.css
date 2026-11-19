@@ -352,7 +352,11 @@
 
 /* ---------- app v1.19: Intraday scanner (Early Movers → Intraday tab) */
 .intra-head { margin: 4px 0 6px; }
-.intra-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+/* app v1.20.1: one row on every phone (scrolls sideways on a very narrow screen instead of wrapping) */
+.intra-filters { display: flex; flex-wrap: nowrap; gap: 5px; margin: 4px 0 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 1px; }
+.intra-filters::-webkit-scrollbar { display: none; }
+/* five chips fit one row on a normal phone (≈ 360–412 px wide) */
+.intra-filters .chip { flex: none; padding: 4px 8px; }
 .intra-filters .chip { cursor: pointer; border: 1px solid var(--border); background: var(--surface); }
 .intra-filters .chip.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .chip.intra-call { font-weight: 700; letter-spacing: 0.02em; }

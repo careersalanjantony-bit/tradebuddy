@@ -45,7 +45,9 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
       <p class="small muted intra-head" data-testid="intraday-head">
         {s
           ? `All ${s.universe.toLocaleString('en-IN')} NSE stocks (EQ series) checked every 15 s · ${s.priced.toLocaleString('en-IN')} priced · updated ${formatTimeIST(s.at)}${fresh ? '' : ' (waiting for the next round)'}`
-          : 'Every NSE stock (EQ series — never BE / T2T) is checked every 15 seconds from 9:15 to 3:15: rising ones for a BUY, falling Nifty 500 ones for a SELL (sell first).'}
+          : open
+            ? 'All NSE stocks (EQ series) checked every 15 s · the first round is on its way…'
+            : 'Every NSE stock (EQ series — never BE / T2T) is checked every 15 seconds from 9:15 to 3:15: rising ones for a BUY, falling Nifty 500 ones for a SELL (sell first).'}
       </p>
       {s?.gate && (
         <div class="banner warn small" data-testid="intraday-gate">
@@ -58,18 +60,28 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
         </div>
       )}
       {s?.error && <p class="tiny muted">{s.error}</p>}
-      {s && (
-        <div class="intra-filters" role="tablist" data-testid="intraday-filters">
-          {FILTERS.map((f) => (
-            <button type="button" role="tab" aria-selected={filter === f} class={`chip ${filter === f ? 'on' : ''}`} data-intra-filter={f} data-count={counts[f]} onClick={() => setFilter(f)}>
-              {f === 'all' ? `All ${counts.all}` : `${f} ${counts[f]}`}
-            </button>
-          ))}
-        </div>
-      )}
+      {s?.slow?.length ? (
+        <p class="tiny muted" data-testid="intraday-slow">
+          Still arriving from Upstox: {s.slow.join(', ')} — the list fills in over the next rounds.
+        </p>
+      ) : null}
+      {/* app v1.20.1: the filters are always there, also before the first stock appears (counts 0) */}
+      <div class="intra-filters" role="tablist" data-testid="intraday-filters">
+        {FILTERS.map((f) => (
+          <button type="button" role="tab" aria-selected={filter === f} class={`chip ${filter === f ? 'on' : ''}`} data-intra-filter={f} data-count={counts[f]} onClick={() => setFilter(f)}>
+            {f === 'all' ? `All ${counts.all}` : `${f} ${counts[f]}`}
+          </button>
+        ))}
+      </div>
       {rows.length === 0 ? (
         <p class="small muted" data-testid="intraday-empty">
-          {open ? (s?.rows.length ? 'None in this group right now.' : `No stock is up ${INTRADAY.watchPct}% or more with the signs yet — the list fills itself every 15 seconds.`) : 'Live from 9:15 to 3:15 on market days.'}
+          {open
+            ? s?.rows.length
+              ? 'None in this group right now.'
+              : s
+                ? `No stock is up or down ${INTRADAY.watchPct}% or more with the signs yet — the list fills itself every 15 seconds.`
+                : 'Reading the market — the first stocks appear within a minute.'
+            : 'Live from 9:15 to 3:15 on market days.'}
         </p>
       ) : (
         <div class="mv-list" data-testid="intraday-list">

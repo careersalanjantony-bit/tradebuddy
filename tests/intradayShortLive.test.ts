@@ -146,8 +146,9 @@ describe('Intraday scanner with BUY and SELL, live', () => {
     fallPrice = 485.2; // target 2 (485.30)
     await intradayTick(NOW + 60_000, true);
     await intradayTick(NOW + 75_000, true);
-    const follow = created().filter((c) => /^alert:intraday-(t1|tgt|stop|inv)-/.test(c.id));
-    expect(follow.map((c) => c.id.split('-')[1])).toEqual(['t1', 'tgt']);
+    // a SELL's follow-ups have their own ids (alert:intraday-sell-<event>-…), apart from a BUY's on the same stock
+    const follow = created().filter((c) => /^alert:intraday-sell-(t1|tgt|stop|inv)-/.test(c.id));
+    expect(follow.map((c) => c.id.split('-')[2])).toEqual(['t1', 'tgt']);
     expect(follow[0]!.title).toMatch(/SELL target 1 reached/);
     expect(follow[1]!.title).toMatch(/SELL target 2 reached/);
     const alerted = (await chrome.storage.session.get('intradayAlerted')).intradayAlerted as { track: Record<string, { state: string }> };
