@@ -49,6 +49,46 @@ const MIGRATIONS: string[] = [
      started_at INTEGER NOT NULL,
      heartbeat_at INTEGER NOT NULL
    );`,
+  // 3 (milestone 4): paired phones, one-time pairing codes, and the push outbox
+  `CREATE TABLE devices (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     platform TEXT NOT NULL,
+     app_version TEXT,
+     secret_hash TEXT NOT NULL,
+     fcm_token TEXT,
+     fcm_token_at INTEGER,
+     token_state TEXT NOT NULL DEFAULT 'none',
+     categories TEXT NOT NULL,
+     quiet_json TEXT,
+     channel_id TEXT,
+     created_at INTEGER NOT NULL,
+     last_seen_at INTEGER,
+     last_push_at INTEGER,
+     revoked_at INTEGER
+   );
+   CREATE TABLE pairing_codes (
+     code_hash TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL,
+     used_at INTEGER,
+     device_id TEXT
+   );
+   CREATE TABLE push_outbox (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     alert_id TEXT NOT NULL,
+     device_id TEXT NOT NULL,
+     payload TEXT NOT NULL,
+     status TEXT NOT NULL,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     next_at INTEGER NOT NULL,
+     last_error TEXT,
+     created_at INTEGER NOT NULL,
+     sent_at INTEGER,
+     message_id TEXT,
+     UNIQUE (alert_id, device_id)
+   );
+   CREATE INDEX push_outbox_due ON push_outbox (status, next_at);`,
 ];
 
 export const DB_SCHEMA_VERSION = MIGRATIONS.length;

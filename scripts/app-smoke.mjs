@@ -906,6 +906,16 @@ const toneFile = await page.evaluate(async () => (await fetch('sounds/tone_coins
 check('the tone files are part of the app', toneFile);
 await page.$eval('[data-testid="tone-settings"]', (el) => el.scrollIntoView({ block: 'start' }));
 await revealAll(); await page.screenshot({ animations: 'disabled', path: join(out, 'app-tones.png') });
+// milestone 4: Cloud alerts is optional; in a browser (not the Android app) it only explains itself
+const cloudText = ((await page.textContent('[data-testid="cloud-alerts"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const cloudState = await page.evaluate(async () => ({ cloud: (await chrome.storage.local.get('cloud')).cloud ?? null, cred: !!(await chrome.storage.local.get('secrets')).secrets?.cloudDeviceCredential }));
+check('Settings: "Cloud alerts (optional)" card — not paired, says best effort, no pairing outside the Android app', /Cloud alerts \(optional\)/.test(cloudText) && /best effort/.test(cloudText) && /Android app only/.test(cloudText) && !(await page.$('[data-testid="cloud-pair"]')) && cloudState.cloud === null && !cloudState.cred, cloudText.slice(0, 160));
+// a phone updated from an older version has no "cloud" entry at all: the card must still be there
+await page.evaluate(async () => chrome.storage.local.remove('cloud'));
+await page.goto(`${base}#/today`);
+await page.goto(`${base}#/settings`);
+const cloudAfterUpdate = await page.waitForSelector('[data-testid="cloud-alerts"]', { timeout: 10000 }).then(() => true, () => false);
+check('…also on a phone updated from an older version (no "cloud" entry yet)', cloudAfterUpdate);
 
 console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second phone');
 {

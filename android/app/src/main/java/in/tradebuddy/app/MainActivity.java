@@ -13,6 +13,8 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // app's own plugin: in-app updates from TradeBuddy's GitHub updates branch
         registerPlugin(AppUpdaterPlugin.class);
+        // milestone 4: is this build set up for Firebase push (google-services.json)?
+        registerPlugin(PushSetupPlugin.class);
         super.onCreate(savedInstanceState);
         preferHighRefreshRate();
     }

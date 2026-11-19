@@ -28,6 +28,10 @@ async function boot(): Promise<void> {
     catchUp();
   });
   catchUp();
+  // milestone 4: cloud alerts, only if this phone was paired with a server (otherwise nothing happens)
+  void import('./platform/push')
+    .then((m) => m.initCloudPush())
+    .catch(() => undefined);
   setInterval(() => void syncBackgroundChecker().catch(() => undefined), 2 * 60_000);
   let walletTimer: ReturnType<typeof setTimeout> | null = null;
   chrome.storage.onChanged.addListener((changes, area) => {

@@ -33,7 +33,7 @@ describe('milestone 1: a server with health checks that keeps its data', () => {
     expect((await getJson(port, '/v1/health', 'wrong-token')).status).toBe(401);
     const h = await getJson(port, '/v1/health');
     expect(h.status).toBe(200);
-    expect(h.body).toMatchObject({ status: 'ok', readOnly: true, database: { ok: true, schemaVersion: 2 }, upstox: { analyticsToken: { configured: false, status: 'missing' } }, feed: null });
+    expect(h.body).toMatchObject({ status: 'ok', readOnly: true, database: { ok: true, schemaVersion: 3 }, upstox: { analyticsToken: { configured: false, status: 'missing' } }, feed: null });
 
     expect((await getJson(port, '/nope')).status).toBe(404);
     const wrongMethod = await fetch(`http://127.0.0.1:${port}/healthz`, { method: 'POST' });

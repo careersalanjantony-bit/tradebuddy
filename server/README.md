@@ -9,8 +9,10 @@ Status: milestone 1 (server, health checks, storage, logging, graceful stop, sys
 and holidays, `/v1/market/status`, `/v1/quotes`) and milestone 3 (the app's own jobs on the server:
 history downloads, the 30-second price poll and every check after it, day-trade signals, breakouts,
 Rising now, Falling now / short selling, Early Movers, pre-open, learning, protective stops and targets,
-alerts — on SQLite, with a persistent IST schedule and catch-up) are done. Push notifications (FCM) and
-the Android server mode are next — see [ARCHITECTURE.md](ARCHITECTURE.md).
+alerts — on SQLite, with a persistent IST schedule and catch-up) and milestone 4 (cloud alerts: phone
+pairing and push notifications through Firebase Cloud Messaging HTTP v1 — set-up guide:
+[docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md)) are done. The Android server mode is next — see
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Run it on your computer
 
@@ -34,6 +36,7 @@ Checks: `npm run server:typecheck` and `npm run server:test` (also part of `npm 
 | `TB_LIVE_FEED` | `on` | Live feed during pre-open and market hours. |
 | `TB_HISTORICAL_REQUESTS_PER_MINUTE` | `30` | Shared requests per minute for daily and 5-minute candles and corporate actions. |
 | `TB_JOBS` | `on` | The app's own jobs (scans, signals, alerts, learning). `off` = milestone 2 only. |
+| `FIREBASE_SERVICE_ACCOUNT_FILE` | — | Path to the Firebase service-account key (JSON), e.g. `/etc/tradebuddy/firebase-service-account.json`. Empty = push off. `GOOGLE_APPLICATION_CREDENTIALS` also works. |
 | `TB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `TB_DATA_DIR` | `STATE_DIRECTORY` or `./server-data` | SQLite database folder. |
 | `TB_SHUTDOWN_TIMEOUT_MS` | `20000` | Longest graceful stop. |
@@ -92,6 +95,21 @@ service, restore `/var/lib/tradebuddy.bak-m2`, check out the previous commit, bu
 server refuses a schema 2 database, so the restore is needed). Only one server may use a database:
 a second start on the same data folder is refused.
 
+### Updating a milestone 3 server to milestone 4 (cloud alerts)
+
+```bash
+sudo systemctl stop tradebuddy-server
+sudo cp -a /var/lib/tradebuddy /var/lib/tradebuddy.bak-m3      # a NEW backup; keep the older ones as they are
+cd /opt/tradebuddy && sudo git fetch && sudo git checkout server-backend && sudo git pull
+sudo npm ci && sudo npm run server:typecheck && sudo npm run server:test && sudo npm run server:build
+sudo systemctl start tradebuddy-server && journalctl -u tradebuddy-server -f
+```
+
+The database moves to schema 3 by itself (three new tables: `devices`, `pairing_codes`, `push_outbox`;
+nothing existing changes). Without a Firebase key everything runs as before; push is simply off. Then
+follow [docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md) (key, HTTPS, pairing). To go back: stop,
+restore `/var/lib/tradebuddy.bak-m3`, check out the previous commit, build, start.
+
 What systemd does: starts the server at boot, restarts it 5 s after a crash (not after exit code 78,
 which means a bad setting), sends SIGTERM on stop and waits 30 s. On SIGTERM the server stops taking
 requests, finishes running tasks, closes the feed, saves everything and exits.
@@ -121,6 +139,42 @@ Answers are JSON. 20 wrong tokens from one address within 10 minutes → `429` f
 
 The `/v1` signal answers are the app's own stored data structures, unchanged (`at` = when the server
 answered). `/v1/health` also lists the scheduled jobs (`jobs`) and every repeating task.
+
+### Cloud alerts (milestone 4)
+
+Admin calls (with `TB_API_TOKEN` — use them on the server; the token never goes into the app):
+
+| Call | Answer |
+| --- | --- |
+| `POST /v1/devices/pairing-code` | A one-time code for pairing a phone (`XXXXX-XXXXX`, 10 minutes, works once; only its hash is stored) |
+| `GET /v1/devices` | The paired phones: name, app version, token state (`none` / `active` / `invalid`), the token's last 6 characters, choices, last push, push counts — never a token or credential |
+| `DELETE /v1/devices/{id}` | Revoke a phone at once (lost phone) |
+| `POST /v1/devices/{id}/test-push` | A harmless test notification to one phone |
+| `GET /v1/push` | Is Firebase set up (`configured`, `projectId`), outbox counts, last send and last error |
+
+The phone's own calls:
+
+| Call | Auth | Answer |
+| --- | --- | --- |
+| `POST /v1/devices/pair` | the pairing code only | `{deviceId, credential}`: the phone's own credential `tbd.<id>.<secret>`, shown once; the server keeps only its SHA-256. 5 wrong codes per address per 15 minutes (30 per hour overall) → `429` |
+| `GET /v1/device` | `Bearer tbd.…` | This phone's status and push counts |
+| `PUT /v1/device/fcm-token` | `Bearer tbd.…` | `{token}` — register or refresh the FCM token (checked: 32–4096 characters, FCM's alphabet) |
+| `PUT /v1/device/preferences` | `Bearer tbd.…` | `{categories, quietHours, channelId}` — which alert kinds, quiet hours (IST), Android channel |
+| `POST /v1/device/test-push` | `Bearer tbd.…` | A test notification to itself (`503` if push is off, `409` before a token) |
+| `DELETE /v1/device` | `Bearer tbd.…` | Unpair (logout): the credential stops working at once |
+
+Request bodies are JSON up to 16 KB (`413` above, `400` for broken JSON). Behind Caddy on the same
+machine, the limits use the address Caddy puts last in `X-Forwarded-For`; from anywhere else that header
+is ignored.
+
+How a push goes out: every new alert (the app's own `notify()`, which keeps each alert id once per 24
+hours) is written to the `push_outbox` table — one row per phone that wants that kind of alert, never twice
+for the same alert and phone — and the scan continues at once. A task every 2 s sends due rows through
+FCM HTTP v1 (an OAuth token from the service-account key, cached for its hour). Temporary errors (429,
+5xx, network) are retried after 5 s, 10 s, 20 s … up to 30 min, at most 8 tries, honouring `Retry-After`;
+an `UNREGISTERED` / invalid token marks the phone's token invalid (no more pushes until the app sends a
+new one); a message Google refuses is given up and recorded. The outbox survives restarts; finished rows are
+pruned after 7 days (pending ones stay). Delivery is best effort — FCM and the phone decide in the end.
 
 ## How it works
 

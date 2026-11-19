@@ -28,6 +28,8 @@ export interface ServerConfig {
   backgroundTasks: boolean;
   /** milestone 3: run the app's own jobs (scans, signals, alerts, learning) on the server */
   jobs: boolean;
+  /** milestone 4: the Firebase service-account key file (outside the repository); null = no push */
+  firebaseServiceAccountFile: string | null;
   historicalRequestsPerMinute: number;
   shutdownTimeoutMs: number;
   version: string;
@@ -97,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     logLevel,
     apiToken,
     upstoxAnalyticsToken: read(env, 'UPSTOX_ANALYTICS_TOKEN'),
+    firebaseServiceAccountFile: read(env, 'FIREBASE_SERVICE_ACCOUNT_FILE') ?? read(env, 'GOOGLE_APPLICATION_CREDENTIALS'),
     liveFeed,
     backgroundTasks,
     jobs,
