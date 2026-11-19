@@ -36,15 +36,13 @@ function firstTimeWithNewLook(): boolean {
 }
 
 /** Applies the stored theme and follows changes made in Settings (any open page). */
-export function initTheme(): void {
-  void getSettings().then(async (s) => {
-    let pref = s.ui.theme;
-    if (pref === 'dark' && firstTimeWithNewLook()) {
-      pref = 'light';
-      await updateSettings({ ui: { theme: 'light' } }).catch(() => undefined);
-    }
-    applyTheme(pref);
-  });
+export async function initTheme(): Promise<void> {
+  let pref = (await getSettings()).ui.theme;
+  if (pref === 'dark' && firstTimeWithNewLook()) {
+    pref = 'light';
+    await updateSettings({ ui: { theme: 'light' } }).catch(() => undefined);
+  }
+  applyTheme(pref);
   onLocalChanged('settings', (s) => s?.ui?.theme && applyTheme(s.ui.theme));
   // "follow the phone": the icons switch when the phone's own light / dark setting changes
   if (typeof matchMedia !== 'undefined') matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => void syncSystemBars());

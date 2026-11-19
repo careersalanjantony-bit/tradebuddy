@@ -6,7 +6,7 @@ import { learnIfDue } from '../../../src/background/mlJobs';
 import { refreshNews, restoreNews } from '../../../src/background/newsJobs';
 import { preopenTick } from '../../../src/background/preopenJobs';
 import { trainRisingIfDue } from '../../../src/background/risingJobs';
-import { catchUp, isJob, POLL_ALARM, runJob, runPoll, scheduleAll } from '../../../src/background/scheduler';
+import { catchUp, isJob, POLL_ALARM, refreshIntradayHistory, retryDailyHistory, runJob, runPoll, scheduleAll } from '../../../src/background/scheduler';
 import { trainShortModelIfDue } from '../../../src/background/shortJobs';
 import { createLogger } from '../../../src/lib/log';
 import { getSession, setSession } from '../../../src/storage/session';
@@ -22,7 +22,7 @@ import { Ticker } from '../util/ticker';
  *     holidays, instruments, the 09:20 re-check, the end-of-day history + learning, and the 30-second
  *     price poll with every check that follows it (alerts, practice money, auto-trader, day-trade
  *     signals, breakouts, Rising now, Falling now, news, flow, breadth — dataJobs.afterQuotes);
- *  3. catch-up of anything missed while the server was off (scheduler.catchUp);
+ *  3. catch-up and restarts of incomplete historical downloads (scheduler.catchUp);
  *  4. the timers the phone runs: Early Movers every minute, pre-open every 10 s, news every 30 s, the
  *     learning and past tests when due — plus the fast price check the open screen drives on a phone
  *     (dataJobs.fastPoll: every few seconds in market hours, nothing while the live feed delivers).
@@ -59,6 +59,8 @@ export function startIntelligence(o: IntelligenceOptions): Intelligence {
   o.scheduler.api.onAlarm.addListener(onAlarm);
 
   const tasks: Ticker[] = [
+    new Ticker('daily-history', 60_000, () => retryDailyHistory(now()), 60_000),
+    new Ticker('intraday-history', 60_000, () => refreshIntradayHistory(now()), 60_000),
     // the phone's open screen asks for prices every ~2 s; fastPoll paces itself (and rests while the feed delivers)
     new Ticker('fast-prices', 3_000, async () => (await fastPoll(now())).skipped ?? 'polled', 5_000),
     new Ticker('early-movers', 60_000, async () => void earlyTick(now()), 20_000),

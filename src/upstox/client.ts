@@ -1,10 +1,12 @@
 import { createLogger } from '../lib/log';
 import { istDate } from '../lib/time';
 import { getAuth, getSecrets } from '../storage/local';
+import { getDb } from '../storage/db';
 import { getSession, setSession, type ApiStatus } from '../storage/session';
 import { errorFromResponse, UpstoxError } from './errors';
 import { UPSTOX_API } from './oauth';
-import { RateLimiter, UPSTOX_LIMITS } from './rateLimiter';
+import { DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE, RateLimiter, UPSTOX_LIMITS } from './rateLimiter';
+import { HistoricalRequestQueue } from './historicalQueue';
 import { markSessionExpired, setAnalyticsState } from './session';
 import { hasLiveSession, isSessionExpiredByTime } from './token';
 import { appFetch } from '../platform/http';
@@ -24,6 +26,7 @@ const log = createLogger('upstox');
 
 export type TokenKind = 'market' | 'account' | 'none';
 type UsedToken = 'analytics' | 'access' | 'none' | 'explicit-analytics';
+type ResolvedToken = { token: string | null; used: UsedToken };
 
 export interface UpstoxRequest {
   method?: 'GET' | 'POST' | 'DELETE';
@@ -45,31 +48,36 @@ export interface UpstoxRequest {
 // ---------- rate limiter (history kept in chrome.storage.session to survive SW restarts) ----------
 
 /**
- * Two limiters (v0.11.0): Upstox's limits are per API, so the price polls (market-quote APIs) do not
- * compete with history downloads. Each group still stays under one API's limits.
+ * Upstox's standard limits are per API per user. Quotes and current-session candles have their own
+ * budgets so live traffic can proceed even when bulk history has a backlog or is cooling down.
  */
 type LimiterGroup = 'main' | 'quotes' | 'today' | 'account';
 const limiters: Record<LimiterGroup, RateLimiter | null> = { main: null, quotes: null, today: null, account: null };
 const LIMITER_KEY = { main: 'rateLimiter', quotes: 'rateLimiterQuotes', today: 'rateLimiterToday', account: 'rateLimiterAccount' } as const;
+const limiterLoads: Partial<Record<LimiterGroup, Promise<RateLimiter>>> = {};
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** market-quote APIs → 'quotes'; the Intraday Candle API (today's bars at 09:30) → 'today'; everything else → 'main'. */
 const groupOf = (path: string): LimiterGroup =>
   path.includes('/market-quote/') ? 'quotes' : path.includes('/historical-candle/intraday/') ? 'today' : path.includes('/portfolio/') || path.includes('/feed/') || path.startsWith('/v2/news') ? 'account' : 'main';
 
-async function getLimiter(group: LimiterGroup = 'main'): Promise<RateLimiter> {
-  limiters[group] ??= new RateLimiter(UPSTOX_LIMITS, (await getSession(LIMITER_KEY[group])) ?? []);
-  return limiters[group]!;
+function getLimiter(group: LimiterGroup = 'main'): Promise<RateLimiter> {
+  return limiterLoads[group] ??= getSession(LIMITER_KEY[group]).then((stamps) => {
+    return limiters[group] = new RateLimiter(UPSTOX_LIMITS, stamps ?? []);
+  }).catch((err: unknown) => {
+    delete limiterLoads[group];
+    throw err;
+  });
 }
 
 function persistLimiter(): void {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    if (limiters.main) void setSession('rateLimiter', limiters.main.snapshot());
-    if (limiters.quotes) void setSession('rateLimiterQuotes', limiters.quotes.snapshot());
-    if (limiters.today) void setSession('rateLimiterToday', limiters.today.snapshot());
-    if (limiters.account) void setSession('rateLimiterAccount', limiters.account.snapshot());
+    for (const group of Object.keys(LIMITER_KEY) as LimiterGroup[]) {
+      const limiter = limiters[group];
+      if (limiter) void setSession(LIMITER_KEY[group], limiter.snapshot()).catch(() => undefined);
+    }
   }, 1000);
 }
 
@@ -94,7 +102,43 @@ async function acquireSlot(group: LimiterGroup): Promise<void> {
 export async function apiUsage(now = Date.now()) {
   const prices = (await getLimiter('quotes')).usage(now);
   const last = prices[prices.length - 1]!;
-  return [...(await getLimiter('main')).usage(now), { label: 'price requests per 30 min', used: last.used, max: last.max }];
+  const history = await historicalRequestDiagnostics(now);
+  return [...history.usage, { label: 'price requests per 30 min', used: last.used, max: last.max }];
+}
+
+// Corporate actions are a bulk history dependency. Current-session candles stay on the live path.
+const isHistorical = (path: string): boolean =>
+  /^\/v[23]\/historical-candle\/(?!intraday\/)/.test(path) ||
+  /^\/v2\/fundamentals\/[^/]+\/corporate-actions$/.test(path);
+const HISTORY_REQUEST_STATE = 'request-budget';
+
+function makeHistoricalRequests(requestsPerMinute: number): HistoricalRequestQueue {
+  return new HistoricalRequestQueue(requestsPerMinute, {
+    load: async () => (await (await getDb()).get('historyState', HISTORY_REQUEST_STATE))?.requests,
+    async save(requests) {
+      const tx = (await getDb()).transaction('historyState', 'readwrite');
+      await Promise.all([tx.store.put({ id: HISTORY_REQUEST_STATE, requests }), tx.done]);
+    },
+  }, (until, err) => {
+    log.warn(`Upstox historical queue paused for ${Math.max(0, until - Date.now())} ms after a rate-limit response`,
+      { status: err.httpStatus, retryAfterMs: err.retryAfterMs });
+    void changeApiStatus((prev) => ({ ...prev, rateLimitedUntil: Math.max(prev.rateLimitedUntil ?? 0, until) }));
+  });
+}
+
+let historicalRequests = makeHistoricalRequests(DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE);
+
+/** Server startup sets the rate before jobs begin. Android uses the conservative default. */
+export function configureHistoricalRequests(requestsPerMinute: number): void {
+  historicalRequests = makeHistoricalRequests(requestsPerMinute);
+}
+
+export function historicalRequestDiagnostics(now = Date.now()) {
+  return historicalRequests.diagnostics(now);
+}
+
+export function stopHistoricalRequests(): Promise<void> {
+  return historicalRequests.stop();
 }
 
 // ---------- status ----------
@@ -120,7 +164,7 @@ function countRequest(): Promise<void> {
 
 // ---------- token selection ----------
 
-async function resolveToken(req: UpstoxRequest): Promise<{ token: string | null; used: UsedToken }> {
+async function resolveToken(req: UpstoxRequest): Promise<ResolvedToken> {
   if (req.tokenKind === 'none') return { token: null, used: 'none' };
   if (req.analyticsTokenOverride) return { token: req.analyticsTokenOverride, used: 'explicit-analytics' };
 
@@ -142,9 +186,18 @@ async function resolveToken(req: UpstoxRequest): Promise<{ token: string | null;
 export async function upstoxRequest<T = unknown>(path: string, req: UpstoxRequest): Promise<T> {
   const attempts = req.attempts ?? 3;
   let lastErr: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
+  if (isHistorical(path)) {
     try {
-      return await requestOnce<T>(path, req);
+      return await historicalRequests.enqueue(async () => {
+        const token = await resolveToken(req);
+        return (signal) => requestOnce<T>(path, req, token, signal);
+      }, attempts);
+    } catch (err) {
+      lastErr = err;
+    }
+  } else for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await requestOnce<T>(path, req, await resolveToken(req));
     } catch (err) {
       lastErr = err;
       const retryable = err instanceof UpstoxError && err.retryable;
@@ -155,13 +208,14 @@ export async function upstoxRequest<T = unknown>(path: string, req: UpstoxReques
       await sleep(backoff);
     }
   }
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  await updateApiStatus({ lastErrorAt: Date.now(), lastError: `${path}: ${msg}` });
+  if (!(lastErr instanceof UpstoxError && lastErr.kind === 'cancelled')) {
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    await updateApiStatus({ lastErrorAt: Date.now(), lastError: `${path}: ${msg}` });
+  }
   throw lastErr;
 }
 
-async function requestOnce<T>(path: string, req: UpstoxRequest): Promise<T> {
-  const { token, used } = await resolveToken(req);
+async function requestOnce<T>(path: string, req: UpstoxRequest, { token, used }: ResolvedToken, signal?: AbortSignal): Promise<T> {
   const url = new URL(path, UPSTOX_API);
   for (const [k, v] of Object.entries(req.query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
 
@@ -169,24 +223,34 @@ async function requestOnce<T>(path: string, req: UpstoxRequest): Promise<T> {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (req.form) headers['Content-Type'] = 'application/x-www-form-urlencoded';
 
-  await acquireSlot(groupOf(path));
+  if (!signal) await acquireSlot(groupOf(path));
+  signal?.throwIfAborted();
   const method = req.method ?? 'GET';
   const ctrl = new AbortController();
+  const abort = () => ctrl.abort(signal?.reason);
+  signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), req.timeoutMs ?? 15_000);
   const started = Date.now();
   let res: Response;
+  let text: string;
   try {
     res = await appFetch(url, { method, headers, body: req.form ?? null, signal: ctrl.signal, timeoutMs: req.timeoutMs ?? 15_000 });
+    // Preserve the status and Retry-After even when an upstream error body can't be read.
+    text = await res.text().catch((err: unknown) => {
+      if (res.ok) throw err;
+      return '';
+    });
   } catch (err) {
+    signal?.throwIfAborted();
     const timedOut = ctrl.signal.aborted;
     throw new UpstoxError(timedOut ? 'Request timed out' : `Network error: ${err instanceof Error ? err.message : String(err)}`, timedOut ? 'timeout' : 'network');
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
     void countRequest();
   }
 
   let body: unknown = null;
-  const text = await res.text();
   if (text) {
     try {
       body = JSON.parse(text);

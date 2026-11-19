@@ -218,6 +218,8 @@ export interface Meta {
 export interface JobState {
   lastRunAt?: number;
   lastSuccessAt?: number;
+  /** Reference time of the successful run, even if completion crossed a market session. */
+  lastSuccessFor?: number;
   lastError?: string;
   /** for reminder-type jobs: when the owner was last notified */
   lastNotifiedAt?: number;
@@ -290,6 +292,8 @@ export interface LocalStore {
   alerts: AlertRule[];
   plans: TradePlan[];
   scheduleState: ScheduleState;
+  dailyHistoryCheckpoint?: import('../background/historicalJobs').HistoryCheckpoint;
+  intradayHistoryCheckpoint?: import('../background/historicalJobs').HistoryCheckpoint;
   /** NSE holidays for the current year (from Upstox), null until first fetched */
   marketCalendar: MarketCalendar | null;
   /** Nifty 50/100 members the extension studies (from NSE, weekly) */

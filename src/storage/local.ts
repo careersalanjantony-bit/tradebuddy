@@ -1,7 +1,7 @@
 import { DEFAULT_AUTH, DEFAULT_SETTINGS } from './defaults';
 import { chromeLocalKV, type KV } from './kv';
 import { applyPatch, mergeWithDefaults, type DeepPartial } from './merge';
-import type { AuthState, LocalKey, LocalStore, Secrets, Settings } from './schema';
+import type { AuthState, JobState, LocalKey, LocalStore, Secrets, Settings } from './schema';
 
 /**
  * Typed access to chrome.storage.local. All persistent state goes through here:
@@ -22,6 +22,18 @@ export async function getLocal<K extends LocalKey>(key: K): Promise<LocalStore[K
 
 export async function setLocal<K extends LocalKey>(key: K, value: LocalStore[K]): Promise<void> {
   await kv.set({ [key]: value });
+}
+
+let scheduleWrites: Promise<void> = Promise.resolve();
+
+/** Daily alarms and catch-up update different entries of the same persistent object. */
+export function patchScheduleJob(name: string, patch: Partial<JobState>): Promise<void> {
+  const write = scheduleWrites.then(async () => {
+    const all = (await getLocal('scheduleState')) ?? {};
+    await setLocal('scheduleState', { ...all, [name]: { ...all[name], ...patch } });
+  });
+  scheduleWrites = write.catch(() => undefined);
+  return write;
 }
 
 export async function getSettings(): Promise<Settings> {

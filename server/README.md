@@ -32,6 +32,7 @@ Checks: `npm run server:typecheck` and `npm run server:test` (also part of `npm 
 | `UPSTOX_ANALYTICS_TOKEN` | — | Upstox Analytics Token (market data only). Empty = no prices. |
 | `TB_HOST` / `TB_PORT` | `127.0.0.1` / `8787` | Where to listen. Keep it local; HTTPS comes from a proxy. |
 | `TB_LIVE_FEED` | `on` | Live feed during pre-open and market hours. |
+| `TB_HISTORICAL_REQUESTS_PER_MINUTE` | `30` | Shared requests per minute for daily and 5-minute candles and corporate actions. |
 | `TB_JOBS` | `on` | The app's own jobs (scans, signals, alerts, learning). `off` = milestone 2 only. |
 | `TB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `TB_DATA_DIR` | `STATE_DIRECTORY` or `./server-data` | SQLite database folder. |
@@ -84,7 +85,9 @@ curl -s -H "Authorization: Bearer $TB_API_TOKEN" http://127.0.0.1:8787/v1/health
 
 The database moves to schema 2 by itself on the first start (new tables only). The first start also
 downloads the price history (daily candles and 5-minute days for about 535 stocks) within Upstox's
-limits — that takes a while; `/v1/health` shows the tasks and jobs meanwhile. To go back: stop the
+limits — that takes a while. `/v1/health` reports the daily and 5-minute stock counts and retry state
+under `upstox.historical`, alongside the queue's request rate and cooldown. Downloads resume from
+SQLite checkpoints after a restart. Live prices use their own request budget. To go back: stop the
 service, restore `/var/lib/tradebuddy.bak-m2`, check out the previous commit, build, start (a milestone 2
 server refuses a schema 2 database, so the restore is needed). Only one server may use a database:
 a second start on the same data folder is refused.
@@ -102,7 +105,7 @@ Answers are JSON. 20 wrong tokens from one address within 10 minutes → `429` f
 | --- | --- |
 | `GET /healthz` | Process alive: `{status, version, uptimeSeconds}` |
 | `GET /readyz` | `200` when the database is open and start-up finished, else `503` |
-| `GET /v1/health` | Everything: database, market phase, Upstox token and API status, feed (state, last price, subscription, reconnects, heartbeat), price poller, tasks |
+| `GET /v1/health` | Everything: database, market phase, Upstox token, API status and historical progress, feed (state, last price, subscription, reconnects, heartbeat), price poller, tasks |
 | `GET /v1/market/status` | Phase (`pre_open`, `open`, `after_close`, `holiday`…), today's session times (IST), next open, holiday list, feed, last price poll |
 | `GET /v1/quotes` | Latest prices of every watched instrument; `?keys=NSE_EQ\|INE…,NSE_INDEX\|Nifty 50` for some only |
 | `GET /v1/quotes/{key}` | One instrument (URL-encode the key) |

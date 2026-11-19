@@ -1,4 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import { DB_VERSION } from '../../../src/storage/db';
 
 /**
  * The app's IndexedDB on the server (milestone 3), in SQLite — so the app's own data code
@@ -31,6 +32,7 @@ export const STORES: Record<string, StoreDef> = {
   alertLog: { keyPath: 'id', autoIncrement: true, indexes: { by_ts: { col: 'i1', path: 'ts' } } },
   logs: { keyPath: 'id', autoIncrement: true, indexes: { by_ts: { col: 'i1', path: 'ts' } } },
   intraday: { keyPath: ['key', 'date'] },
+  historyState: { keyPath: 'id' },
 };
 
 // ---------------------------------------------------------------- keys and ranges
@@ -151,11 +153,11 @@ const parseRow = (r: Row | undefined) => (r ? { key: JSON.parse(r.kj) as unknown
 
 export class SqliteIdb {
   readonly name = 'swing-assistant';
-  readonly version = 2;
+  readonly version = DB_VERSION;
   readonly objectStoreNames = { contains: (n: string) => n in STORES, length: Object.keys(STORES).length };
   private readonly upsert: StatementSync;
   private readonly insert: StatementSync;
-  private inTx = false;
+  private writeTransaction: Promise<void> | null = null;
   closed = false;
 
   constructor(private readonly db: DatabaseSync) {
@@ -274,20 +276,29 @@ export class SqliteIdb {
   transaction(stores: string | string[], mode: 'readonly' | 'readwrite' = 'readonly'): IdbTransaction {
     const names = typeof stores === 'string' ? [stores] : stores;
     for (const n of names) this.def(n);
-    if (mode === 'readwrite' && !this.inTx) {
+    if (mode === 'readonly') return new IdbTransaction(this, names);
+    if (!this.writeTransaction) {
       // a savepoint, not BEGIN: it also nests inside other writes on the same connection
-      this.inTx = true;
       this.db.exec('SAVEPOINT idb_tx');
-      setImmediate(() => {
-        this.inTx = false;
-        try {
-          this.db.exec('RELEASE idb_tx');
-        } catch {
-          /* nothing to commit */
-        }
+      this.writeTransaction = new Promise((resolve, reject) => {
+        setImmediate(() => {
+          this.writeTransaction = null;
+          try {
+            this.db.exec('RELEASE idb_tx');
+            resolve();
+          } catch (err) {
+            try {
+              this.db.exec('ROLLBACK TO idb_tx; RELEASE idb_tx');
+            } catch {
+              // SQLite may already have rolled back the savepoint.
+            }
+            reject(err);
+          }
+        });
       });
+      void this.writeTransaction.catch(() => undefined);
     }
-    return new IdbTransaction(this, names);
+    return new IdbTransaction(this, names, this.writeTransaction);
   }
 
   /** @internal cursor support */
@@ -297,15 +308,13 @@ export class SqliteIdb {
 }
 
 export class IdbTransaction {
-  /** resolves when the work is done (SQLite has already done it) */
-  readonly done: Promise<void>;
   readonly store: IdbStore;
   constructor(
     private readonly idb: SqliteIdb,
     readonly storeNames: string[],
+    readonly done = new Promise<void>((resolve) => setImmediate(resolve)),
   ) {
     this.store = new IdbStore(idb, storeNames[0]!);
-    this.done = new Promise((r) => setImmediate(r));
   }
   objectStore(name: string): IdbStore {
     if (!this.storeNames.includes(name)) throw new Error(`NotFoundError: "${name}" is not part of this transaction`);

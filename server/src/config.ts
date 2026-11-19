@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { LogLevel } from '../../src/storage/schema';
+import { DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE, MAX_HISTORICAL_REQUESTS_PER_MINUTE } from '../../src/upstox/rateLimiter';
 
 declare const __APP_VERSION__: string;
 
@@ -27,6 +28,7 @@ export interface ServerConfig {
   backgroundTasks: boolean;
   /** milestone 3: run the app's own jobs (scans, signals, alerts, learning) on the server */
   jobs: boolean;
+  historicalRequestsPerMinute: number;
   shutdownTimeoutMs: number;
   version: string;
 }
@@ -73,6 +75,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const shutdownTimeoutMs = Number(timeoutRaw);
   if (!/^\d+$/.test(timeoutRaw) || shutdownTimeoutMs < 1000) problems.push(`TB_SHUTDOWN_TIMEOUT_MS must be a number of milliseconds (1000 or more), got "${timeoutRaw}"`);
 
+  const historicalRate = read(env, 'TB_HISTORICAL_REQUESTS_PER_MINUTE') ?? String(DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE);
+  const historicalRequestsPerMinute = Number(historicalRate);
+  if (!/^\d+$/.test(historicalRate) || historicalRequestsPerMinute < 1 || historicalRequestsPerMinute > MAX_HISTORICAL_REQUESTS_PER_MINUTE) {
+    problems.push(`TB_HISTORICAL_REQUESTS_PER_MINUTE must be an integer from 1 to ${MAX_HISTORICAL_REQUESTS_PER_MINUTE}`);
+  }
+
   const liveFeed = flag(env, 'TB_LIVE_FEED', true, problems);
   const backgroundTasks = flag(env, 'TB_BACKGROUND_TASKS', true, problems);
   const jobs = flag(env, 'TB_JOBS', true, problems);
@@ -92,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     liveFeed,
     backgroundTasks,
     jobs,
+    historicalRequestsPerMinute,
     shutdownTimeoutMs,
     version: APP_VERSION,
   };
