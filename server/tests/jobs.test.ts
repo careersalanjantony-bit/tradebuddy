@@ -42,7 +42,7 @@ describe('the app’s intelligence on the server', () => {
     expect(server.scheduler.get(POLL_ALARM)?.periodInMinutes).toBe(0.5);
     const h = await getJson(server.port, '/v1/health');
     expect(h.body.jobs.scheduled).toHaveLength(JOBS.length + 1);
-    expect(server.intelligence?.tasks.map((t) => t.status().name)).toEqual(['fast-prices', 'early-movers', 'pre-open', 'news', 'learning', 'rising-model', 'short-model', 'breakout-test', 'protect-test']);
+    expect(server.intelligence?.tasks.map((t) => t.status().name)).toEqual(['fast-prices', 'early-movers', 'pre-open', 'intraday', 'intraday-test', 'news', 'learning', 'rising-model', 'short-model', 'breakout-test', 'protect-test']);
   });
 
   it('runs the price-poll alarm through the app’s scheduler without a token, and never twice at once', async () => {
@@ -88,9 +88,14 @@ describe('the app’s intelligence on the server', () => {
     expect((await getJson(server.port, '/v1/plans')).body.plans[0]).toMatchObject({ symbol: 'RELIANCE', entry: 1500, stop: 1470, target: 1560 });
     const alerts = await getJson(server.port, '/v1/alerts');
     expect(alerts.body.history.some((h: { title: string }) => h.title.includes('TMPV'))).toBe(true);
+    // app v1.19: the Intraday scanner's round, as the app stores it
+    await chrome.storage.session.set({ intraday: { date: '2026-11-19', at: 9, universe: 2147, priced: 2140, candidates: 1, rows: [{ key: 'NSE_EQ|INE0URBAN01', symbol: 'URBANCO', call: 'BUY', score: 100, plan: { entry: 101.9, stop: 100.75, target: 104.2, rr: 2 } }], counts: { buy: 1, wait: 0, noTrade: 0 }, gate: null } });
+    const intra = await getJson(server.port, '/v1/intraday');
+    expect(intra.body.intraday.rows[0]).toMatchObject({ symbol: 'URBANCO', call: 'BUY', plan: { entry: 101.9, stop: 100.75, target: 104.2, rr: 2 } });
+    expect(intra.body).toHaveProperty('test');
     const learning = await getJson(server.port, '/v1/learning');
     expect(Object.keys(learning.body)).toEqual(expect.arrayContaining(['mlModel', 'riseModel', 'shortModel', 'dayTest', 'breakoutTest', 'earlyTest', 'botProtectTest', 'progress']));
-    for (const p of ['/v1/rising', '/v1/falling', '/v1/breakouts', '/v1/watchlist', '/v1/plans', '/v1/learning', '/v1/alerts']) expect((await getJson(server.port, p, null)).status).toBe(401);
+    for (const p of ['/v1/rising', '/v1/intraday', '/v1/falling', '/v1/breakouts', '/v1/watchlist', '/v1/plans', '/v1/learning', '/v1/alerts']) expect((await getJson(server.port, p, null)).status).toBe(401);
   });
 
   it('read-only towards Upstox: no order or GTT address was ever called', () => {

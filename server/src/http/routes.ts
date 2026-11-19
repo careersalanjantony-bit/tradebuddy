@@ -143,6 +143,12 @@ export function buildRouter(d: ApiDeps): Router {
     return answer({ rise, early, preopen, flow: f ? { at: f.at ?? null, rising: f.rising ?? [] } : null });
   });
 
+  /** app v1.19: the Intraday scanner's latest round (BUY / WAIT / NO TRADE with plans) and its past test */
+  r.add('GET', '/v1/intraday', async () => {
+    const [intraday, alerted, test] = await Promise.all([session('intraday'), session('intradayAlerted'), local('intradayTest')]);
+    return answer({ intraday, alerted, test });
+  });
+
   /** "Falling now" sell-first ideas with their plans (entry, buy-back stop, targets, quantity, risk) */
   r.add('GET', '/v1/falling', async () => {
     const [shortIdeas, breadth] = await Promise.all([session('shortIdeas'), session('breadth')]);

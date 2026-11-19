@@ -16,8 +16,9 @@ Status: milestones 1, 2 and 3 are built and tested (see [README.md](README.md));
   daily IST jobs and the 30-second poll; a due alarm fires once (also one missed while the server was
   off), repeating ones keep their rhythm, and an alarm whose last run is still going is skipped.
 * **Start-up** (`src/engine/jobs.ts`) = `src/background/index.ts` without Chrome: clear stale
-  progress flags, `scheduleAll()`, `catchUp()`, and the timers (Early Movers 60 s, pre-open 10 s, news
-  30 s, `fastPoll` 3 s, learning / past tests when due). Each job checks itself whether it is due.
+  progress flags, `scheduleAll()`, `catchUp()`, and the timers (Early Movers 60 s, pre-open 10 s, the
+  Intraday scanner 15 s with its daily past test (app 1.19, `GET /v1/intraday`), news 30 s, `fastPoll`
+  3 s, learning / past tests when due). Each job checks itself whether it is due.
 * **One server per database** (`src/engine/lock.ts`, table `server_lock`): heartbeat every 10 s; a second
   start is refused; a crashed server's lock is taken over after 30 s.
 * **ML training** runs in the server process (no Web Worker in Node; the app's own fallback), so a

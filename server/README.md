@@ -108,6 +108,7 @@ Answers are JSON. 20 wrong tokens from one address within 10 minutes → `429` f
 | `GET /v1/quotes/{key}` | One instrument (URL-encode the key) |
 | `GET /v1/events?limit=50` | The server's journal: starts, stops, alerts |
 | `GET /v1/rising` | Rising now (`rise`: rows with the learned keep/sell tag, plans, held stocks), Early Movers (`early`), the pre-open list (`preopen`), flow risers |
+| `GET /v1/intraday` | The Intraday scanner (app 1.19): the latest 15-second round over every NSE EQ stock — BUY / WAIT / NO TRADE rows with breakout time, VWAP, volume surge, entry, stop-loss, target, risk : reward — the BUY alerts sent today, and the past test |
 | `GET /v1/falling` | Falling now / sell-first ideas (`shortIdeas`: score, reasons, plan with entry, buy-back stop, targets, quantity, risk) and market breadth |
 | `GET /v1/breakouts` | Today's breakout ideas (`breakouts`) and day-trade signals (`daySignals`: entry, stop-loss, target) |
 | `GET /v1/watchlist` | Your stocks with their latest prices, and the scan list summary |

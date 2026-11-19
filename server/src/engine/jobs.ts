@@ -2,6 +2,7 @@ import { fastPoll } from '../../../src/background/dataJobs';
 import { testBreakoutsIfDue } from '../../../src/background/breakoutJobs';
 import { testProtect } from '../../../src/background/botTest';
 import { earlyTick } from '../../../src/background/earlyJobs';
+import { INTRADAY_EVERY_MS, intradayTick, testIntradayIfDue } from '../../../src/background/intradayJobs';
 import { learnIfDue } from '../../../src/background/mlJobs';
 import { refreshNews, restoreNews } from '../../../src/background/newsJobs';
 import { preopenTick } from '../../../src/background/preopenJobs';
@@ -23,7 +24,8 @@ import { Ticker } from '../util/ticker';
  *     price poll with every check that follows it (alerts, practice money, auto-trader, day-trade
  *     signals, breakouts, Rising now, Falling now, news, flow, breadth — dataJobs.afterQuotes);
  *  3. catch-up of anything missed while the server was off (scheduler.catchUp);
- *  4. the timers the phone runs: Early Movers every minute, pre-open every 10 s, news every 30 s, the
+ *  4. the timers the phone runs: Early Movers every minute, pre-open every 10 s, the Intraday scanner
+ *     every 15 s (app v1.19) with its daily past test, news every 30 s, the
  *     learning and past tests when due — plus the fast price check the open screen drives on a phone
  *     (dataJobs.fastPoll: every few seconds in market hours, nothing while the live feed delivers).
  *
@@ -63,6 +65,9 @@ export function startIntelligence(o: IntelligenceOptions): Intelligence {
     new Ticker('fast-prices', 3_000, async () => (await fastPoll(now())).skipped ?? 'polled', 5_000),
     new Ticker('early-movers', 60_000, async () => void earlyTick(now()), 20_000),
     new Ticker('pre-open', 10_000, async () => `${await preopenTick(now())} listed`, 12_000),
+    // app v1.19: the Intraday scanner (every NSE EQ stock, 9:15–3:15; returns at once outside) and its past test
+    new Ticker('intraday', INTRADAY_EVERY_MS, async () => `${await intradayTick(now())} classified`, 15_000),
+    new Ticker('intraday-test', 3_600_000, async () => void (await testIntradayIfDue(now())), 100_000),
     new Ticker('news', 30_000, async () => `${await refreshNews(now())} headlines`, 6_000),
     // learning and past tests: each decides itself whether it is due (once a day, outside market hours…)
     new Ticker('learning', 3_600_000, async () => void (await learnIfDue(now())), 60_000),
