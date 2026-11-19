@@ -10,6 +10,8 @@ import { getAuth, setLocal, updateSettings } from '../../src/storage/local';
 import { runLocalMigrations } from '../../src/storage/migrations';
 import type { AuthState } from '../../src/storage/schema';
 import { getSession, setSession } from '../../src/storage/session';
+import { historyJobProgress, startHistoricalJobs, stopHistoricalJobs } from '../../src/background/historicalJobs';
+import { configureHistoricalRequests, historicalRequestDiagnostics, stopHistoricalRequests } from '../../src/upstox/client';
 import { installChrome } from './adapters/chrome';
 import { secretsOverlay } from './adapters/secrets';
 import { createHeartbeatWebSocket } from './adapters/websocket';
@@ -113,9 +115,13 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     __setDbProvider(null);
   };
 
+  const stopHistory = () => Promise.all([stopHistoricalJobs(), stopHistoricalRequests()]);
+
   let port: number;
   let http: ReturnType<typeof createHttpServer> | undefined;
   try {
+    configureHistoricalRequests(config.historicalRequestsPerMinute);
+    startHistoricalJobs();
     const mig = await runLocalMigrations(chromeLocalKV, now());
     if (mig.newerThanCode) log.warn(`Stored data schema v${mig.from} is newer than this build — nothing migrated`);
     else if (mig.applied.length) log.info(`App storage migrated v${mig.from} → v${mig.to}`);
@@ -188,6 +194,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       quotes: getQuotes,
       lastPoll: () => getSession('lastPoll'),
       apiStatus: () => getSession('apiStatus'),
+      historical: async () => ({ ...(await historyJobProgress()), rateLimit: await historicalRequestDiagnostics() }),
       analytics: async () => {
         const a = (await getAuth()).analytics;
         return { configured: hasToken, status: hasToken ? (a?.status ?? 'unchecked') : 'missing', checkedAt: a?.checkedAt ?? null, error: a?.error ?? null };
@@ -208,6 +215,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     }
   } catch (err) {
     log.error('Start-up failed', { error: err });
+    await stopHistory().catch(() => undefined);
     await intelligence?.stop().catch(() => undefined);
     await http?.close(1_000).catch(() => undefined);
     session.close();
@@ -239,7 +247,9 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
         isReady = false;
         log.info(`Stopping (${reason})`);
         store.event('stop', { reason });
+        const historyStopped = stopHistory();
         await http!.close(5_000);
+        await historyStopped;
         // no new job starts; jobs still running may finish (their writes are kept)
         await intelligence?.stop();
         await Promise.all(tasks.map((t) => t.stop()));

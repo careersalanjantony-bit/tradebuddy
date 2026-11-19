@@ -42,7 +42,7 @@ describe('the app’s intelligence on the server', () => {
     expect(server.scheduler.get(POLL_ALARM)?.periodInMinutes).toBe(0.5);
     const h = await getJson(server.port, '/v1/health');
     expect(h.body.jobs.scheduled).toHaveLength(JOBS.length + 1);
-    expect(server.intelligence?.tasks.map((t) => t.status().name)).toEqual(['fast-prices', 'early-movers', 'pre-open', 'intraday', 'intraday-test', 'news', 'learning', 'rising-model', 'short-model', 'breakout-test', 'protect-test']);
+    expect(server.intelligence?.tasks.map((t) => t.status().name)).toEqual(['daily-history', 'intraday-history', 'fast-prices', 'early-movers', 'pre-open', 'intraday', 'intraday-test', 'news', 'learning', 'rising-model', 'short-model', 'breakout-test', 'protect-test']);
   });
 
   it('runs the price-poll alarm through the app’s scheduler without a token, and never twice at once', async () => {

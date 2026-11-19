@@ -2,8 +2,11 @@ import { createLogger } from '../lib/log';
 import { parseActionDate, type CorporateAction } from '../indicators/adjust';
 import { getDb, type CorpActionsRecord } from '../storage/db';
 import { upstoxRequest } from '../upstox/client';
+import { UpstoxError } from '../upstox/errors';
+import { historyByInstrument } from './historyCoverage';
 
 const log = createLogger('corp-actions');
+const byIsin = historyByInstrument();
 
 export function parseCorporateActions(data: unknown): CorporateAction[] {
   if (!Array.isArray(data)) return [];
@@ -27,6 +30,10 @@ export async function getCorporateActions(isin: string): Promise<CorpActionsReco
 /** Refreshes when older than `maxAgeMs` (watchlist stocks: daily). A failure keeps the old copy. */
 export async function refreshCorporateActions(isin: string, maxAgeMs = 20 * 3600_000, now = Date.now()): Promise<CorpActionsRecord | undefined> {
   if (!isin) return undefined;
+  return byIsin(isin, () => downloadCorporateActions(isin, maxAgeMs, now));
+}
+
+async function downloadCorporateActions(isin: string, maxAgeMs: number, now: number): Promise<CorpActionsRecord | undefined> {
   const db = await getDb();
   const prev = await db.get('corporateActions', isin);
   if (prev && now - prev.fetchedAt < maxAgeMs && !prev.error) return prev;
@@ -38,6 +45,7 @@ export async function refreshCorporateActions(isin: string, maxAgeMs = 20 * 3600
     if (splits.length) log.info(`Corporate actions for ${isin}: ${splits.map((a) => `${a.name} ${a.ratio} on ${a.exDate}`).join(', ')}`);
     return rec;
   } catch (err) {
+    if (err instanceof UpstoxError && (err.kind === 'cancelled' || err.kind === 'rate_limit')) throw err;
     log.warn(`Corporate actions for ${isin} not available; the gap detector still protects the data`, { error: err });
     if (prev) return prev;
     const rec: CorpActionsRecord = { isin, fetchedAt: now, actions: [], error: err instanceof Error ? err.message : String(err) };

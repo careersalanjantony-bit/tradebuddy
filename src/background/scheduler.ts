@@ -2,14 +2,15 @@ import { getCalendar, refreshCalendar, refreshCalendarIfNeeded } from '../data/c
 import { createLogger } from '../lib/log';
 import { errorMessage } from '../lib/serialize';
 import { notify } from '../notify/chrome';
-import { getAuth, getLocal, setLocal } from '../storage/local';
+import { getAuth, getLocal, patchScheduleJob } from '../storage/local';
 import type { JobState } from '../storage/schema';
 import { UpstoxError } from '../upstox/errors';
 import { markSessionExpired } from '../upstox/session';
 import { isSessionExpiredByTime } from '../upstox/token';
-import { ensureInstruments, eodDue, keysWithoutHistory, morningDue, pollAndEvaluate, runEndOfDay, syncAllTracked } from './dataJobs';
+import { dailyHistoryBatchWindow, ensureInstruments, eodDue, keysWithoutHistory, morningDue, pollAndEvaluate, runEndOfDay, syncAllTracked } from './dataJobs';
 import { ensureScanLists } from './scanList';
-import { ensureIntraday } from './dayJobs';
+import { ensureIntraday, intradayHistoryWindow } from './dayJobs';
+import { historyNeedsResume } from './historicalJobs';
 import { loginReminderDue, nextRun, type JobName } from './schedule';
 import { learnIfDue } from './mlJobs';
 
@@ -27,11 +28,6 @@ export function isJob(name: string): name is JobName {
   return (JOBS as string[]).includes(name);
 }
 
-async function patchJob(name: JobName, patch: Partial<JobState>): Promise<void> {
-  const all = (await getLocal('scheduleState')) ?? {};
-  await setLocal('scheduleState', { ...all, [name]: { ...all[name], ...patch } });
-}
-
 async function getJob(name: JobName): Promise<JobState> {
   return ((await getLocal('scheduleState')) ?? {})[name] ?? {};
 }
@@ -43,7 +39,7 @@ export async function scheduleJob(name: JobName, now = Date.now()): Promise<void
     return;
   }
   await chrome.alarms.create(name, { when });
-  await patchJob(name, { nextRunAt: when });
+  await patchScheduleJob(name, { nextRunAt: when });
 }
 
 export async function scheduleAll(): Promise<void> {
@@ -70,12 +66,22 @@ async function showLoginReminder(now: number): Promise<boolean> {
     message: 'Market opens at 09:15. Open Swing Trade Assistant and click "Log in to Upstox".',
     requireInteraction: true,
   });
-  await patchJob('login-reminder', { lastNotifiedAt: now });
+  await patchScheduleJob('login-reminder', { lastNotifiedAt: now });
   return true;
 }
 
-export async function runJob(name: JobName, now = Date.now()): Promise<void> {
-  await patchJob(name, { lastRunAt: now });
+const runningJobs = new Map<JobName, Promise<void>>();
+
+export function runJob(name: JobName, now = Date.now()): Promise<void> {
+  const current = runningJobs.get(name);
+  if (current) return current;
+  const work = executeJob(name, now).finally(() => runningJobs.delete(name));
+  runningJobs.set(name, work);
+  return work;
+}
+
+async function executeJob(name: JobName, now: number): Promise<void> {
+  await patchScheduleJob(name, { lastRunAt: now });
   try {
     switch (name) {
       case 'token-expiry': {
@@ -92,6 +98,7 @@ export async function runJob(name: JobName, now = Date.now()): Promise<void> {
       case 'morning-recheck':
         try {
           const r = await syncAllTracked(now);
+          if (r.pending) throw new Error(`Daily history has ${r.pending} stock(s) pending retry`);
           log.info(`Morning re-check: history updated for ${r.ok} stocks`);
           await pollAndEvaluate(false, now);
         } catch (err) {
@@ -100,8 +107,9 @@ export async function runJob(name: JobName, now = Date.now()): Promise<void> {
         }
         break;
       case 'eod-candles':
+        if (!(await eodDue(now))) return;
         try {
-          await runEndOfDay(now);
+          await runEndOfDay(now, true);
           // the evening is when the newest day is in the history: learn again
           void learnIfDue(now).catch(() => undefined);
         } catch (err) {
@@ -122,9 +130,10 @@ export async function runJob(name: JobName, now = Date.now()): Promise<void> {
         }
         break;
     }
-    await patchJob(name, { lastSuccessAt: Date.now() });
+    await patchScheduleJob(name, { lastSuccessAt: Date.now(), lastSuccessFor: now, lastError: undefined });
   } catch (err) {
-    await patchJob(name, { lastError: errorMessage(err) });
+    if (err instanceof UpstoxError && err.kind === 'cancelled') return;
+    await patchScheduleJob(name, { lastError: errorMessage(err) });
     log.warn(`Job ${name} failed`, { error: err });
   } finally {
     await scheduleJob(name);
@@ -145,23 +154,44 @@ export async function catchUp(now = Date.now()): Promise<void> {
   try {
     // the five lists everything studies (NSE, weekly; bundled copy as fallback)
     await ensureScanLists(false, now);
-    const missing = await keysWithoutHistory();
-    if (missing.length) {
-      log.info(`${missing.length} studied stock(s) have no history yet — downloading in the background`);
-      void syncAllTracked(now).catch((err: unknown) => log.info('History download waits for a login or an Analytics Token', { reason: String(err) }));
-    }
   } catch (err) {
     log.warn('Index list check failed', { error: err });
   }
-  await ensureIntraday(now).catch((err: unknown) => log.info('5-minute history check skipped', { reason: String(err) }));
-  // Prices right away (e.g. evening install or browser restart: the last session's closing prices).
-  await pollAndEvaluate(false, now).catch((err: unknown) => log.info('Startup price fetch skipped', { reason: String(err) }));
-  if (await morningDue(now)) {
-    log.info('Catching up the 09:20 re-check');
-    await runJob('morning-recheck', now);
-  }
+  // Start prices independently; there can be hundreds of stocks queued for history.
+  const prices = pollAndEvaluate(false, now).catch((err: unknown) => log.info('Startup price fetch skipped', { reason: String(err) }));
+  const history = (async () => {
+    await ensureIntraday(now);
+    // Catch-up and alarms use the same job registry and the same durable stock checkpoints.
+    if (await morningDue(now)) {
+      log.info('Catching up the 09:20 re-check');
+      await runJob('morning-recheck', now);
+    } else if (await eodDue(now)) {
+      log.info('Catching up the end-of-day sync (Chrome was not running at 16:00)');
+      await runJob('eod-candles', now);
+    } else {
+      const missing = await keysWithoutHistory();
+      if (missing.length || await historyNeedsResume('daily')) await syncAllTracked(now);
+    }
+  })().catch((err: unknown) => log.info('Startup history check stopped', { reason: errorMessage(err) }));
+  await Promise.all([prices, history]);
+}
+
+/** Revisit incomplete daily work when its persisted retry delay has passed. */
+export async function retryDailyHistory(now = Date.now()): Promise<void> {
   if (await eodDue(now)) {
-    log.info('Catching up the end-of-day sync (Chrome was not running at 16:00)');
-    await runJob('eod-candles', now);
+    // The 16:00 run can still be active when the 18:00 alarm fires. Pick up the later phase,
+    // even after all stocks in the first phase finished, without retrying an actively paused batch.
+    if (await historyNeedsResume('daily', Date.now(), await dailyHistoryBatchWindow(now), true)) {
+      await runJob('eod-candles', now);
+    }
+    return;
   }
+  if (!(await historyNeedsResume('daily'))) return;
+  if (await morningDue(now)) await runJob('morning-recheck', now);
+  else await syncAllTracked(now);
+}
+
+/** Refresh the 5-minute window once per market date and revisit incomplete downloads. */
+export async function refreshIntradayHistory(now = Date.now()): Promise<void> {
+  if (await historyNeedsResume('intraday', Date.now(), await intradayHistoryWindow(now))) await ensureIntraday(now, true);
 }
