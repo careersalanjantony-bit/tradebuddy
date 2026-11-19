@@ -12,7 +12,7 @@ installChromeShim(__APP_VERSION__);
 async function boot(): Promise<void> {
   await storageReady;
   const { initNative } = await import('./platform/nativeBindings');
-  await import('./background/index');
+  const { backgroundReady } = await import('./background/index');
   await fireStartupEvents(__APP_VERSION__);
   const { collectBackgroundSales, syncBackgroundChecker } = await import('./background/bgSync');
   const catchUp = () => {
@@ -36,7 +36,7 @@ async function boot(): Promise<void> {
     walletTimer = setTimeout(() => void syncBackgroundChecker().catch(() => undefined), 3_000);
   });
   const { startUi } = await import('./ui/main');
-  startUi();
+  await startUi(backgroundReady);
   // During market hours keep running in the background (small notification), so alerts still arrive.
   const { setMarketWatch } = await import('./platform/nativeBindings');
   const { marketState } = await import('./data/calendar');

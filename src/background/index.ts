@@ -90,6 +90,7 @@ async function startup(): Promise<void> {
 }
 
 const ready = startup();
+export { ready as backgroundReady };
 ready.catch(() => undefined); // logged above; keep the rejection from being "unhandled"
 // Missed jobs (expiry, reminder, holidays). Separate from `ready` because it may call Upstox.
 ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up failed', { error: err }));
