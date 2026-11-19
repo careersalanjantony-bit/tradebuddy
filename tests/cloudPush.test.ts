@@ -18,6 +18,11 @@ const h = vi.hoisted(() => ({
   plugin: [] as string[],
   requests: [] as Array<{ url: string; method: string; auth: string | null; body: any }>,
   serverDown: false,
+  /** the Android Keystore-backed storage (stand-in) */
+  keystore: new Map<string, string>(),
+  keystoreFails: false,
+  /** what the server says about itself (GET /v1/device) */
+  health: { signals: true, push: true, tokenActive: true } as Record<string, boolean>,
 }));
 
 const SERVER = 'https://tb.example.com';
@@ -37,9 +42,24 @@ function fakeServer(url: string, method: string, auth: string | null, body: any)
   if (method === 'PUT' && path === '/v1/device/preferences') return json(200, { ok: true });
   if (method === 'POST' && path === '/v1/device/test-push') return json(202, { queued: 1 });
   if (method === 'DELETE' && path === '/v1/device') return json(200, { revoked: true });
-  if (method === 'GET' && path === '/v1/device') return json(200, { device: { tokenState: 'active', lastPushAt: null, push: { sent: 0, failed: 0, pending: 0 } }, pushConfigured: true });
+  if (method === 'GET' && path === '/v1/device') return json(200, { device: { tokenState: 'active', lastPushAt: null, push: { sent: 0, failed: 0, pending: 0 } }, pushConfigured: true, server: { ...h.health, at: Date.now() } });
   return json(404, { error: 'not_found' });
 }
+
+vi.mock('@capgo/capacitor-native-biometric', () => ({
+  NativeBiometric: {
+    setData: async ({ key, value }: { key: string; value: string }) => {
+      if (h.keystoreFails) throw new Error('Keystore unavailable');
+      h.keystore.set(key, value);
+    },
+    getData: async ({ key }: { key: string }) => {
+      if (h.keystoreFails) throw new Error('Keystore unavailable');
+      if (!h.keystore.has(key)) throw new Error('not found');
+      return { value: h.keystore.get(key)! };
+    },
+    deleteData: async ({ key }: { key: string }) => void h.keystore.delete(key),
+  },
+}));
 
 vi.mock('../src/platform/http', () => ({
   isNative: () => h.native,
@@ -83,7 +103,7 @@ vi.mock('@capacitor/core', async (importOriginal) => {
   };
 });
 
-const { coveredByCloud } = await import('../src/notify/cloudMode');
+const { coveredByCloud, CLOUD_FRESH_MS } = await import('../src/notify/cloudMode');
 const push = await import('../src/platform/push');
 const { notify } = await import('../src/notify/chrome');
 const { getAlertHistory, recordAlert } = await import('../src/alerts/history');
@@ -95,38 +115,48 @@ let chrome: ReturnType<typeof installChromeMock>;
 beforeEach(async () => {
   chrome = installChromeMock();
   Object.assign(chrome.runtime, { getManifest: () => ({ version: '1.20.0' }) });
-  Object.assign(h, { native: true, firebase: true, perm: 'prompt', permAnswer: 'granted', listeners: {}, plugin: [], requests: [], serverDown: false });
+  Object.assign(h, { native: true, firebase: true, perm: 'prompt', permAnswer: 'granted', listeners: {}, plugin: [], requests: [], serverDown: false, keystoreFails: false, health: { signals: true, push: true, tokenActive: true } });
+  h.keystore.clear();
   await chrome.storage.local.set({ alertHistory: { items: [], clearedAt: null, seen: {}, dismissed: {} } });
   takePendingNotificationClick();
   push.__resetCloudPush();
 });
 
 const tokenSent = () => vi.waitFor(async () => expect((await getLocal('cloud'))?.tokenSentAt).toBeTypeOf('number'));
+const KS_KEY = 'tradebuddy.cloud.deviceCredential';
 async function paired() {
   await push.pairWithServer(SERVER, CODE.toLowerCase(), 'Test phone', '1.20.0');
   await tokenSent();
+  // the heartbeat after the token: the server confirmed it covers this phone
+  await vi.waitFor(async () => expect((await getLocal('cloud'))?.serverOkAt).toBeTypeOf('number'));
 }
 const RISE = 'alert:rise-TATASTEEL-2026-11-19';
 const PRICE = 'alert:rule-7f3a:1763530000000';
 
 describe('which alerts the server pushes', () => {
-  const state = { serverUrl: SERVER, deviceId: 'd', name: 'p', pairedAt: 1, categories: ['rising', 'breakout', 'system'] as const, tokenSentAt: 2, lastError: null };
-  it('covers only chosen market signals, and only once the server has the push token', () => {
+  const NOW = Date.parse('2026-11-19T05:00:00Z');
+  const state = { serverUrl: SERVER, deviceId: 'd', name: 'p', pairedAt: 1, categories: ['rising', 'breakout', 'system'] as const, tokenSentAt: 2, lastError: null, serverOkAt: NOW - 60_000 };
+  it('covers only chosen market signals, and only while the server has confirmed it covers this phone', () => {
     const s = { ...state, categories: [...state.categories] };
-    expect(coveredByCloud(s, RISE)).toBe(true);
-    expect(coveredByCloud(s, 'alert:bo-INFY-2026-11-19')).toBe(true);
-    expect(coveredByCloud(s, 'alert:short-INFY-2026-11-19')).toBe(false); // not chosen
-    expect(coveredByCloud(s, PRICE)).toBe(false); // price alerts: phone's own data
-    expect(coveredByCloud(s, 'alert:wallet-sold-1')).toBe(false); // practice money
-    expect(coveredByCloud(s, 'login-reminder')).toBe(false); // system: always from the phone too
-    expect(coveredByCloud({ ...s, tokenSentAt: null }, RISE)).toBe(false); // no token yet → phone alerts itself
-    expect(coveredByCloud(null, RISE)).toBe(false); // stand-alone
+    expect(coveredByCloud(s, RISE, NOW)).toBe(true);
+    expect(coveredByCloud(s, 'alert:bo-INFY-2026-11-19', NOW)).toBe(true);
+    expect(coveredByCloud(s, 'alert:short-INFY-2026-11-19', NOW)).toBe(false); // not chosen
+    expect(coveredByCloud(s, PRICE, NOW)).toBe(false); // price alerts: phone's own data
+    expect(coveredByCloud(s, 'alert:wallet-sold-1', NOW)).toBe(false); // practice money
+    expect(coveredByCloud(s, 'login-reminder', NOW)).toBe(false); // system: always from the phone too
+    expect(coveredByCloud({ ...s, tokenSentAt: null }, RISE, NOW)).toBe(false); // no token yet → phone alerts itself
+    expect(coveredByCloud(null, RISE, NOW)).toBe(false); // stand-alone
+    // review fix: no recent "yes" from the server → the phone alerts by itself again
+    expect(coveredByCloud({ ...s, serverOkAt: null }, RISE, NOW)).toBe(false);
+    expect(coveredByCloud({ ...s, serverOkAt: undefined }, RISE, NOW)).toBe(false); // state from the first M4 build
+    expect(coveredByCloud(s, RISE, NOW - 60_000 + CLOUD_FRESH_MS + 1)).toBe(false); // the server's yes ran out
   });
 
-  it('accepts only an https server address (http only for a test server on this computer)', () => {
+  it('accepts only an https server address — never plain http, not even a local address', () => {
     expect(push.normalizeServerUrl(' https://tb.example.com/ ')).toBe('https://tb.example.com');
     expect(push.normalizeServerUrl('https://tb.example.com/api/')).toBe('https://tb.example.com/api');
-    expect(push.normalizeServerUrl('http://10.0.2.2:8787')).toBe('http://10.0.2.2:8787');
+    expect(() => push.normalizeServerUrl('http://10.0.2.2:8787')).toThrow(/https/);
+    expect(() => push.normalizeServerUrl('http://127.0.0.1:8787')).toThrow(/https/);
     expect(() => push.normalizeServerUrl('http://tb.example.com')).toThrow(/https/);
     expect(() => push.normalizeServerUrl('https://user:pw@tb.example.com')).toThrow();
     expect(() => push.normalizeServerUrl('https://tb.example.com/?token=x')).toThrow();
@@ -135,13 +165,14 @@ describe('which alerts the server pushes', () => {
 });
 
 describe('pairing and the push token', () => {
-  it('pairs with a one-time code, keeps the credential with the secrets, asks permission once and sends the token', async () => {
+  it('pairs with a one-time code, keeps the credential in Android Keystore storage, asks permission once and sends the token', async () => {
     await paired();
     const pair = h.requests.find((r) => r.url.endsWith('/v1/devices/pair'))!;
     expect(pair).toMatchObject({ method: 'POST', auth: null, body: { code: 'abcde-23456', name: 'Test phone', platform: 'android', appVersion: '1.20.0' } });
-    expect((await getSecrets()).cloudDeviceCredential).toBe(CRED);
+    expect(h.keystore.get(KS_KEY)).toBe(CRED); // review fix: Keystore-backed, not the app's ordinary storage
+    expect((await getSecrets()).cloudDeviceCredential).toBeUndefined();
     const cloud = (await getLocal('cloud'))!;
-    expect(JSON.stringify(cloud)).not.toContain(CRED.split('.')[2]); // the secret lives only with the other secrets
+    expect(JSON.stringify(cloud)).not.toContain(CRED.split('.')[2]); // the secret is never in the cloud state
     expect(cloud).toMatchObject({ serverUrl: SERVER, name: 'Test phone', lastError: null });
     expect(cloud.categories).toEqual(['rising', 'falling', 'breakout', 'daytrade', 'intraday', 'early', 'picks', 'system']);
     expect(h.plugin.filter((x) => x === 'requestPermissions')).toHaveLength(1);
@@ -180,6 +211,13 @@ describe('pairing and the push token', () => {
     expect(cloud?.tokenSentAt).toBeNull();
     expect(cloud?.lastError).toMatch(/not allowed/);
     expect(coveredByCloud(cloud, RISE)).toBe(false);
+  });
+
+  it('Keystore not available: the credential falls back to the app storage (pairing still works)', async () => {
+    h.keystoreFails = true;
+    await paired();
+    expect((await getSecrets()).cloudDeviceCredential).toBe(CRED);
+    expect(h.keystore.size).toBe(0);
   });
 
   it('category choices go to the server', async () => {
@@ -271,6 +309,35 @@ describe("the phone's own alerts", () => {
     await notify(RISE as `alert:${string}`, { title: 'Rising', message: 'm' });
     expect(created()).toEqual([{ id: RISE, inAppOnly: false }]);
   });
+
+  it('review fix: the server says it is not making signals (e.g. its Upstox token stopped) → the phone alerts by itself', async () => {
+    await paired();
+    h.health = { signals: false, push: true, tokenActive: true };
+    expect(await push.checkServer()).toBe(false);
+    expect((await getLocal('cloud'))!.lastError).toMatch(/not making signals/);
+    await notify(RISE as `alert:${string}`, { title: 'Rising', message: 'm' });
+    expect(created()).toEqual([{ id: RISE, inAppOnly: false }]);
+  });
+
+  it('review fix: pushes failing on the server (Firebase) → the phone alerts by itself', async () => {
+    await paired();
+    h.health = { signals: true, push: false, tokenActive: true };
+    await push.checkServer();
+    await notify('alert:bo-INFY-2026-11-19', { title: 'Breakout', message: 'm' });
+    expect(created()).toEqual([{ id: 'alert:bo-INFY-2026-11-19', inAppOnly: false }]);
+  });
+
+  it('review fix: the server cannot be reached → once its last "yes" runs out, the phone alerts by itself again', async () => {
+    await paired();
+    h.serverDown = true;
+    expect(await push.checkServer()).toBe(false);
+    const c = (await getLocal('cloud'))!;
+    expect(c.lastError).toMatch(/server not reached/);
+    // within the last yes: still left to the server (it may only be a short network gap)
+    expect(coveredByCloud(c, RISE, c.serverOkAt! + 60_000)).toBe(true);
+    // the yes ran out: back to the phone's own notifications
+    expect(coveredByCloud(c, RISE, c.serverOkAt! + CLOUD_FRESH_MS + 1)).toBe(false);
+  });
 });
 
 describe('unpairing and start-up', () => {
@@ -281,6 +348,7 @@ describe('unpairing and start-up', () => {
     expect(h.plugin).toContain('unregister');
     expect(await getLocal('cloud')).toBeNull();
     expect((await getSecrets()).cloudDeviceCredential).toBeUndefined();
+    expect(h.keystore.has(KS_KEY)).toBe(false); // gone from the Keystore storage too
   });
 
   it('unpairs on the phone even when the server cannot be reached', async () => {
@@ -298,13 +366,15 @@ describe('unpairing and start-up', () => {
     expect(h.requests).toHaveLength(0);
   });
 
-  it('start-up when paired refreshes the token (Firebase may have changed it)', async () => {
+  it('start-up when paired refreshes the token (Firebase may have changed it); a credential from the first build moves into the Keystore', async () => {
     await setLocal('cloud', { serverUrl: SERVER, deviceId: 'd', name: 'p', pairedAt: 1, categories: ['rising'], tokenSentAt: null, lastError: null });
     await chrome.storage.local.set({ secrets: { cloudDeviceCredential: CRED } });
     h.perm = 'granted';
     await push.initCloudPush();
     await tokenSent();
     expect(h.plugin).toEqual(['register']); // permission already given: not asked again
+    expect(h.keystore.get(KS_KEY)).toBe(CRED);
+    expect((await getSecrets()).cloudDeviceCredential).toBeUndefined();
   });
 
   it('only ever talks to the paired server — never Upstox, never an order or GTT', async () => {

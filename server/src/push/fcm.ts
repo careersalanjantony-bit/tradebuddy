@@ -80,11 +80,15 @@ export function classify(status: number, error: { status?: string; message?: str
     invalidateAuth();
     return { ok: false, kind: 'retry', error: text };
   }
-  if (code === 'UNREGISTERED' || status === 404) return { ok: false, kind: 'invalid-token', error: text };
+  // review fix: only Google's UNREGISTERED says the PHONE's token is gone. A bare 404 (e.g. a wrong
+  // Firebase project id) is a server setup problem — treating it as an invalid token would wipe the
+  // token of every paired phone at once.
+  if (code === 'UNREGISTERED') return { ok: false, kind: 'invalid-token', error: text };
   if (code === 'SENDER_ID_MISMATCH') return { ok: false, kind: 'invalid-token', error: text };
   if (status === 400 && /registration token/i.test(error?.message ?? '')) return { ok: false, kind: 'invalid-token', error: text };
   // 403 other than a sender mismatch: the service account lacks a permission — retried (with growing
   // pauses) so pushes resume by themselves once the Firebase setup is fixed
-  if (status === 429 || status === 403 || status >= 500 || code === 'UNAVAILABLE' || code === 'INTERNAL' || code === 'QUOTA_EXCEEDED') return { ok: false, kind: 'retry', error: text, ...(after !== undefined ? { retryAfterMs: after } : {}) };
+  // (a 404 without UNREGISTERED is a setup problem too — e.g. a wrong project id)
+  if (status === 429 || status === 403 || status === 404 || status >= 500 || code === 'UNAVAILABLE' || code === 'INTERNAL' || code === 'QUOTA_EXCEEDED') return { ok: false, kind: 'retry', error: text, ...(after !== undefined ? { retryAfterMs: after } : {}) };
   return { ok: false, kind: 'bad-message', error: text };
 }

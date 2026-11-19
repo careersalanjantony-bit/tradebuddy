@@ -28,7 +28,15 @@ export interface DeviceRouteDeps {
   push: PushService;
   projectId: string | null;
   now: () => number;
+  /**
+   * Review fix: is the server making signals right now (its jobs on, an Upstox token it can use)? The
+   * phone hides its own copy of a market alert only while the server says yes (see GET /v1/device).
+   */
+  signals?: () => Promise<boolean>;
 }
+
+/** A phone may ask for one test push per this many ms (review fix: no flood of test pushes). */
+export const TEST_PUSH_EVERY_MS = 30_000;
 
 const obj = (b: unknown): Record<string, unknown> => {
   if (!b || typeof b !== 'object' || Array.isArray(b)) throw new BadRequest('Send a JSON object.');
@@ -89,7 +97,18 @@ export function addDeviceRoutes(r: Router, d: DeviceRouteDeps): void {
   );
 
   // ---------- the paired phone
-  r.add('GET', '/v1/device', (ctx) => ({ body: { device: view(me(ctx)), pushConfigured: d.push.configured } }), { auth: 'device' });
+  // review fix: `server` tells the phone whether the cloud really covers its alerts right now (signals
+  // made, pushes working, its token active); otherwise the phone shows its own notifications as before
+  r.add(
+    'GET',
+    '/v1/device',
+    async (ctx) => {
+      const dev = me(ctx);
+      const signals = d.signals ? await d.signals().catch(() => false) : false;
+      return { body: { device: view(dev), pushConfigured: d.push.configured, server: { signals, push: d.push.healthy, tokenActive: dev.tokenState === 'active', at: d.now() } } };
+    },
+    { auth: 'device' },
+  );
 
   r.add(
     'PUT',
@@ -128,6 +147,7 @@ export function addDeviceRoutes(r: Router, d: DeviceRouteDeps): void {
     { auth: 'device' },
   );
 
+  const lastTest = new Map<string, number>();
   r.add(
     'POST',
     '/v1/device/test-push',
@@ -135,6 +155,13 @@ export function addDeviceRoutes(r: Router, d: DeviceRouteDeps): void {
       const dev = me(ctx);
       if (!d.push.configured) return { status: 503, body: { error: 'push_off', message: 'Firebase is not set up on the server yet.' } };
       if (dev.tokenState !== 'active') return { status: 409, body: { error: 'no_token', message: 'This phone has not registered for notifications yet.' } };
+      const t = d.now();
+      const prev = lastTest.get(dev.id);
+      if (prev !== undefined && t - prev < TEST_PUSH_EVERY_MS) {
+        const wait = Math.ceil((TEST_PUSH_EVERY_MS - (t - prev)) / 1000);
+        return { status: 429, body: { error: 'too_soon', message: `One test push every ${TEST_PUSH_EVERY_MS / 1000} seconds — try again in ${wait} s.` }, headers: { 'Retry-After': String(wait) } };
+      }
+      lastTest.set(dev.id, t);
       return { status: 202, body: { queued: testPush(dev) } };
     },
     { auth: 'device' },

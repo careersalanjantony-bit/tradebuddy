@@ -78,9 +78,28 @@ export interface ProcessResult {
   skipped: number;
 }
 
+/**
+ * Review fix — what the SERVER may push. Its alerts come from the app's own code, which also makes a
+ * few messages that only make sense on the phone: "Log in to Upstox" (the server needs no daily login),
+ * "session expired" and the evening scan summary (the phone makes its own — a push would be a second
+ * copy). Those are not pushed. "Analytics Token rejected" is about the SERVER's token here, so it is
+ * pushed under its own id and says so. Everything else unchanged. Pure.
+ */
+export function serverPushAlert(id: string, title: string, message: string): { id: string; title: string; message: string } | null {
+  if (id === 'login-reminder' || id === 'session-expired' || id === 'scan-summary') return null;
+  if (id === 'analytics-invalid') return { id: 'server-analytics-invalid', title: `TradeBuddy server: ${title}`, message: `${message} (Fix it on the server: UPSTOX_ANALYTICS_TOKEN in /etc/tradebuddy/server.env.)` };
+  return { id, title, message };
+}
+
 export class PushService {
   lastError: string | null = null;
+  lastErrorAt: number | null = null;
   lastSentAt: number | null = null;
+
+  /** Review fix: pushes are working — set up, and no failure since the last successful send. */
+  get healthy(): boolean {
+    return this.fcm !== null && (this.lastErrorAt === null || (this.lastSentAt !== null && this.lastSentAt > this.lastErrorAt));
+  }
 
   constructor(
     private readonly db: DatabaseSync,
@@ -116,7 +135,7 @@ export class PushService {
     const out: ProcessResult = { sent: 0, retried: 0, failed: 0, skipped: 0 };
     if (!this.fcm) return out;
     const t = this.now();
-    const rows = this.db.prepare("SELECT id, alert_id, device_id, payload, attempts FROM push_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at, id LIMIT ?").all(t, limit) as Array<{ id: number; alert_id: string; device_id: string; payload: string; attempts: number }>;
+    const rows = this.db.prepare("SELECT id, alert_id, device_id, payload, attempts, created_at FROM push_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at, id LIMIT ?").all(t, limit) as Array<{ id: number; alert_id: string; device_id: string; payload: string; attempts: number; created_at: number }>;
     for (const r of rows) {
       const d = this.devices.get(r.device_id);
       if (!d || d.revokedAt !== null || !d.fcmToken || d.tokenState !== 'active') {
@@ -125,6 +144,13 @@ export class PushService {
         continue;
       }
       const p = JSON.parse(r.payload) as Payload & { channelId?: string | null };
+      // review fix: an alert older than its time-to-live (30 minutes for a market signal) is not sent
+      // late — e.g. after the server was down for hours, or after long retries. It stays in the Alerts tab.
+      if (t - r.created_at > p.ttlSeconds * 1000) {
+        this.finish(r.id, 'skipped', `expired before it could be sent (older than ${Math.round(p.ttlSeconds / 60)} minutes)`, r.attempts);
+        out.skipped++;
+        continue;
+      }
       const msg: PushMessage = { token: d.fcmToken, title: p.title, body: p.body, data: p.data, channelId: p.channelId ?? null, ttlSeconds: p.ttlSeconds, tag: p.tag };
       let res;
       try {
@@ -147,10 +173,12 @@ export class PushService {
       } else if (res.kind === 'retry' && attempts < MAX_ATTEMPTS) {
         this.db.prepare('UPDATE push_outbox SET attempts = ?, next_at = ?, last_error = ? WHERE id = ?').run(attempts, this.now() + backoffMs(attempts, res.retryAfterMs), res.error, r.id);
         this.lastError = res.error;
+        this.lastErrorAt = this.now();
         out.retried++;
       } else {
         this.finish(r.id, 'failed', res.error, attempts);
         this.lastError = res.error;
+        this.lastErrorAt = this.now();
         log.warn(`Push of ${r.alert_id} gave up after ${attempts} tries`, { error: res.error });
         out.failed++;
       }

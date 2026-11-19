@@ -152,7 +152,8 @@ For A or B:
 
    `tokenState` should be `"active"`. The token itself is never shown, only its last 6 characters.
 
-What pairing creates: a credential for this phone only, stored with the app's other secrets on the phone.
+What pairing creates: a credential for this phone only, kept on the phone encrypted with a key in the
+Android Keystore (not in the app's ordinary storage; the app's data is also excluded from Android backups).
 The server keeps only its fingerprint (hash). The admin `TB_API_TOKEN`, the Upstox tokens and the Firebase
 key are **never** in the app. Five wrong codes from one address within 15 minutes block pairing from that
 address for a while.
@@ -217,12 +218,19 @@ If nothing arrives:
                                    sends a new one (the app does that each time it starts)
 ```
 
-**No duplicates between the phone and the server.** Both run the same code, so the same signal has
-the same alert id on both. While cloud alerts are on, the phone does not pop up its own copy of a market
-signal the server pushes (rising, falling, breakouts, day-trade, intraday, Early Movers, top picks). It
-still keeps it in the Alerts tab and shows the banner when the app is open. A push for an alert the phone
-already has is not shown again. Practice money, price alerts (stop-loss / target), plans and the
-auto-trader are about the phone's own data, so they still alert from the phone.
+**No duplicates between the phone and the server — and no gaps when the server stops.** Both run the
+same code, so the same signal has the same alert id on both. While the app runs it asks the server every
+3 minutes (one small request) whether it is making signals, its pushes work and this phone's token is
+active. Only while the server says yes (within the last 7 minutes) does the phone leave the market signals
+the server pushes (rising, falling, breakouts, day-trade, intraday, Early Movers, top picks) to the server:
+it then keeps them in the Alerts tab and shows the banner when the app is open, without a second pop-up.
+If the server is down, unreachable, or not making signals (e.g. its Upstox token expired), the phone's
+own pop-ups come back by themselves. A push for an alert the phone already has is not shown again.
+Practice money, price alerts (stop-loss / target), plans and the auto-trader are about the phone's own
+data, so they always alert from the phone. The server never pushes the phone-only messages (Upstox
+login reminder, evening scan summary). A market signal the server could not deliver within 30 minutes
+(e.g. it was down) is dropped, not delivered late.
 
-**Battery:** the app runs no background work of its own for this. Android's Google Play services receive
-the pushes. The app only checks its push token when it starts.
+**Battery:** the app runs no background work of its own for this when it is closed — Android's Google
+Play services receive the pushes. While it runs, it checks its push token at start and asks the server
+every 3 minutes.

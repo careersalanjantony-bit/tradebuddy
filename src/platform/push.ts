@@ -3,17 +3,20 @@ import { createLogger } from '../lib/log';
 import { DEFAULT_CLOUD_CATEGORIES, isCategory, type AlertCategory } from '../notify/categories';
 import type { CloudState } from '../notify/cloudMode';
 import { alertChannel } from '../notify/toneList';
-import { getLocal, getSecrets, getSettings, onLocalChanged, setLocal, updateSecrets } from '../storage/local';
+import { getLocal, getSettings, onLocalChanged, setLocal } from '../storage/local';
 import { ALERT_EVENT, notificationClicked } from './chromeShim';
 import { registerPlugin } from '@capacitor/core';
 import { appFetch, isNative } from './http';
+import { deleteCloudCredential, readCloudCredential, saveCloudCredential } from './secureStore';
 
 /**
  * Milestone 4 — the phone's side of cloud alerts (Firebase Cloud Messaging).
  *
  *  Pairing: Settings → Cloud alerts → the server's https address + a one-time code from the server.
- *  The server answers with this phone's own credential (kept with the app's other secrets); the
- *  server's admin token, the Upstox token and the Firebase key are never on the phone.
+ *  The server answers with this phone's own credential (kept in Android Keystore-backed storage,
+ *  secureStore.ts); the server's admin token, the Upstox token and the Firebase key are never on the phone.
+ *  Heartbeat (review fix): while the app runs it checks every 3 minutes that the server covers it;
+ *  only then does the phone leave market alerts to the server (cloudMode.ts).
  *  Push: Android's permission is asked once; the FCM token goes to the server and again whenever
  *  Firebase changes it (checked at every start — no background work of its own).
  *  Received while the app is open: kept in the Alerts tab and shown as the in-app banner (not twice
@@ -45,7 +48,16 @@ export async function firebaseReady(): Promise<boolean> {
   return (await PushSetup.status().catch(() => ({ configured: false }))).configured;
 }
 
-/** The server's address as typed: https only (http only for a test server on this computer / emulator). */
+let localHttpForTests = false;
+/** Tests only: allow http://127.0.0.1 (a test server on this computer). Never in the app. */
+export function __allowLocalHttpForTests(on: boolean): void {
+  localHttpForTests = on;
+}
+
+/**
+ * The server's address as typed: https only (review fix: no plain-http exception — the pairing code and
+ * the phone's credential must never travel unencrypted, not even to a local address).
+ */
 export function normalizeServerUrl(input: string): string {
   let u: URL;
   try {
@@ -53,15 +65,15 @@ export function normalizeServerUrl(input: string): string {
   } catch {
     throw new CloudError('That is not a web address. Example: https://tradebuddy.example.com');
   }
-  const local = ['localhost', '127.0.0.1', '10.0.2.2'].includes(u.hostname);
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) throw new CloudError('The address must start with https:// (the connection has to be encrypted).');
+  const testLocal = localHttpForTests && u.protocol === 'http:' && u.hostname === '127.0.0.1';
+  if (u.protocol !== 'https:' && !testLocal) throw new CloudError('The address must start with https:// (the connection has to be encrypted).');
   if (u.username || u.password || u.search || u.hash) throw new CloudError('Give only the server address, without a user, ? or #.');
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
 }
 
 async function api<T>(path: string, method: string, body?: unknown): Promise<T> {
   const cloud = await getLocal('cloud');
-  const cred = (await getSecrets()).cloudDeviceCredential;
+  const cred = await readCloudCredential();
   if (!cloud || !cred) throw new CloudError('This phone is not paired with a server.');
   const res = await appFetch(`${cloud.serverUrl}${path}`, {
     method,
@@ -104,8 +116,9 @@ export async function pairWithServer(serverUrl: string, code: string, name: stri
   });
   const json = (await res.json().catch(() => ({}))) as { deviceId?: string; credential?: string; message?: string };
   if (!res.ok || !json.deviceId || !json.credential) throw new CloudError(json.message ?? `Pairing failed (the server answered ${res.status}).`);
-  await updateSecrets({ cloudDeviceCredential: json.credential });
-  const state: CloudState = { serverUrl: base, deviceId: json.deviceId, name: name.trim() || 'Android phone', pairedAt: Date.now(), categories: [...DEFAULT_CLOUD_CATEGORIES], tokenSentAt: null, lastError: null };
+  // review fix: the credential goes to the Android Keystore-backed storage, not the app's ordinary storage
+  await saveCloudCredential(json.credential);
+  const state: CloudState = { serverUrl: base, deviceId: json.deviceId, name: name.trim() || 'Android phone', pairedAt: Date.now(), categories: [...DEFAULT_CLOUD_CATEGORIES], tokenSentAt: null, lastError: null, serverOkAt: null };
   await setLocal('cloud', state);
   await syncPreferences().catch(() => undefined);
   await startPush().catch((err: unknown) => patchCloud({ lastError: err instanceof Error ? err.message : String(err) }));
@@ -116,6 +129,36 @@ export async function pairWithServer(serverUrl: string, code: string, name: stri
 export async function sendToken(token: string, now = Date.now()): Promise<void> {
   await api('/v1/device/fcm-token', 'PUT', { token });
   await patchCloud({ tokenSentAt: now, lastError: null });
+  await checkServer(Date.now()).catch(() => false);
+}
+
+/** What GET /v1/device says about the server right now. */
+export interface ServerReport {
+  device: { tokenState: string; lastPushAt: number | null; push: { sent: number; failed: number; pending: number } };
+  pushConfigured: boolean;
+  server?: { signals: boolean; push: boolean; tokenActive: boolean; at: number };
+}
+
+/**
+ * Review fix — the cloud heartbeat. While the app runs (its own scanners only run then), it asks the
+ * server every few minutes whether it is making signals, its pushes work and this phone's token is
+ * active. Only after a yes does the phone stop popping up its own copy of a market alert; when the
+ * server is down, unreachable or not making signals, the phone's own notifications come back by
+ * themselves within CLOUD_FRESH_MS. Returns whether the server covers this phone now.
+ */
+export async function checkServer(now = Date.now()): Promise<boolean> {
+  const c = await getLocal('cloud');
+  if (!c) return false;
+  try {
+    const r = await api<ServerReport>('/v1/device', 'GET');
+    const ok = !!r.server && r.server.signals && r.server.push && r.server.tokenActive;
+    await patchCloud(ok ? { serverOkAt: now, lastError: null } : { serverOkAt: null, lastError: !r.server ? 'the server is too old for cloud alerts' : !r.server.signals ? 'the server is not making signals right now (Upstox token or jobs)' : !r.server.push ? 'the server cannot push right now (Firebase)' : 'the server has no valid push token for this phone' });
+    return ok;
+  } catch (err) {
+    // unreachable: keep the last yes — it runs out by itself after CLOUD_FRESH_MS
+    await patchCloud({ lastError: `server not reached: ${err instanceof Error ? err.message : String(err)}` });
+    return false;
+  }
 }
 
 /** The data of a pushed alert, checked (FCM data is strings only). */
@@ -157,9 +200,11 @@ export async function handlePushTapped(data: PushData): Promise<string | null> {
 }
 
 let listening = false;
-/** Tests only: forget the plugin listeners (the stand-in plugin is reset between tests). */
+/** Tests only: forget the plugin listeners (the stand-in plugin is reset between tests) and the heartbeat. */
 export function __resetCloudPush(): void {
   listening = false;
+  if (heartbeat) clearInterval(heartbeat);
+  heartbeat = null;
 }
 
 /** Asks Android for permission (once), listens for the token and for pushes, and registers with FCM. */
@@ -193,7 +238,7 @@ export async function unpair(): Promise<void> {
       /* Firebase not reachable: the server has forgotten this phone anyway */
     }
   }
-  await updateSecrets({ cloudDeviceCredential: null });
+  await deleteCloudCredential();
   await setLocal('cloud', null);
 }
 
@@ -201,11 +246,15 @@ export async function sendTestPush(): Promise<void> {
   await api('/v1/device/test-push', 'POST');
 }
 
-export async function serverStatus(): Promise<{ device: { tokenState: string; lastPushAt: number | null; push: { sent: number; failed: number; pending: number } }; pushConfigured: boolean }> {
+export async function serverStatus(): Promise<ServerReport> {
   return api('/v1/device', 'GET');
 }
 
-/** At app start: if paired, refresh the token (Firebase may have changed it) and keep preferences in step. */
+/** How often the running app asks the server whether it covers this phone (one small request). */
+export const HEARTBEAT_MS = 3 * 60_000;
+let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+/** At app start: if paired, refresh the token (Firebase may have changed it), keep preferences in step and start the heartbeat. */
 export async function initCloudPush(): Promise<void> {
   if (!isNative() || !(await getLocal('cloud'))) return;
   await startPush().catch((err: unknown) => patchCloud({ lastError: err instanceof Error ? err.message : String(err) }));
@@ -214,6 +263,11 @@ export async function initCloudPush(): Promise<void> {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => void syncPreferences().catch(() => undefined), 2_000);
   });
+  void checkServer().catch(() => false);
+  heartbeat ??= setInterval(() => {
+    void getLocal('cloud').then((c) => (c ? checkServer() : false)).catch(() => false);
+  }, HEARTBEAT_MS);
+  (heartbeat as { unref?: () => void }).unref?.();
 }
 
 export const validCategories = (v: unknown[]): AlertCategory[] => v.filter(isCategory);

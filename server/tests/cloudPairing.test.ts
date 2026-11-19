@@ -19,6 +19,19 @@ const h = vi.hoisted(() => ({
   token: `fcm-${'q'.repeat(150)}:APA91b`,
   listeners: {} as Record<string, (x: unknown) => void>,
   urls: [] as string[],
+  keystore: new Map<string, string>(),
+  signals: true,
+}));
+
+vi.mock('@capgo/capacitor-native-biometric', () => ({
+  NativeBiometric: {
+    setData: async ({ key, value }: { key: string; value: string }) => void h.keystore.set(key, value),
+    getData: async ({ key }: { key: string }) => {
+      if (!h.keystore.has(key)) throw new Error('not found');
+      return { value: h.keystore.get(key)! };
+    },
+    deleteData: async ({ key }: { key: string }) => void h.keystore.delete(key),
+  },
 }));
 
 vi.mock('../../src/platform/http', () => ({
@@ -51,7 +64,10 @@ vi.mock('@capacitor/core', async (importOriginal) => {
 const phone = await import('../../src/platform/push');
 const { notify } = await import('../../src/notify/chrome');
 const { getAlertHistory } = await import('../../src/alerts/history');
-const { getLocal, getSecrets } = await import('../../src/storage/local');
+const { getLocal } = await import('../../src/storage/local');
+const { readCloudCredential } = await import('../../src/platform/secureStore');
+// the test server runs on this computer without TLS (the app itself accepts only https)
+phone.__allowLocalHttpForTests(true);
 
 let tmp: ReturnType<typeof tempDir>;
 let store: Store;
@@ -77,7 +93,7 @@ beforeAll(async () => {
   devices = new DeviceStore(store.db, () => Date.now());
   push = new PushService(store.db, devices, fcm, () => Date.now());
   const router = new Router();
-  addDeviceRoutes(router, { devices, push, projectId: fcm.projectId, now: () => Date.now() });
+  addDeviceRoutes(router, { devices, push, projectId: fcm.projectId, now: () => Date.now(), signals: async () => h.signals });
   http = createHttpServer({ host: '127.0.0.1', port: 0, apiToken: API_TOKEN, router, deviceAuth: (c) => devices.authenticate(c) });
   base = `http://127.0.0.1:${await http.listen()}`;
 });
@@ -95,10 +111,12 @@ describe('phone ↔ server, end to end', () => {
     const { code } = devices.issuePairingCode();
     await phone.pairWithServer(base, code, 'Pixel 8', '1.20.0');
     await vi.waitFor(async () => expect((await getLocal('cloud'))?.tokenSentAt).toBeTypeOf('number'));
+    // the heartbeat: the real server confirms it makes signals, can push and has this phone's token
+    await vi.waitFor(async () => expect((await getLocal('cloud'))?.serverOkAt).toBeTypeOf('number'));
     const [d] = devices.list();
     expect(d).toMatchObject({ name: 'Pixel 8', platform: 'android', appVersion: '1.20.0', tokenState: 'active', fcmToken: h.token, channelId: 'alerts-cash', quietHours: { enabled: false } });
     expect(d!.categories).toEqual(['rising', 'falling', 'breakout', 'daytrade', 'intraday', 'early', 'picks', 'system']);
-    expect(devices.authenticate((await getSecrets()).cloudDeviceCredential)?.id).toBe(d!.id);
+    expect(devices.authenticate(await readCloudCredential())?.id).toBe(d!.id);
     // the code worked once
     const again = await fetch(`${base}/v1/devices/pair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: 'x', platform: 'android' }) });
     expect(again.status).toBe(401);
@@ -133,15 +151,26 @@ describe('phone ↔ server, end to end', () => {
     expect(show).not.toHaveBeenCalled();
   });
 
-  it("the phone's test push goes through the outbox", async () => {
+  it("the phone's test push goes through the outbox (one per 30 seconds)", async () => {
     await phone.sendTestPush();
     expect(await push.processDue()).toMatchObject({ sent: 1 });
     expect(sent.at(-1)!.data.alertId).toMatch(/^test-push-/);
     expect((await phone.serverStatus()).device.push.sent).toBe(3);
+    await expect(phone.sendTestPush()).rejects.toThrow(/One test push every 30 seconds/);
+  });
+
+  it('when the server stops making signals, the phone takes its alerts back', async () => {
+    h.signals = false;
+    expect(await phone.checkServer()).toBe(false);
+    const id = 'alert:bo-HCLTECH-2026-11-19';
+    await notify(id, { title: 'Breakout: HCLTECH', message: 'm' });
+    expect(chrome.notifications.create).toHaveBeenLastCalledWith(id, expect.not.objectContaining({ inAppOnly: true }));
+    h.signals = true;
+    expect(await phone.checkServer()).toBe(true);
   });
 
   it('unpairing revokes the phone on the server: its credential stops working and nothing more is sent', async () => {
-    const cred = (await getSecrets()).cloudDeviceCredential!;
+    const cred = (await readCloudCredential())!;
     await phone.unpair();
     expect(devices.list()[0]!.revokedAt).toBeTypeOf('number');
     const res = await fetch(`${base}/v1/device`, { headers: { Authorization: `Bearer ${cred}` } });

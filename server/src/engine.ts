@@ -35,7 +35,7 @@ import { addDeviceRoutes } from './http/deviceRoutes';
 import { DeviceStore } from './push/devices';
 import { FcmClient } from './push/fcm';
 import { AccessTokenSource, loadServiceAccount } from './push/google';
-import { PushService } from './push/outbox';
+import { PushService, serverPushAlert } from './push/outbox';
 
 /**
  * Starts everything, in this order: logging → database → chrome.storage replacement → the app's own
@@ -118,9 +118,12 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   /** every new alert → the push outbox (one row per phone that wants it); never blocks the scan */
   const queuePush = async (id: string, o: { title?: string; message?: string }): Promise<void> => {
     try {
+      // review fix: not the phone-only messages (login reminder, evening summary…)
+      const a = serverPushAlert(id, o.title ?? id, o.message ?? '');
+      if (!a) return;
       const hist = (await local.get('alertHistory')).alertHistory as { items?: Array<{ id: string; detail?: AlertDetail }> } | undefined;
       const detail = hist?.items?.find((x) => x.id === id)?.detail;
-      push.enqueue({ id, title: o.title ?? id, message: o.message ?? '', at: now(), ...(detail ? { detail } : {}) });
+      push.enqueue({ ...a, at: now(), ...(detail ? { detail } : {}) });
     } catch (err) {
       log.warn('Could not queue a push', { id, error: errorMessage(err) });
     }
@@ -256,7 +259,14 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       jobs: () => (config.jobs ? { scheduled: scheduler.getAll(), running: scheduler.runningNames(), fired: scheduler.fired, skipped: scheduler.skipped } : null),
       now,
     });
-    addDeviceRoutes(router, { devices, push, projectId: fcm?.projectId ?? null, now });
+    addDeviceRoutes(router, {
+      devices,
+      push,
+      projectId: fcm?.projectId ?? null,
+      now,
+      // the server makes signals when its jobs run and its Upstox token has not been rejected
+      signals: async () => config.jobs && hasToken && (await getAuth()).analytics?.status !== 'invalid',
+    });
     http = createHttpServer({ host: config.host, port: config.port, apiToken: config.apiToken, router, deviceAuth: (c) => devices.authenticate(c) });
     port = await http.listen();
     if (config.jobs) {

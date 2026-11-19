@@ -97,18 +97,27 @@ a second start on the same data folder is refused.
 
 ### Updating a milestone 3 server to milestone 4 (cloud alerts)
 
+The exact step-by-step production checklist (backup, memory/disk, key transfer, HTTPS, deploy, migration,
+pairing, test push, rollback) is [docs/M4_DEPLOYMENT_CHECKLIST.md](../docs/M4_DEPLOYMENT_CHECKLIST.md).
+In short:
+
 ```bash
-sudo systemctl stop tradebuddy-server
-sudo cp -a /var/lib/tradebuddy /var/lib/tradebuddy.bak-m3      # a NEW backup; keep the older ones as they are
-cd /opt/tradebuddy && sudo git fetch && sudo git checkout server-backend && sudo git pull
+cd /opt/tradebuddy && git rev-parse HEAD > ~/m3-commit.txt       # for the rollback
+sudo systemctl stop tradebuddy-server                            # a clean stop writes everything to the .db file
+sudo mkdir -p /var/backups/tradebuddy && sudo cp -a /var/lib/tradebuddy /var/backups/tradebuddy/state-m3-$(date +%Y%m%d-%H%M)
+sudo git fetch && sudo git checkout --detach <reviewed commit>   # keep the older backups as they are
 sudo npm ci && sudo npm run server:typecheck && sudo npm run server:test && sudo npm run server:build
 sudo systemctl start tradebuddy-server && journalctl -u tradebuddy-server -f
 ```
 
-The database moves to schema 3 by itself (three new tables: `devices`, `pairing_codes`, `push_outbox`;
-nothing existing changes). Without a Firebase key everything runs as before; push is simply off. Then
-follow [docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md) (key, HTTPS, pairing). To go back: stop,
-restore `/var/lib/tradebuddy.bak-m3`, check out the previous commit, build, start.
+The database moves to schema 3 by itself, in one transaction: three new, empty tables (`devices`,
+`pairing_codes`, `push_outbox`); no existing table or row changes (`server/tests/migration.test.ts` builds
+a milestone 3 database with settings, watchlist, alert history, models, signals and candles and checks
+every row is identical afterwards; a failed migration rolls back to schema 2 untouched). Without a
+Firebase key everything runs as before; push is simply off. Then follow
+[docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md). To go back: stop, check out the commit in
+`~/m3-commit.txt`, build, restore the backup folder into `/var/lib/tradebuddy` (removing any `-wal` /
+`-shm` files first), start. A milestone 3 build refuses a schema 3 database, so the restore is required.
 
 What systemd does: starts the server at boot, restarts it 5 s after a crash (not after exit code 78,
 which means a bad setting), sends SIGTERM on stop and waits 30 s. On SIGTERM the server stops taking
@@ -157,10 +166,10 @@ The phone's own calls:
 | Call | Auth | Answer |
 | --- | --- | --- |
 | `POST /v1/devices/pair` | the pairing code only | `{deviceId, credential}`: the phone's own credential `tbd.<id>.<secret>`, shown once; the server keeps only its SHA-256. 5 wrong codes per address per 15 minutes (30 per hour overall) → `429` |
-| `GET /v1/device` | `Bearer tbd.…` | This phone's status and push counts |
+| `GET /v1/device` | `Bearer tbd.…` | This phone's status and push counts, and `server: {signals, push, tokenActive}` — whether the server covers this phone right now (the app's heartbeat; only then does the phone leave market alerts to the server) |
 | `PUT /v1/device/fcm-token` | `Bearer tbd.…` | `{token}` — register or refresh the FCM token (checked: 32–4096 characters, FCM's alphabet) |
 | `PUT /v1/device/preferences` | `Bearer tbd.…` | `{categories, quietHours, channelId}` — which alert kinds, quiet hours (IST), Android channel |
-| `POST /v1/device/test-push` | `Bearer tbd.…` | A test notification to itself (`503` if push is off, `409` before a token) |
+| `POST /v1/device/test-push` | `Bearer tbd.…` | A test notification to itself (`503` if push is off, `409` before a token, `429` within 30 s of the last one) |
 | `DELETE /v1/device` | `Bearer tbd.…` | Unpair (logout): the credential stops working at once |
 
 Request bodies are JSON up to 16 KB (`413` above, `400` for broken JSON). Behind Caddy on the same
@@ -173,8 +182,13 @@ for the same alert and phone — and the scan continues at once. A task every 2 
 FCM HTTP v1 (an OAuth token from the service-account key, cached for its hour). Temporary errors (429,
 5xx, network) are retried after 5 s, 10 s, 20 s … up to 30 min, at most 8 tries, honouring `Retry-After`;
 an `UNREGISTERED` / invalid token marks the phone's token invalid (no more pushes until the app sends a
-new one); a message Google refuses is given up and recorded. The outbox survives restarts; finished rows are
-pruned after 7 days (pending ones stay). Delivery is best effort — FCM and the phone decide in the end.
+new one; a bare 404 — e.g. a wrong project id — is a setup problem and is retried, it never wipes the
+tokens); a message Google refuses is given up and recorded. A row older than its time-to-live (30 minutes
+for a market signal, a day for server messages) is dropped instead of sent late — e.g. after the server
+was down. The outbox survives restarts; finished rows are pruned after 7 days (pending ones stay). The
+server does not push the phone-only messages (Upstox login reminder, session expired, evening scan
+summary); its own "Analytics Token rejected" goes out as `server-analytics-invalid`. Delivery is best
+effort — FCM and the phone decide in the end.
 
 ## How it works
 

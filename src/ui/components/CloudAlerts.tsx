@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getLocal } from '../../storage/local';
 import { CATEGORY_LABEL, MARKET_CATEGORIES, type AlertCategory } from '../../notify/categories';
-import { cloudActive } from '../../notify/cloudMode';
+import { cloudActive, cloudConfirmed } from '../../notify/cloudMode';
 import { isNative } from '../../platform/http';
 import { formatDateTimeIST } from '../../lib/format';
 import { useLocal } from '../hooks';
@@ -100,6 +100,8 @@ export function CloudAlerts() {
   }
 
   const active = cloudActive(cloud);
+  // review fix: "On" only while the server confirms it covers this phone; otherwise the phone alerts by itself
+  const confirmed = cloudConfirmed(cloud);
   const toggle = (c: AlertCategory, on: boolean) =>
     void run('prefs', async () => {
       const next = on ? [...new Set([...cloud.categories, c])] : cloud.categories.filter((x) => x !== c);
@@ -110,12 +112,14 @@ export function CloudAlerts() {
     <section class="card" data-testid="cloud-alerts">
       <h2>Cloud alerts</h2>
       <p class="small" style={{ marginTop: 0 }}>
-        {active ? '✅ On' : '⏳ Waiting for Firebase'} — paired with <b>{new URL(cloud.serverUrl).host}</b> as “{cloud.name}” since {formatDateTimeIST(cloud.pairedAt)}.
+        {confirmed ? '✅ On' : active ? '⚠️ Paired — the server is not confirmed right now, so this phone alerts by itself' : '⏳ Waiting for Firebase'} — paired with <b>{new URL(cloud.serverUrl).host}</b> as “
+        {cloud.name}” since {formatDateTimeIST(cloud.pairedAt)}.
       </p>
       {cloud.lastError && <p class="small err-text">Last problem: {cloud.lastError}</p>}
       <p class="small muted">
-        The server sends the market alerts you tick below. While cloud alerts are on, this phone shows those in the app only (no second pop-up). Your practice money, price alerts, plans and
-        the auto-trader still alert from the phone itself. Delivery is best effort.
+        The server sends the market alerts you tick below. While the server confirms it is working (checked every 3 minutes while the app runs), this phone shows those in the app only (no
+        second pop-up); if the server stops, the phone's own pop-ups come back by themselves. Your practice money, price alerts, plans and the auto-trader still alert from the phone itself.
+        Delivery is best effort.
       </p>
       {CHOICES.map((c) => (
         <label class="switch-row" data-cloud={c}>
@@ -156,8 +160,9 @@ export function CloudAlerts() {
               const p = await push();
               if (isNative()) await p.startPush();
               const s = await p.serverStatus();
+              await p.checkServer();
               setStatus(
-                `Server reached. Push ${s.pushConfigured ? 'is set up' : 'is NOT set up on the server yet'}; this phone's token: ${s.device.tokenState}; sent ${s.device.push.sent}, waiting ${s.device.push.pending}, failed ${s.device.push.failed}.`,
+                `Server reached. Push ${s.pushConfigured ? (s.server?.push === false ? 'is set up but failing right now' : 'is set up') : 'is NOT set up on the server yet'}; signals ${s.server?.signals ? 'being made' : 'NOT being made (Upstox token or jobs)'}; this phone's token: ${s.device.tokenState}; sent ${s.device.push.sent}, waiting ${s.device.push.pending}, failed ${s.device.push.failed}.`,
               );
             })
           }

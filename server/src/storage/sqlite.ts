@@ -9,7 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
  * Every schema change is a new entry at the END of MIGRATIONS. Never edit a released entry.
  */
 
-const MIGRATIONS: string[] = [
+/** Exported for the migration tests only (they build an older database from the first entries). */
+export const MIGRATIONS: readonly string[] = [
   // 1: key-value areas (chrome.storage.local / session replacement) and a small event journal
   `CREATE TABLE kv (
      area TEXT NOT NULL,
@@ -138,8 +139,15 @@ export function openStore(dataDir: string, file = 'tradebuddy.db'): Store {
   const path = file === ':memory:' ? ':memory:' : join(dataDir, file);
   if (file !== ':memory:') mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
-  const schemaVersion = migrate(db);
+  let schemaVersion: number;
+  try {
+    db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    schemaVersion = migrate(db);
+  } catch (err) {
+    // review fix: a refused or failed migration (rolled back) must not leave the file open
+    db.close();
+    throw err;
+  }
   const insertEvent = db.prepare('INSERT INTO server_events (ts, kind, data) VALUES (?, ?, ?)');
   const trimEvents = db.prepare('DELETE FROM server_events WHERE id <= (SELECT MAX(id) FROM server_events) - ?');
   let closed = false;

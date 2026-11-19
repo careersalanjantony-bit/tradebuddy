@@ -7,7 +7,7 @@ import { clientIp } from '../src/http/server';
 import { DeviceStore, PAIRING_TTL_MS } from '../src/push/devices';
 import { classify, FcmClient, type PushMessage, type SendResult } from '../src/push/fcm';
 import { AccessTokenSource, CredentialError, parseServiceAccount, signJwt, type ServiceAccount } from '../src/push/google';
-import { backoffMs, buildPayload, inQuietHours, MAX_ATTEMPTS, PushService } from '../src/push/outbox';
+import { backoffMs, buildPayload, inQuietHours, MAX_ATTEMPTS, PushService, serverPushAlert } from '../src/push/outbox';
 import { openStore, type Store } from '../src/storage/sqlite';
 import { API_TOKEN, getJson, logCapture, tempDir, testConfig } from './helpers';
 
@@ -185,13 +185,53 @@ describe('phones, pairing and the outbox', () => {
     expect(push.enqueue({ id: 'alert:short-A-2', title: 't', message: 'm', at: t })).toBe(0);
     ds.setFcmToken(dev.id, `${TOKEN}new`);
     expect(push.enqueue({ id: 'alert:short-A-3', title: 't', message: 'm', at: t })).toBe(1);
-    // always busy → given up after the last try
+    // always busy → given up after the last try (a server message: it may wait up to a day)
+    expect(push.enqueue({ id: 'test-giveup', title: 't', message: 'm', at: t })).toBe(1);
     fcm.send.mockImplementation(async () => ({ ok: false, kind: 'retry', error: 'HTTP 503' }));
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       await push.processDue();
       t += 31 * 60_000;
     }
-    expect(push.rowsFor('alert:short-A-3')[0]).toMatchObject({ status: 'failed', attempts: MAX_ATTEMPTS });
+    expect(push.rowsFor('test-giveup')[0]).toMatchObject({ status: 'failed', attempts: MAX_ATTEMPTS });
+    // the market alert ran out of its 30 minutes while retrying: dropped, never sent late
+    expect(push.rowsFor('alert:short-A-3')[0]).toMatchObject({ status: 'skipped', last_error: expect.stringMatching(/expired/) });
+    expect(push.healthy).toBe(false); // failing: the phone is told so (it alerts by itself again)
+  });
+
+  it('review fix: after the server was down for hours, old market alerts are not pushed late', async () => {
+    open();
+    const ds = new DeviceStore(store.db, now);
+    const dev = ds.pair(ds.issuePairingCode().code, { name: 'A', platform: 'android', appVersion: null })!.device;
+    ds.setFcmToken(dev.id, TOKEN);
+    const fcm = { send: vi.fn(async (): Promise<SendResult> => ({ ok: true, messageId: 'm' })) };
+    let push = new PushService(store.db, ds, fcm, now);
+    push.enqueue({ id: 'alert:bo-OLD-1', title: 'Breakout: OLD', message: 'm', at: t });
+    push.enqueue({ id: 'test-old-server-message', title: 'server note', message: 'm', at: t });
+    // down for 3 hours, then restarted
+    store.close();
+    store = openStore(dir);
+    t += 3 * 3_600_000;
+    push = new PushService(store.db, new DeviceStore(store.db, now), fcm, now);
+    expect(await push.processDue()).toMatchObject({ sent: 1, skipped: 1 });
+    expect(push.rowsFor('alert:bo-OLD-1')[0]).toMatchObject({ status: 'skipped', last_error: expect.stringMatching(/expired/) });
+    expect(push.rowsFor('test-old-server-message')[0]!.status).toBe('sent'); // a day to live
+    expect(fcm.send).toHaveBeenCalledTimes(1);
+    expect(push.healthy).toBe(true);
+  });
+
+  it('review fix: a bare 404 from Google (e.g. a wrong project id) does not wipe the phones’ tokens', () => {
+    const inv = vi.fn();
+    expect(classify(404, { status: 'NOT_FOUND', message: 'Requested entity was not found.' }, null, inv)).toMatchObject({ kind: 'retry' });
+    expect(classify(404, { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] }, null, inv)).toMatchObject({ kind: 'invalid-token' });
+  });
+
+  it('review fix: the server does not push the phone-only messages; its own token problem goes under its own id', () => {
+    expect(serverPushAlert('login-reminder', 'Log in to Upstox', 'm')).toBeNull();
+    expect(serverPushAlert('session-expired', 'Session ended', 'm')).toBeNull();
+    expect(serverPushAlert('scan-summary', 'Evening scan', 'm')).toBeNull();
+    expect(serverPushAlert('analytics-invalid', 'Upstox Analytics Token rejected', 'm')).toMatchObject({ id: 'server-analytics-invalid', title: 'TradeBuddy server: Upstox Analytics Token rejected' });
+    expect(serverPushAlert('alert:bo-X-1', 't', 'm')).toEqual({ id: 'alert:bo-X-1', title: 't', message: 'm' });
+    expect(categoryOf('server-analytics-invalid')).toBe('system');
   });
 
   it('payloads stay small and every alert kind maps to a category', () => {
@@ -257,8 +297,9 @@ describe('the push API on the running server', () => {
     await server.push.processDue();
     expect(sent).toHaveLength(1);
 
-    // a test push, and the admin view hides the token and the credential
+    // a test push (then not another for 30 seconds), and the admin view hides the token and the credential
     expect((await call('POST', '/v1/device/test-push', undefined, cred)).status).toBe(202);
+    expect((await call('POST', '/v1/device/test-push', undefined, cred)).status).toBe(429);
     await server.push.processDue();
     expect(sent[1]!.title).toContain('test notification');
     const list = await call('GET', '/v1/devices');
@@ -266,6 +307,18 @@ describe('the push API on the running server', () => {
     expect(JSON.stringify(list.body)).not.toContain(cred.split('.')[2]!);
     expect(list.body.devices[0]).toMatchObject({ tokenHint: `…${TOKEN.slice(-6)}`, push: { sent: 2 } });
     expect((await call('GET', '/v1/push')).body).toMatchObject({ configured: true, projectId: 'tradebuddy-test', outbox: { sent: 2 } });
+    // review fix: the phone learns whether the server covers it (this test server makes no signals: jobs off, no Upstox token)
+    expect((await call('GET', '/v1/device', undefined, cred)).body.server).toMatchObject({ signals: false, push: true, tokenActive: true });
+    // review fix: phone-only messages are not pushed; the server's own token problem is, under its own id
+    await notify('login-reminder', { title: 'Log in to Upstox', message: 'm' });
+    await notify('scan-summary', { title: 'Evening scan: no setups today', message: 'm' });
+    await notify('analytics-invalid', { title: 'Upstox Analytics Token rejected', message: 'Paste a new one.' });
+    await vi.waitFor(() => expect(server.push.stats().pending).toBe(1));
+    expect(server.push.rowsFor('login-reminder')).toEqual([]);
+    expect(server.push.rowsFor('scan-summary')).toEqual([]);
+    expect(server.push.rowsFor('server-analytics-invalid')).toHaveLength(1);
+    await server.push.processDue();
+    expect(sent.at(-1)!.title).toBe('TradeBuddy server: Upstox Analytics Token rejected');
 
     // restart: the phone stays paired
     const d = tmp.dir;
