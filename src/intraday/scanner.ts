@@ -267,7 +267,9 @@ export function classifyIntraday(x: IntradayInput): IntradayRow | null {
   if (x.t < INTRADAY.orEndT) return wait('the opening range forms until 9:30 — then a break above its high is needed');
   if (stretched) return wait(`stretched: ${stretched} — wait for a pullback, do not chase`);
   if (stopTooFar !== null) return wait(`the stop-loss would be ${stopTooFar.toFixed(1)}% away — too far; wait for a tighter setup`);
-  if (!orb) return wait(`waiting for a break above the first 15 minutes' high ₹${orHigh!.toFixed(2)}`);
+  // app v1.20.1: without today's candles (not loaded yet) there is no opening-range high to quote —
+  // this message used to crash the whole round (same WAIT as before, only the words differ)
+  if (!orb) return wait(orHigh === null ? "today's 5-minute candles are still loading — a break above the first 15 minutes' high is needed" : `waiting for a break above the first 15 minutes' high ₹${orHigh.toFixed(2)}`);
   if (rvol !== null && rvol < INTRADAY.rvolBuy) return wait(`volume only ${rvol.toFixed(1)}× its usual — a buy needs ${INTRADAY.rvolBuy}×`);
   if (rvol === null) return wait('usual volume not known yet — no buy without it');
   if (!emaUp) return wait(ema9 === null ? 'the 5-minute trend shows after 9:45' : 'the 5-minute trend is not up yet');

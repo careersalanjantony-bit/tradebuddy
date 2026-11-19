@@ -301,10 +301,22 @@ async function scan(now: number, force: boolean): Promise<number> {
     return cached ? completedBars(cached.bars, t) : EMPTY;
   };
 
+  // app v1.20.1: one stock that cannot be read must never stop the whole round (the list would stay empty)
+  let skipped = 0;
+  const safely = <T>(k: string, fn: () => T): T | null => {
+    try {
+      return fn();
+    } catch (err) {
+      skipped++;
+      log.warn(`Intraday: ${k} skipped this round`, { error: err });
+      return null;
+    }
+  };
+
   // the BUY engine, unchanged
   const buyRows = new Map<string, IntradayRow>();
   for (const [k, v] of candidates) {
-    const row = classifyIntraday({
+    const row = safely(k, () => classifyIntraday({
       key: k,
       symbol: v.inst.trading_symbol,
       tick: v.inst.tick,
@@ -322,7 +334,7 @@ async function scan(now: number, force: boolean): Promise<number> {
       marketWeak: gate.weak,
       capital,
       maxRisk,
-    });
+    }));
     if (row) buyRows.set(k, row);
   }
 
@@ -365,7 +377,7 @@ async function scan(now: number, force: boolean): Promise<number> {
   for (const [k, v] of shortList) {
     if (sellRows.has(k)) continue;
     const b1 = bars1Cache.get(k);
-    const row = classifyShort(shortIn(k, v, b1 && t - b1.minute <= 2 ? completed1(b1.bars, t) : null));
+    const row = safely(k, () => classifyShort(shortIn(k, v, b1 && t - b1.minute <= 2 ? completed1(b1.bars, t) : null)));
     if (!row) continue;
     sellRows.set(k, row);
     // close to a SELL (a breakdown or a failed breakout, below VWAP): its 1-minute candles confirm it
@@ -378,7 +390,7 @@ async function scan(now: number, force: boolean): Promise<number> {
         const b1 = await fetchTodayBars(k, now, 1);
         if (!b1) return;
         bars1Cache.set(k, { minute: t, bars: b1 });
-        const row = classifyShort(shortIn(k, v, completed1(b1, t)));
+        const row = safely(k, () => classifyShort(shortIn(k, v, completed1(b1, t))));
         if (row) sellRows.set(k, row);
       } catch {
         /* no 1-minute candles: the confirmation waits */
@@ -412,7 +424,7 @@ async function scan(now: number, force: boolean): Promise<number> {
     },
     gate: gate.weak ? gate.text : null,
     shortGate: rising.strong ? rising.text : null,
-    ...(error ? { error } : {}),
+    ...(error || skipped ? { error: [error, skipped ? `${skipped} stock(s) could not be read this round` : null].filter(Boolean).join(' · ') } : {}),
   };
   await setSession('intraday', state);
   await alertBuys(sorted, now, settings.dayTrade.alerts);
@@ -592,7 +604,9 @@ async function followSignals(view: Map<string, Snap>, barsOf: (k: string) => Bar
       closeBy: '3:15 pm',
       event: step.event,
     };
-    await notify(`alert:intraday-${w.id}-${s.key}-${date}`, {
+    // a SELL's follow-ups have their own ids: a BUY and a SELL on the same stock the same day must not share
+    // one (an id shown in the last 24 hours is never shown or pushed again). BUY ids are unchanged.
+    await notify(`alert:intraday-${s.side === 'sell' ? 'sell-' : ''}${w.id}-${s.key}-${date}`, {
       title: `${w.icon} ${w.head(s)}: ${s.symbol} at ₹${v.ltp.toFixed(2)}`,
       message: `${s.side === 'buy' ? 'Intraday BUY' : 'Intraday SELL (sold first)'} from ₹${s.entry.toFixed(2)}: ${step.text}. You place the order yourself in Upstox.`,
       priority: step.event === 'stop' || step.event === 'invalid' ? 2 : 1,
