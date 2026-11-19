@@ -134,9 +134,9 @@ export async function pruneIntraday(key: string, sessions: number, now = Date.no
   await (await getDb()).delete('intraday', IDBKeyRange.bound([key, ''], [key, cutoff]));
 }
 
-/** Today's 5-minute bars so far (current trading day). */
-export async function fetchTodayBars(key: string, now = Date.now()): Promise<Bars | null> {
-  const data = await upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}`, { tokenKind: 'market' });
+/** Today's 5-minute bars so far (current trading day). App v1.20: `minutes` = 1 for 1-minute candles. */
+export async function fetchTodayBars(key: string, now = Date.now(), minutes: 1 | 5 = INTRADAY_INTERVAL): Promise<Bars | null> {
+  const data = await upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${minutes}`, { tokenKind: 'market' });
   return parseIntraday(data).get(istDate(now)) ?? null;
 }
 

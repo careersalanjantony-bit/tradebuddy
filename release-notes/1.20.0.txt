@@ -1,0 +1,7 @@
+Intraday now has SELL ideas too (sell first, buy back later the same day), next to BUY: filters All, BUY, SELL, WAIT and NO TRADE with live counts.
+A SELL needs many signs together - below VWAP, falling 5-minute trend, lower highs and lows, heavy selling volume, weaker than NIFTY and its sector, bearish RSI, a break below the opening-range low (or a failed breakout up), confirmed by 1-minute and 5-minute candles. Nifty 500 stocks only, Intraday only.
+Each SELL shows the sell price, buy-back stop-loss, target 1 and 2, shares and the most it can lose with charges. Tap it for the reasons, Sell first (practice) and Buy back; its stock page opens on the Sell-first view.
+New alerts: new BUY, new SELL, target reached, stop-loss hit and signal invalidated - each once.
+Alerts inside the app now show as one clean card under the top bar - entry, stop-loss, targets, shares and risk on separate lines - and the page moves down instead of being covered. More alerts stack as "+2 more".
+Fixed: the Practice order window stuck on "price loading..." for stocks from the Intraday list. It now gets the live price for any stock, never shows an old price, and offers Retry if Upstox fails.
+SELL ideas are new and not yet tested on past days - watch them for a few days. Not a guarantee - you place every order yourself.

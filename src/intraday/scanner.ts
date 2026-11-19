@@ -48,7 +48,8 @@ export const INTRADAY = {
   staleMs: 45_000,
 } as const;
 
-export type IntradayCall = 'BUY' | 'WAIT' | 'NO TRADE';
+/** app v1.20: SELL = sell first, buy back later (the separate short engine, intraday/short.ts) */
+export type IntradayCall = 'BUY' | 'SELL' | 'WAIT' | 'NO TRADE';
 
 export interface IntradayInput {
   key: string;
@@ -75,17 +76,26 @@ export interface IntradayInput {
   maxRisk: number;
 }
 
-export interface IntradayCheck {
-  id: 'change' | 'volume' | 'vwap' | 'orb' | 'ema' | 'candle' | 'buyers';
+/** One check of either engine (the BUY side's ids are below; the SELL side's in short.ts). */
+export interface RowCheck {
+  id: string;
   ok: boolean | null;
   text: string;
 }
 
+export interface IntradayCheck extends RowCheck {
+  id: 'change' | 'volume' | 'vwap' | 'orb' | 'ema' | 'candle' | 'buyers';
+}
+
 export interface IntradayPlan {
-  /** buy at (BUY) or buy only above (WAIT) */
+  /** buy at (BUY) or buy only above (WAIT); SELL side: sell first at / only below */
   entry: number;
+  /** SELL side: buy back if it rises to this */
   stop: number;
+  /** BUY: the target; SELL side: target 2 (the rest) */
   target: number;
+  /** SELL side only: target 1 (buy back half) */
+  t1?: number;
   /** reward ÷ risk */
   rr: number;
 }
@@ -94,10 +104,12 @@ export interface IntradayRow {
   key: string;
   symbol: string;
   call: IntradayCall;
+  /** app v1.20: which engine made the row — 'sell' = the short engine (missing = the BUY engine) */
+  side?: 'buy' | 'sell';
   score: number;
   /** the one-line reason for the call */
   why: string;
-  checks: IntradayCheck[];
+  checks: RowCheck[];
   price: number;
   changePct: number;
   fromOpenPct: number | null;
@@ -116,6 +128,17 @@ export interface IntradayRow {
   /** ₹ crore traded today */
   valueCr: number | null;
   at: number;
+  // ---- app v1.20, SELL side only
+  orLow?: number | null;
+  /** minutes IST when a 5-minute candle first closed below the broken level */
+  breakdownT?: number | null;
+  /** the level it broke below (or the opening-range high it failed at) */
+  level?: number | null;
+  rsi?: number | null;
+  ema20?: number | null;
+  /** change today minus NIFTY 50's / its sector's, percentage points */
+  relNifty?: number | null;
+  relSector?: number | null;
 }
 
 const WEIGHT: Record<IntradayCheck['id'], number> = { change: 15, volume: 20, vwap: 15, orb: 15, ema: 15, candle: 10, buyers: 10 };
@@ -254,9 +277,9 @@ export function classifyIntraday(x: IntradayInput): IntradayRow | null {
   return { ...base, call: 'BUY', why: `momentum after a breakout at ${hhmmT(breakoutT!)} — volume ${rvol.toFixed(1)}×, above VWAP` };
 }
 
-const CALL_RANK: Record<IntradayCall, number> = { BUY: 0, WAIT: 1, 'NO TRADE': 2 };
+const CALL_RANK: Record<IntradayCall, number> = { BUY: 0, SELL: 0, WAIT: 1, 'NO TRADE': 2 };
 
-/** BUY first, then WAIT, then NO TRADE; inside each the higher score first. */
+/** BUY and SELL first, then WAIT, then NO TRADE; inside each the higher score first. */
 export function sortIntraday(rows: IntradayRow[]): IntradayRow[] {
   return [...rows].sort((a, b) => CALL_RANK[a.call] - CALL_RANK[b.call] || b.score - a.score || b.changePct - a.changePct);
 }

@@ -74,6 +74,9 @@ function fallCandles() {
 const BREAK = 'NSE_EQ|INE423A01024';
 const BREAK_SYM = 'ADANIENT';
 allRows.push({ ...eq[0], name: 'Adani Enterprises Ltd.', trading_symbol: BREAK_SYM, isin: 'INE423A01024', instrument_key: BREAK, exchange_token: '99999' });
+/** app v1.20: a company the app does not follow (in no list, not held) — opened in the order window from the Intraday list */
+const LONE = 'NSE_EQ|INE0RPGTEST1';
+allRows.push({ ...eq[0], name: 'RPG Test Sciences', trading_symbol: 'RPGTEST', isin: 'INE0RPGTEST1', instrument_key: LONE, exchange_token: '99998' });
 mock.breakPrice = 200.3;
 mock.breakVol = 1_000_000;
 const BREAK_CLOSES = [199.0, 199.4, 199.1, 199.6, 199.3, 199.8, 199.5, 200.0, 199.7, 200.2, 199.9, 200.3, 200.0, 200.3, 200.1];
@@ -123,6 +126,8 @@ async function upstox(route) {
   const keys = (url.searchParams.get('instrument_key') ?? '').split(',').filter(Boolean);
   if (url.pathname === '/v2/market/holidays') return route.fulfill(json({ status: 'success', data: [] }));
   if (url.pathname === '/v3/market-quote/ltp') {
+    // app v1.20: Upstox failing for one stock (the order window must say so and offer Retry)
+    if (mock.ltpFail && keys.includes(mock.ltpFail)) return route.fulfill(json({ status: 'error', errors: [{ error_code: 'UDAPI100500', message: 'Something went wrong' }] }, 500));
     const data = {};
     // other NSE companies (the Nifty 500 breadth): about one in three up
     for (const k of keys) if (!symOf[k] && k !== BREAK && k.startsWith('NSE_EQ|INE')) data[`NSE_EQ:${k.slice(7)}`] = { last_price: hashPct(k) < 0.32 ? 101 : 99, instrument_token: k, ltq: 1, volume: 1000, cp: 100 };
@@ -570,7 +575,8 @@ check(
 );
 const riseModelText = ((await page.textContent('[data-testid="rise-model"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('the learned check says how it did on days it never saw, next to the old Rising-today list (never "100%")', riseModelText.includes('tested on the newest 36') && riseModelText.includes('the old Rising-today list: 29%') && riseModelText.includes('62%') && !/100%/.test(riseModelText), riseModelText.slice(0, 220));
-const riseBanner = await until(async () => ((await page.textContent('.alert-banners').catch(() => '')) ?? '').includes(`${BREAK_SYM} likely to keep rising`), 6000);
+// app v1.20 card: the symbol on its own line, the alert's words under it
+const riseBanner = await until(async () => new RegExp(`${BREAK_SYM}[\\s\\S]*likely to keep rising`).test((await page.textContent('.alert-banners').catch(() => '')) ?? ''), 6000);
 check('the alert pops up inside the app at the top (with the chosen tone)', riseBanner);
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-alert-banner.png') });
 await page.click('.alert-banner-close').catch(() => {});
@@ -987,6 +993,161 @@ console.log('── Pre-open morning (Tue 17 Nov 2026, 9:06 IST) — a second ph
   check('no sideways scrolling on the pre-open screen', !overflow2);
   mock.preopen = false;
   await ctx2.close();
+}
+
+console.log('── Intraday BUY / SELL, alert cards and the order-window price (Mon 16 Nov 2026, 4:10 pm) — a third phone');
+{
+  const ctx3 = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const p3 = await ctx3.newPage();
+  p3.on('pageerror', (e) => errors.push(`third phone: ${e.message}`));
+  await p3.clock.install({ time: new Date(Date.parse('2026-11-16T10:40:00Z')) }); // 16:10 IST: market closed, the scanner is idle
+  await p3.route('https://api.upstox.com/**', upstox);
+  await p3.route('https://assets.upstox.com/**', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/octet-stream', 'access-control-allow-origin': '*' }, body: gzipSync(Buffer.from(JSON.stringify(allRows))) }));
+  await p3.route('https://nsearchives.nseindia.com/**', (route) =>
+    route.request().url().includes('ind_nifty50list.csv') ? route.fulfill({ status: 200, headers: { 'content-type': 'text/csv', 'access-control-allow-origin': '*' }, body: nifty50Csv }) : route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }),
+  );
+  await p3.route('https://raw.githubusercontent.com/**', (route) => route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'Not Found' }));
+  await p3.goto(base);
+  await p3.waitForSelector('[data-testid="guide"]', { timeout: 20000 });
+  while (await p3.$('[data-testid="guide-next"]')) await p3.click('[data-testid="guide-next"]');
+  await p3.evaluate(async () => {
+    const s = (await chrome.storage.local.get('settings')).settings;
+    await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'fake-analytics-token' }, settings: { ...s, dayTrade: { ...s.dayTrade, enabled: true } } });
+  });
+  await p3.click('[data-testid="guide-done"]');
+  await p3.waitForSelector('[data-testid="profile-setup"]', { timeout: 10000 });
+  await p3.fill('[data-field="profile-name"]', 'Alan Joy');
+  await p3.click('[data-testid="profile-next"]');
+  for (const pin of ['2580', '2580']) {
+    for (const d of pin) await p3.click(`.pinpad [data-key="${d}"]`);
+    await p3.waitForTimeout(250);
+  }
+  await p3.waitForSelector('[data-testid="wallet"]', { timeout: 10000 }).catch(() => {});
+  // the scanner's last round of the day, as stored: one BUY, one SELL (sell first), one WAIT and one NO TRADE
+  const k = (s) => eq.find((r) => r.trading_symbol === s).instrument_key;
+  const at = Date.parse('2026-11-16T09:44:00Z'); // 15:14 IST
+  const chk = (id, ok, text) => ({ id, ok, text });
+  const base4 = { fromOpenPct: null, buyers: 0.4, ema21: null, breakoutT: null, valueCr: 80, at };
+  const intraday = {
+    date: '2026-11-16',
+    at,
+    universe: 2766,
+    priced: 2766,
+    candidates: 3,
+    shortCandidates: 2,
+    gate: null,
+    shortGate: null,
+    counts: { buy: 1, sell: 1, wait: 1, noTrade: 1 },
+    rows: [
+      { ...base4, key: k('HDFCBANK'), symbol: 'HDFCBANK', call: 'BUY', score: 85, why: 'momentum after a breakout at 10:05 — volume 2.1×, above VWAP', checks: [chk('vwap', true, 'above VWAP ₹806.10')], price: 812.4, changePct: 1.6, rvol: 2.1, vwap: 806.1, ema9: 810, orHigh: 808, breakoutT: 605, plan: { entry: 812.45, stop: 808.95, target: 819.45, rr: 2 }, size: { ok: true, qty: 12, value: 9749.4, risk: 48.5, charges: 6, reward: 78 } },
+      { ...base4, key: k('SBIN'), symbol: 'SBIN', side: 'sell', call: 'SELL', score: 90, why: 'breakdown below the opening-range low ₹1,040.00 at 10:35 — selling volume 2.4×, below VWAP, weaker than NIFTY', checks: [chk('vwap', true, 'below VWAP ₹1,044.20'), chk('breakdown', true, 'broke below the opening-range low ₹1,040.00 at 10:35'), chk('confirm', true, 'confirmed: red 5-minute close and 1-minute candles below the level')], price: 1036.5, changePct: -1.9, rvol: 2.4, vwap: 1044.2, ema9: 1038.9, orHigh: 1052, plan: { entry: 1036.5, stop: 1040.75, t1: 1032.25, target: 1028, rr: 2 }, size: { ok: true, qty: 9, value: 9328.5, risk: 49.2, charges: 9.6, reward: 48 }, orLow: 1040, breakdownT: 635, level: 1040, rsi: 38, ema20: 1041.5, relNifty: -1.6, relSector: -1.1 },
+      { ...base4, key: k('AXISBANK'), symbol: 'AXISBANK', side: 'sell', call: 'WAIT', score: 55, why: 'sell-first: waiting for a break below the opening-range low ₹1,290.00', checks: [chk('breakdown', false, 'not below the opening-range low ₹1,290.00')], price: 1291.2, changePct: -0.8, rvol: 1.2, vwap: 1295, ema9: 1293, orHigh: 1301, plan: { entry: 1289.95, stop: 1295.05, t1: 1284.85, target: 1279.75, rr: 2 }, size: { ok: true, qty: 7, value: 9029.65, risk: 45, charges: 9, reward: 40 }, orLow: 1290, breakdownT: null, level: null, rsi: 44, ema20: 1294, relNifty: -0.6, relSector: null },
+      { ...base4, key: k('ICICIBANK'), symbol: 'ICICIBANK', call: 'NO TRADE', score: 40, why: 'below VWAP ₹1,412.00 — sellers in control', checks: [chk('vwap', false, 'below VWAP ₹1,412.00')], price: 1409, changePct: 1.1, rvol: 1.4, vwap: 1412, ema9: 1410, orHigh: 1415, plan: null, size: null },
+    ],
+  };
+  await p3.evaluate((st) => chrome.storage.session.set({ intraday: st }), intraday);
+  await p3.click('.bottom-nav [data-nav="today"]');
+  await p3.waitForSelector('[data-movers-tab="live"]', { timeout: 10000 });
+  await p3.click('[data-movers-tab="live"]');
+  await p3.waitForSelector('[data-testid="intraday-filters"]', { timeout: 8000 }).catch(() => {});
+  const chips = await p3.$$eval('[data-testid="intraday-filters"] .chip', (els) => els.map((e) => e.textContent.trim())).catch(() => []);
+  check('Intraday: five filters with their live counts — All, BUY, SELL, WAIT, NO TRADE (they add up)', chips.join(' | ') === 'All 4 | BUY 1 | SELL 1 | WAIT 1 | NO TRADE 1', chips.join(' | '));
+  await p3.click('[data-intra-filter="SELL"]');
+  const sellRows = await p3.$$eval('[data-testid="intraday-item"]', (els) => els.map((e) => `${e.getAttribute('data-symbol')}:${e.getAttribute('data-call')}`)).catch(() => []);
+  check('the SELL filter shows only the SELL stock', sellRows.join(',') === 'SBIN:SELL', sellRows.join(','));
+  const sellLine = ((await p3.textContent('[data-testid="intraday-item"] .mv-row').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check('a SELL row: SELL badge, price, change, score and "sell · stop · targets"', /SBIN\s*SELL/.test(sellLine) && /sell ₹1,036\.50 · stop ₹1,040\.75 · targets ₹1,032\.25 \/ ₹1,028\.00/.test(sellLine) && /−1\.9%/.test(sellLine) && /90/.test(sellLine), sellLine.slice(0, 160));
+  await p3.click('[data-testid="intraday-item"] .mv-row');
+  await p3.waitForSelector('[data-testid="intraday-detail"]', { timeout: 4000 }).catch(() => {});
+  const sellDetail = ((await p3.textContent('[data-testid="intraday-detail"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  check(
+    'tap: the short-selling plan — sell first at, buy back above, target 1 and 2 below, shares, max loss with charges, risk : reward, RSI, vs NIFTY, reasons',
+    ['Sell first at', 'Buy back if it rises to', 'Target 1 (half)', 'Target 2 (rest)', 'Max loss with charges', 'Risk : reward', 'RSI 14', 'vs NIFTY 50', 'broke below the opening-range low'].every((s) => sellDetail.includes(s)) && sellDetail.includes('Intraday only'),
+    sellDetail.slice(0, 220),
+  );
+  await p3.click('[data-testid="intraday-sell-practice"]');
+  await p3.waitForSelector('[data-testid="trade-sheet"]', { timeout: 4000 }).catch(() => {});
+  const sheetSell = ((await p3.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  const sheetProduct = await p3.getAttribute('.product-tab.on', 'data-product').catch(() => null);
+  check('"Sell first (practice)" opens the order window as an Intraday sell-first trade (never Delivery), with the buy-back price and both targets', sheetProduct === 'intraday' && sheetSell.includes('Sell first') && (await p3.inputValue('[data-field="short-stop"]').catch(() => '')) === '1040.75' && (await p3.inputValue('[data-field="short-t1"]').catch(() => '')) === '1032.25', `${sheetProduct} · ${sheetSell.slice(0, 120)}`);
+  await p3.click('[data-testid="trade-sheet"] [aria-label="Close"]').catch(() => {});
+  await p3.click('[data-testid="intraday-detail"] button:has-text("sell-first view")');
+  await p3.waitForSelector('[data-testid="intraday-plan-card"]', { timeout: 6000 }).catch(() => {});
+  const planCard = ((await p3.textContent('[data-testid="intraday-plan-card"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+  const shortView = await p3.getAttribute('[data-testid="stock-view"] [data-view="short"]', 'aria-selected').catch(() => null);
+  check('…and its stock page opens in the Sell-first view with the scanner’s SELL plan (entry, stop, targets)', shortView === 'true' && planCard.includes('SELL') && planCard.includes('Sell first at') && planCard.includes('₹1,032.25'), planCard.slice(0, 160));
+  await p3.screenshot({ animations: 'disabled', path: join(out, 'app-intraday-sell-stock.png') });
+
+  // the order window for a company the app does not follow: its own price, an error with Retry when Upstox fails
+  mock.ltpFail = LONE;
+  await p3.evaluate((key) => window.dispatchEvent(new CustomEvent('tb-trade', { detail: { key, symbol: 'RPGTEST', side: 'buy' } })), LONE);
+  await p3.waitForSelector('[data-testid="trade-price-error"]', { timeout: 15000 }).catch(() => {});
+  const errText = ((await p3.textContent('[data-testid="trade-price-error"]').catch(() => '')) ?? '').trim();
+  const shownWhileError = ((await p3.textContent('[data-testid="trade-price"]').catch(() => '')) ?? '').trim();
+  check('Upstox failing: "live price unavailable", the reason and Retry — no number shown', /Retry/.test(errText) && shownWhileError === 'live price unavailable', `${shownWhileError} · ${errText.slice(0, 100)}`);
+  mock.ltpFail = null;
+  await p3.click('[data-testid="trade-price-retry"]');
+  const gotPrice = await until(async () => /^₹(99|101)\.00$/.test(((await p3.textContent('[data-testid="trade-price"]').catch(() => '')) ?? '').trim()), 10000);
+  const priceState = await p3.getAttribute('[data-testid="trade-price"]', 'data-state').catch(() => null);
+  check('Retry: the price of a company the app does not follow arrives (market closed: the last traded price, said so)', gotPrice && priceState === 'closed' && ((await p3.textContent('[data-testid="trade-sheet"]').catch(() => '')) ?? '').includes('last traded price'), `${priceState}`);
+  const watched = await p3.evaluate(async (key) => ((await chrome.storage.session.get('viewing')).viewing ?? {})[key] > Date.now(), LONE);
+  check('…and it stays live while the window is open (added to the price list and the live feed for 10 minutes)', watched);
+  await p3.click('[data-testid="trade-sheet"] [aria-label="Close"]').catch(() => {});
+
+  // alert cards: a SELL card with its lines, under the top bar, pushing the page down, then stacking
+  const sellAlert = { symbol: 'SBIN', key: k('SBIN'), side: 'sell', source: 'Intraday scanner', entry: 1036.5, stop: 1040.75, targets: [1032.25, 1028], qty: 9, risk: 49, score: 90, scoreKind: 'score', reasons: ['broke below the opening-range low'], closeBy: '3:15 pm', event: 'new' };
+  const push = (id, title, detail) =>
+    p3.evaluate(
+      async ({ id, title, detail }) => {
+        const h = (await chrome.storage.local.get('alertHistory')).alertHistory ?? { items: [], clearedAt: null, seen: {}, dismissed: {} };
+        const rec = { id, title, message: 'Sell first, buy back later (Intraday only). A long message that would wrap on a phone screen and must not run past the card edges.', at: Date.now(), ...(detail ? { detail } : {}) };
+        await chrome.storage.local.set({ alertHistory: { ...h, items: [rec, ...h.items] } });
+        window.dispatchEvent(new CustomEvent('tb-alert', { detail: { id: rec.id, title: rec.title, message: rec.message, at: rec.at } }));
+      },
+      { id, title, detail },
+    );
+  await p3.click('.bottom-nav [data-nav="practice"]');
+  // past the first 8 seconds after start (alerts then are catch-up work: Alerts tab only, no card)
+  await p3.clock.fastForward(10_000);
+  await p3.waitForTimeout(400);
+  await p3.evaluate(() => window.scrollTo(0, 0));
+  const topBefore = await p3.evaluate(() => document.querySelector('main')?.getBoundingClientRect().top ?? 0);
+  await push('alert:intraday-short-smoke-1', '🔻 Intraday SELL SBIN at ₹1036.50 · score 90', sellAlert);
+  await p3.waitForSelector('[data-testid="alert-banner"]', { timeout: 6000 }).catch(() => {});
+  await until(async () => ((await p3.textContent('[data-testid="alert-lines"]').catch(() => '')) ?? '').includes('Sell first at'), 4000);
+  await p3.waitForTimeout(500);
+  const card = await p3.evaluate(() => {
+    const el = document.querySelector('[data-testid="alert-banner"]');
+    if (!el) return { missing: true, body: document.body.innerText.slice(0, 200), lines: [], kicker: '' };
+    const r = el.getBoundingClientRect();
+    const bar = document.querySelector('.topbar').getBoundingClientRect();
+    const close = el.querySelector('.alert-banner-close').getBoundingClientRect();
+    const prog = el.querySelector('.ab-progress').getBoundingClientRect();
+    const main = document.querySelector('main').getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: window.innerWidth, barBottom: bar.bottom, closeW: close.width, closeH: close.height, closeRight: close.right, progIn: prog.left >= r.left && prog.right <= r.right && prog.bottom <= r.bottom, mainTop: main.top, kicker: el.querySelector('[data-testid="alert-kicker"]').textContent, lines: [...el.querySelectorAll('[data-testid="alert-lines"] dt')].map((d) => d.textContent), overflow: el.scrollWidth > el.clientWidth + 1 };
+  });
+  check('a SELL alert card: "NEW SHORT-SELL OPPORTUNITY", then sell-first price, stop-loss, targets, quantity and maximum risk on separate lines', card.kicker === 'NEW SHORT-SELL OPPORTUNITY' && card.lines.join('|') === 'Sell first at|Stop-loss (buy back above)|Targets|Quantity|Maximum risk', card.missing ? `no card: ${errors.slice(-2).join(' | ')} · ${card.body}` : `${card.kicker} · ${card.lines.join(', ')}`);
+  check('…inside the screen (no sideways overflow), under the top bar, close button top-right with a big touch area, timer inside the card', card.left >= 0 && card.right <= card.w && !card.overflow && card.top >= card.barBottom - 1 && card.closeW >= 40 && card.closeH >= 40 && card.right - card.closeRight < 20 && card.progIn, JSON.stringify(card).slice(0, 200));
+  check('…and the page moved down below it instead of being covered', card.mainTop >= card.bottom - 1 && card.mainTop > topBefore, `page top ${Math.round(topBefore)} → ${Math.round(card.mainTop)}, card bottom ${Math.round(card.bottom)}`);
+  await p3.screenshot({ animations: 'disabled', path: join(out, 'app-alert-card-sell.png') });
+  await push('alert:intraday-smoke-2', '⚡ Intraday BUY HDFCBANK at ₹812.45 · score 85', { ...sellAlert, symbol: 'HDFCBANK', side: 'buy', entry: 812.45, stop: 808.95, targets: [819.45], qty: 12 });
+  await push('alert:intraday-smoke-3', '⚡ Intraday BUY AXISBANK at ₹1300.00 · score 80', { ...sellAlert, symbol: 'AXISBANK', side: 'buy', entry: 1300, stop: 1295, targets: [1310], qty: 7 });
+  await until(async () => ((await p3.textContent('[data-testid="alert-more"]').catch(() => '')) ?? '').includes('+2 more'), 4000);
+  const cardsShown = (await p3.$$('[data-testid="alert-banner"]')).length;
+  const front = ((await p3.textContent('[data-testid="alert-kicker"]').catch(() => '')) ?? '').trim();
+  check('three alerts at once: the newest card in front, "+2 more" waiting behind it (no pile of cards)', cardsShown === 1 && front === 'NEW BUY OPPORTUNITY' && ((await p3.textContent('[data-testid="alert-more"]').catch(() => '')) ?? '').includes('+2 more'), `${cardsShown} card(s), front ${front}`);
+  await p3.screenshot({ animations: 'disabled', path: join(out, 'app-alert-card-stack.png') });
+  await p3.click('[data-testid="alert-dismiss"]');
+  await until(async () => ((await p3.textContent('[data-testid="alert-more"]').catch(() => '')) ?? '').includes('+1 more'), 4000);
+  check('Dismiss slides the card away and the next one comes forward', ((await p3.textContent('[data-testid="alert-more"]').catch(() => '')) ?? '').includes('+1 more'));
+  for (let i = 0; i < 3; i++) await p3.click('[data-testid="alert-dismiss"]').catch(() => {});
+  const cleared = await until(async () => (await p3.$$('[data-testid="alert-banner"]')).length === 0, 4000);
+  await p3.waitForTimeout(500);
+  const space = await p3.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--alert-space').trim());
+  check('all dismissed: no card left and the page moves back up', cleared && (space === '0px' || space === ''), `--alert-space ${space}`);
+  const overflow3 = await p3.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+  check('no sideways scrolling with the new cards', !overflow3);
+  await ctx3.close();
 }
 
 console.log('── Safety');

@@ -262,6 +262,8 @@ export function App() {
             </button>
           </div>
         </header>
+        {/* app v1.20: makes room for an alert card under the top bar, so the card never covers the page */}
+        <div class="alert-spacer" aria-hidden="true" />
         <StatusBar />
         {route !== 'settings' && route !== 'today' && route !== 'practice' && route !== 'guide' && route !== 'more' && route !== 'learning' && <LoginBanner onOpenSettings={() => go('settings')} />}
         <main key={`${route}/${param ?? ''}`} class="page">
@@ -281,7 +283,7 @@ export function App() {
       </nav>
       <TradeSheetHost />
       <MotionHost />
-      <AlertBanner />
+      <AlertBanner go={go} />
       <AlertDetailHost go={go} />
       {settings && !settings.ui.guideSeen && <GuideOverlay go={go} />}
       {settings?.ui.guideSeen && account === null && <ProfileSetup onDone={() => setUnlocked(true)} />}

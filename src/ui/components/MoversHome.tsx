@@ -55,7 +55,7 @@ export function MoversCard({ go }: { go: Go }) {
   const preRows = preToday ? (preToday.final?.rows ?? preToday.rows) : [];
   const intraday = useSessionValue('intraday');
   const intraToday = intraday && intraday.date === today ? intraday : null;
-  const liveCount = (intraToday ? intraToday.counts.buy + intraToday.counts.wait : 0) + (earlyToday?.drive?.length ?? 0) + (earlyToday?.rows.length ?? 0);
+  const liveCount = (intraToday ? intraToday.counts.buy + (intraToday.counts.sell ?? 0) + intraToday.counts.wait : 0) + (earlyToday?.drive?.length ?? 0) + (earlyToday?.rows.length ?? 0);
   const capital = settings?.dayTrade.earlyCapitalInr ?? 10_000;
   const maxRisk = settings?.dayTrade.earlyRiskInr ?? 50;
   const isLive =

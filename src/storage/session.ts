@@ -69,10 +69,18 @@ export interface SessionStore {
   earlyAlerted: { date: string; sent: string[] };
   /** app v1.16: the pre-open rising candidates (9:00–9:15) and the final top 10 */
   preopen: import('../background/preopenJobs').PreopenState;
+  /**
+   * app v1.20: stocks open on screen (the order window, a stock page) that are not otherwise followed —
+   * key → until when (ms). Their prices are polled and they are in the live feed while listed.
+   */
+  viewing: Record<string, number>;
   /** app v1.19: the Intraday scanner's latest round (every 15 s, 9:15–3:15) */
   intraday: import('../background/intradayJobs').IntradayState;
-  /** app v1.19: Intraday BUY alerts sent today (one per stock) */
-  intradayAlerted: { date: string; keys: string[] };
+  /**
+   * app v1.19: Intraday BUY alerts sent today (one per stock). App v1.20: `sells` = SELL alerts sent
+   * today; `track` = each announced signal ("buy:<key>" / "sell:<key>"), followed to target / stop / invalid.
+   */
+  intradayAlerted: { date: string; keys: string[]; sells?: string[]; track?: Record<string, import('../background/intradayJobs').IntradayTracked> };
   /** app v1.14: the live Rising-now list and the reading of the stocks you hold */
   rise: { at: number; date: string; scanned: number; loaded: number; modelAt: number | null; rows: import('../background/risingJobs').RiseRow[]; held: import('../background/risingJobs').HeldRow[]; weak?: { weak: boolean; text: string } };
   riseAlerted: { date: string; keys: string[]; held: Record<string, number> };

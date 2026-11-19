@@ -107,27 +107,54 @@ main { width: 100%; max-width: 560px; margin: 0 auto; padding: var(--space-2) va
 .confetti i { position: absolute; width: 8px; height: 12px; border-radius: 2px; opacity: 0; animation: burst 1.4s var(--ease) var(--d) forwards; }
 @keyframes burst { 0% { opacity: 1; transform: translate(0, 0) rotate(0); } 100% { opacity: 0; transform: translate(var(--x), calc(var(--y) * -1 + 260px)) rotate(var(--r)); } }
 
-/* ---- in-app alert banners ---- */
-.alert-banners { position: fixed; left: 0; right: 0; top: calc(8px + env(safe-area-inset-top)); z-index: 85; display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); pointer-events: none; }
-.alert-banner { pointer-events: auto; position: relative; overflow: hidden; display: flex; align-items: stretch; width: min(560px, 100%); border-radius: var(--radius-card-sm); background: var(--surface); border: 1px solid var(--border); box-shadow: 0 14px 40px -12px rgba(15, 23, 42, 0.35); animation: bannerIn 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) both; }
-.alert-banner::before { content: ''; width: 4px; background: var(--neutral-gray-soft); }
-.alert-banner.boost::before { background: var(--ok); }
-.alert-banner.warn::before { background: var(--err); }
-.alert-banner-body { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: flex-start; padding: 11px 6px 12px 12px; background: none; border: 0; color: var(--fg); text-align: left; font: inherit; cursor: pointer; }
-.alert-banner-icon { font-size: 22px; line-height: 1.1; flex: none; }
-.alert-banner-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.alert-banner-text b { font-size: var(--fs-body); line-height: 1.3; }
-.alert-banner-text span { font-size: var(--fs-caption); color: var(--muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.alert-banner-close { flex: none; width: 40px; background: none; border: 0; color: var(--muted); font-size: 22px; }
-.alert-banner-timer { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--ok); transform-origin: left; animation: bannerTimer linear forwards; }
-.alert-banner.warn .alert-banner-timer { background: var(--err); }
-.alert-banner.info .alert-banner-timer { background: var(--neutral-gray-soft); }
-@keyframes bannerIn { from { opacity: 0; transform: translateY(-120%) scale(0.96); } to { opacity: 1; transform: none; } }
+/* ---- in-app alert cards (app v1.20 redesign) ----
+   Fixed just under the sticky top bar (--topbar-h, safe area included). While a card is shown the page
+   moves down by its height (.alert-spacer, --alert-space), so the card never covers what was on screen. */
+.alert-banners { position: fixed; left: 0; right: 0; top: calc(var(--topbar-h, calc(56px + env(safe-area-inset-top))) + 4px); z-index: 85; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0 var(--gutter); pointer-events: none; }
+.alert-stack-wrap { position: relative; width: min(560px, 100%); }
+/* waiting alerts peek out under the front card */
+.alert-stack-wrap::before, .alert-stack-wrap::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: -6px; height: 20px; border-radius: 0 0 var(--radius-card-sm) var(--radius-card-sm); background: var(--surface-2); border: 1px solid var(--border); border-top: 0; opacity: 0; transition: opacity 0.2s var(--ease); }
+.alert-stack-wrap::after { left: 24px; right: 24px; bottom: -11px; }
+.alert-stack-wrap.behind-1::before, .alert-stack-wrap.behind-2::before, .alert-stack-wrap.behind-2::after { opacity: 1; }
+.alert-banner { pointer-events: auto; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; width: 100%; max-height: calc(100dvh - var(--topbar-h, 64px) - 120px - env(safe-area-inset-bottom)); overflow: hidden; padding: 12px 12px 14px 14px; border-radius: var(--radius-card-sm); background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--neutral-gray-soft); box-shadow: 0 14px 40px -12px rgba(15, 23, 42, 0.35); animation: bannerIn 0.38s cubic-bezier(0.2, 1.1, 0.4, 1) backwards; overflow-wrap: anywhere; }
+.alert-banner.tone-buy, .alert-banner.tone-ok { border-left-color: var(--ok); }
+.alert-banner.tone-sell, .alert-banner.tone-warn { border-left-color: var(--err); }
+.ab-head { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.alert-banner-icon { font-size: 22px; line-height: 1.2; flex: none; padding-top: 2px; }
+.alert-banner-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 0; background: none; border: 0; color: var(--fg); text-align: left; font: inherit; cursor: pointer; }
+.ab-kicker { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; color: var(--muted); }
+.tone-buy .ab-kicker, .tone-ok .ab-kicker { color: var(--ok-ink); }
+.tone-sell .ab-kicker, .tone-warn .ab-kicker { color: var(--err-ink); }
+.ab-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: var(--fs-body); line-height: 1.3; min-width: 0; }
+.ab-title b { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; }
+.ab-title-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-weight: 700; }
+.ab-score { font-size: var(--fs-caption); font-weight: 700; color: var(--muted); padding: 1px 8px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.ab-headline { font-size: var(--fs-caption); color: var(--muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.alert-banner-close { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin: -10px -8px -8px 0; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 24px; line-height: 1; }
+.alert-banner-close:active { background: var(--surface-2); }
+.ab-note { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: var(--fs-caption); line-height: 1.4; }
+.ab-lines { display: grid; gap: 4px; margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: var(--fs-caption); }
+.ab-lines > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; }
+.ab-lines dt { color: var(--muted); flex: none; }
+.ab-lines dd { margin: 0; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; min-width: 0; }
+.ab-msg { margin: 0; font-size: var(--fs-caption); color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ab-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ab-time { font-size: var(--fs-tiny); color: var(--muted-2); min-width: 0; }
+.ab-foot .btn { min-height: 36px; }
+/* the timer, inside the card's padding */
+.ab-progress { position: absolute; left: 14px; right: 12px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.alert-banner-timer { display: block; height: 100%; width: 100%; border-radius: 2px; background: var(--neutral-gray-soft); transform-origin: left; animation: bannerTimer linear forwards; }
+.tone-buy .alert-banner-timer, .tone-ok .alert-banner-timer { background: var(--ok); }
+.tone-sell .alert-banner-timer, .tone-warn .alert-banner-timer { background: var(--err); }
+.alert-more { pointer-events: auto; margin-top: 8px; padding: 4px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: var(--fs-tiny); font-weight: 700; box-shadow: var(--shadow); }
+.alert-spacer { height: var(--alert-space, 0px); transition: height 0.28s var(--ease); flex: none; }
+@keyframes bannerIn { from { opacity: 0; transform: translateY(-24px) scale(0.97); } to { opacity: 1; transform: none; } }
 @keyframes bannerTimer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-/* while the order window is open, alert banners shrink to one line so they do not cover it */
-body:has(.sheet-backdrop) .alert-banner-text span { display: none; }
-body:has(.sheet-backdrop) .alert-banner-body { padding-top: 8px; padding-bottom: 9px; }
-body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .alert-banner { animation: none; } .alert-spacer { transition: none; } }
+/* while the order window is open, a card shrinks to its top line so it does not cover the window */
+body:has(.sheet-backdrop) .alert-banners { top: calc(8px + env(safe-area-inset-top)); }
+body:has(.sheet-backdrop) .ab-lines, body:has(.sheet-backdrop) .ab-msg, body:has(.sheet-backdrop) .ab-note, body:has(.sheet-backdrop) .ab-foot, body:has(.sheet-backdrop) .ab-headline, body:has(.sheet-backdrop) .alert-more { display: none; }
+body:has(.sheet-backdrop) .alert-banner { padding-top: 8px; padding-bottom: 12px; }
 
 /* ---- lock screen, profile setup ---- */
 .lock-screen { position: fixed; inset: 0; z-index: 70; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: calc(24px + env(safe-area-inset-top)) var(--space-5) calc(24px + env(safe-area-inset-bottom)); background: var(--bg); text-align: center; animation: fade 0.3s ease both; }
@@ -186,5 +213,6 @@ body:has(.sheet-backdrop) .alert-banner-text b { font-size: 13px; white-space: n
 /* app v1.18: swipe a banner away (left, right or up). The entry animation must not keep its end
    state, or it would override the finger's position. */
 .alert-banner { animation-fill-mode: backwards; touch-action: none; user-select: none; -webkit-user-select: none; transition: transform 0.22s var(--ease), opacity 0.22s var(--ease); }
+.alert-banner .ab-action { touch-action: manipulation; }
 .alert-banner.dragging { transition: none; }
 .alert-banner.leaving { pointer-events: none; }

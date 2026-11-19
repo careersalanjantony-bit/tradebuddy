@@ -31,6 +31,11 @@ export interface AlertDetail {
   reasons: string[];
   /** e.g. "3:10 pm" */
   closeBy?: string;
+  /**
+   * app v1.20: what happened — a new opportunity, target 1 / the target reached, the stop-loss hit, or the
+   * signal invalidated (missing = a new idea, as before)
+   */
+  event?: 'new' | 't1' | 'target' | 'stop' | 'invalid';
 }
 
 export interface AlertRecord {

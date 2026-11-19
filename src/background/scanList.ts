@@ -60,10 +60,22 @@ export async function ensureScanLists(force = false, now = Date.now()): Promise<
  * Every stock that needs live prices: what you hold or trade, your stocks and Stocks-tab list, and —
  * while Day trade is on — the whole scan list. Each once, most important first.
  */
-export async function priceKeys(): Promise<string[]> {
-  const tracked = await trackedKeys();
+export async function priceKeys(now = Date.now()): Promise<string[]> {
+  // app v1.20: plus the stocks open in the order window or on their page right now (for a few minutes)
+  const viewing = Object.entries((await getSession('viewing')) ?? {})
+    .filter(([, until]) => until > now)
+    .map(([k]) => k);
+  const tracked = [...new Set([...(await trackedKeys()), ...viewing])];
   if (!(await getSettings()).dayTrade.enabled) return tracked;
   return [...new Set([...tracked, ...(await scanUniverse()).keys])];
+}
+
+/** App v1.20: keeps a stock's price live while it is on screen (10 minutes after the last call). */
+export async function watchKey(key: string, now = Date.now(), forMs = 10 * 60_000): Promise<void> {
+  const v = (await getSession('viewing')) ?? {};
+  const next = Object.fromEntries(Object.entries(v).filter(([, until]) => until > now));
+  next[key] = now + forMs;
+  await setSession('viewing', next);
 }
 
 /** For tests. */

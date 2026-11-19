@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import { istDate } from '../../lib/time';
+import { IntradayPlanCard, intradayLines } from '../components/IntradayScanner';
 import { formatDateIST, formatNumberIN, formatPct, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
 import { callBackground } from '../../shared/messages';
@@ -8,7 +10,7 @@ import { Flags, SetupBadge } from '../components/Badges';
 import { PriceChart, type ChartLine } from '../components/PriceChart';
 import { Term } from '../components/Term';
 import { useInstrumentMap, useStockData } from '../data';
-import { useLocal } from '../hooks';
+import { useLocal, useNow, useSessionValue } from '../hooks';
 import { AddStock } from './Watchlist';
 import { ExplainCard, StudyButton } from '../components/Explain';
 import { ShortAnalysis } from '../components/ShortAnalysis';
@@ -38,7 +40,15 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
     () => (plan ? [{ price: plan.entry, title: 'Entry', color: '#64748b' }, { price: plan.stop, title: 'Stop', color: '#ef4444' }, { price: plan.target, title: 'Target', color: '#10b981' }] : []),
     [plan?.entry, plan?.stop, plan?.target],
   );
-  const lines = view === 'short' ? shortLines : buyLines;
+  // app v1.20: the Intraday scanner's live plan for this stock (BUY in the Buy view, SELL in the Sell-first view)
+  const now = useNow(5_000);
+  const intra = useSessionValue('intraday');
+  const intraRow = key && intra && intra.date === istDate(now) ? intra.rows.find((r) => r.key === key && (r.side ?? 'buy') === (view === 'short' ? 'sell' : 'buy') && r.plan) : undefined;
+  const lines = view === 'short' ? (intraRow ? intradayLines(intraRow) : shortLines) : buyLines.length ? buyLines : intradayLines(intraRow);
+  // app v1.20: this stock's live price, even when the app does not follow it
+  useEffect(() => {
+    if (key) void callBackground('quotes:watch', { key }).catch(() => undefined);
+  }, [key]);
 
   if (!key) {
     return (
@@ -119,6 +129,7 @@ export function StockScreen({ keyParam, go }: { keyParam: string | null; go: Go 
         </div>
       </section>
 
+      <IntradayPlanCard stockKey={key} side={view === 'short' ? 'sell' : 'buy'} now={now} />
       <LevelsCard stockKey={key} snap={s} candles={data?.candles ?? []} />
       {view === 'short' && <ShortAnalysis stockKey={key} sym={sym} data={data ?? undefined} onLines={setShortLines} />}
       {view === 'buy' && s && <ExplainCard symbol={sym} snap={s} />}
