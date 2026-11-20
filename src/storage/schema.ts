@@ -351,6 +351,10 @@ export interface LocalStore {
   intradayTest: import('../intraday/backtest').IntradayTestReport | null;
   /** milestone 4: pairing with the TradeBuddy server for push notifications; null = not paired */
   cloud: import('../notify/cloudMode').CloudState | null;
+  /** app v1.22: the auto-trader runs on the server; this phone shows it (and may control it). null = the phone runs its own */
+  botCloud: import('../background/cloudBotJobs').BotCloudLink | null;
+  /** app v1.22: this phone's own auto-trader, kept every time it stopped running here (moved to the server, viewer) — newest last */
+  botArchive: import('../background/cloudBotJobs').BotArchiveEntry[] | null;
 }
 
 export type LocalKey = keyof LocalStore;

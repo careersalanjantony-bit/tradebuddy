@@ -6,6 +6,8 @@ import { isNative } from '../../platform/http';
 import { formatDateTimeIST } from '../../lib/format';
 import { useLocal } from '../hooks';
 import { toast } from './Motion';
+import { callBackground } from '../../shared/messages';
+import { errorMessage } from '../../lib/serialize';
 
 /**
  * Settings → Cloud alerts (milestone 4, optional). Pair this phone with your own TradeBuddy server, so
@@ -24,6 +26,7 @@ export function CloudAlerts() {
   const [name, setName] = useState('My phone');
   const [busy, setBusy] = useState<null | 'pair' | 'test' | 'unpair' | 'check' | 'prefs'>(null);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  const [unpairForce, setUnpairForce] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   // phones updated from an older version have no "cloud" entry at all (= not paired): wait only for loading
   const [loaded, setLoaded] = useState(false);
@@ -182,8 +185,16 @@ export function CloudAlerts() {
               disabled={busy !== null}
               onClick={() =>
                 void run('unpair', async () => {
+                  // app v1.22: an auto-trader running on the server comes back to this phone first (never left without a phone)
+                  try {
+                    await callBackground('cloudbot:before-unpair', { force: unpairForce });
+                  } catch (e) {
+                    setUnpairForce(true);
+                    throw new Error(`${errorMessage(e)} Tap "Yes, unpair" again to unpair anyway: this phone then takes back the last copy it saw, paused.`);
+                  }
                   await (await push()).unpair();
                   setConfirmUnpair(false);
+                  setUnpairForce(false);
                   setStatus(null);
                   toast('Unpaired. This phone alerts on its own again.', 'ok');
                 })

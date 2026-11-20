@@ -1,7 +1,7 @@
 {
   "name": "tradebuddy",
   "private": true,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "description": "TradeBuddy: personal Android app for NSE day and swing trading ideas, practice money and alerts. Read-only towards the broker.",
   "type": "module",
   "scripts": {
@@ -19,7 +19,8 @@
     "server:start": "node --disable-warning=ExperimentalWarning server/dist/main.js",
     "server:dev": "npm run server:build && node --disable-warning=ExperimentalWarning --env-file-if-exists=server/.env server/dist/main.js",
     "server:typecheck": "tsc -p server/tsconfig.json",
-    "server:test": "vitest run server/tests"
+    "server:test": "vitest run server/tests",
+    "bot:dryrun": "vitest run server/tests/cloudBot.test.ts tests/cloudBotPhone.test.ts tests/cloudBotContract.test.ts --reporter=verbose"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",

@@ -25,6 +25,8 @@ async function boot(): Promise<void> {
   await initNative(() => {
     // back in front: catch up on prices, alerts and signals at once
     void chrome.runtime.sendMessage({ __swing: true, type: 'quotes:auto', payload: undefined });
+    // app v1.22: the server's auto-trader, if it runs there (what changed while the app was closed)
+    void chrome.runtime.sendMessage({ __swing: true, type: 'cloudbot:refresh', payload: undefined });
     catchUp();
   });
   catchUp();

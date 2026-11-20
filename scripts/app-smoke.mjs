@@ -731,6 +731,41 @@ const fundsMsg = await until(async () => /Log in to Upstox|available to trade/.t
 check('"Use my Upstox balance" reads the balance (read only) — or says to log in first', fundsMsg, ((await page.textContent('[data-testid="bot-amount-msg"]').catch(() => '')) ?? '').slice(0, 120));
 await revealAll();
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot.png'), fullPage: true });
+
+// app v1.22: the auto-trader runs on the server — this phone shows the SERVER's copy (here: one another
+// phone controls), with the server's money totals, its controls locked, and never runs a copy of its own
+console.log('── Auto-trader on the server (app 1.22): this phone only shows it');
+const ownBot = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
+await page.evaluate(async (b) => {
+  const now = Date.now();
+  const snap = {
+    api: 1,
+    at: now,
+    authority: { serverId: 'smoke-server', mode: 'cloud', epoch: 1, controller: { deviceId: 'dev-other', name: 'Alan main phone' }, activatedAt: now - 3_600_000, changedAt: now - 3_600_000 },
+    you: { deviceId: 'dev-this', canControl: false },
+    rev: 42,
+    updatedAt: now - 10_000,
+    bot: { ...b, rev: 42 },
+    money: { total: 1_234_567, free: 600_000, todayPnl: 4_321, totalPnl: 34_567, startCash: b.wallet.startCash, openCount: 1 },
+    quotes: {},
+    telemetry: { health: 'ok', text: 'Trading by itself on the server.', lastRunAt: now - 20_000, lastDecisionAt: now - 40_000, lastSaveAt: now - 10_000, lastTradeAt: null, runsLast10Min: 20, priceAt: now - 5_000, priceAgeSec: 5, analytics: 'valid', jobs: true, feedConnected: true, marketPhase: 'open', marketLabel: 'open', lastError: null },
+    protectTest: null,
+  };
+  await chrome.storage.local.set({ botCloud: { mode: 'cloud', serverId: 'smoke-server', deviceId: 'dev-this', since: now, epoch: 1, snapshot: snap, fetchedAt: now, lastError: null }, bot: null });
+}, ownBot);
+await until(async () => !!(await page.$('[data-testid="bot-cloud"]')), 8000);
+// the total counts up / down to the new value: wait for it to arrive
+await until(async () => ((await page.textContent('[data-testid="bot-total"]').catch(() => '')) ?? '').includes('₹12,34,567'), 6000);
+const cloudCard = ((await page.textContent('[data-testid="bot-cloud"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+const cloudHero = ((await page.textContent('[data-testid="bot-hero"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
+check('on the server: the screen says where it runs, who controls it and how fresh this copy is', cloudCard.includes('Runs on your server') && cloudCard.includes('Alan main phone') && /updated \d+ s ago/.test(cloudCard), cloudCard.slice(0, 160));
+check('on the server: the money shown is the server’s own total, and the status says it trades there', cloudHero.includes('₹12,34,567') && cloudHero.includes('Trading by itself on your server'), cloudHero.slice(0, 160));
+check('a phone that only looks: switch, amount and start-again are locked', (await page.$eval('[data-testid="bot-switch"]', (e) => e.disabled)) && (await page.$eval('[data-testid="bot-set-amount"]', (e) => e.disabled)) && (await page.$eval('[data-testid="bot-reset"]', (e) => e.disabled)));
+const runHere = await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'bot:run', payload: undefined }));
+check('this phone never runs a copy of its own while it runs on the server', runHere?.ok === true && runHere.data?.ok === false && (await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot)) === null, JSON.stringify(runHere));
+await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot-cloud.png'), fullPage: true });
+await page.evaluate(async (b) => chrome.storage.local.set({ botCloud: null, bot: b }), ownBot);
+await until(async () => !(await page.$('[data-testid="bot-cloud"]')), 8000);
 mock.move = 0;
 mock.fallPrice = undefined;
 
