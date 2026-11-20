@@ -153,5 +153,11 @@ describe('Intraday scanner with BUY and SELL, live', () => {
     expect(follow[1]!.title).toMatch(/SELL target 2 reached/);
     const alerted = (await chrome.storage.session.get('intradayAlerted')).intradayAlerted as { track: Record<string, { state: string }> };
     expect(alerted.track[`sell:${SHORTK}`]!.state).toBe('done');
+    // review fix (1.20.2): the result goes to the record — half at target 1, the rest at target 2, after charges
+    const rec = (await chrome.storage.local.get('intradayRecord')).intradayRecord as Array<{ items: Array<{ side: string; outcome: string; t1Hit: boolean; exit: number; pnl: number }> }>;
+    expect(rec[0]!.items).toEqual([expect.objectContaining({ side: 'sell', outcome: 'target', t1Hit: true, exit: 485.2 })]);
+    expect(rec[0]!.items[0]!.pnl).toBeGreaterThan(0);
+    // SELL is new and unproven: its alert says practice only
+    expect(created().find((c) => c.id.startsWith('alert:intraday-short-'))!.title).toMatch(/practice only$/);
   });
 });

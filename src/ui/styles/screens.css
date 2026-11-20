@@ -391,3 +391,7 @@
 .big-num.price-error { color: var(--err-ink); font-weight: 600; font-size: var(--fs-caption); }
 .big-num .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--muted); animation: spin 0.8s linear infinite; flex: none; }
 .price-note { margin: 2px 0 6px; }
+
+/* review fix (1.20.2): the Intraday alerts' own record, and SELL marked practice-only until proven */
+.intra-record { margin: 4px 0 8px; }
+.chip.intra-practice { font-size: 10.5px; padding: 1px 7px; color: var(--warn-ink); border-color: currentColor; }

@@ -14,6 +14,7 @@ import { marketGate } from '../early/early';
 import { sectorGaps } from '../early/preopen';
 import { backtestIntraday, INTRADAY_TEST_VERSION, type IntradayTestReport } from '../intraday/backtest';
 import { classifyIntraday, hhmmT, INTRADAY, sortIntraday, type IntradayRow } from '../intraday/scanner';
+import { addResult, sideStats, signalPnl, type SignalOutcome, type SignalResult } from '../intraday/record';
 import { classifyShort, marketRising, SHORT } from '../intraday/short';
 import { chunk } from '../lib/chunk';
 import { createLogger } from '../lib/log';
@@ -580,6 +581,8 @@ async function alertSells(rows: IntradayRow[], now: number, on: boolean): Promis
   const track = prev?.date === date ? { ...(prev.track ?? {}) } : {};
   const before = sells.length;
   let any = false;
+  // review fix (1.20.2): SELL has no past test — until its own record proves it, every SELL alert says so
+  const proven = sideStats(await getLocal('intradayRecord'), 'sell').proven;
   for (const r of rows) {
     if (r.call !== 'SELL' || !r.plan || r.plan.t1 === undefined || !r.size?.ok || sells.includes(r.key) || sells.length >= MAX_ALERTS) continue;
     sells.push(r.key);
@@ -588,8 +591,8 @@ async function alertSells(rows: IntradayRow[], now: number, on: boolean): Promis
     const p = r.plan;
     track[`sell:${r.key}`] = trackFrom(r, now);
     await notify(`alert:intraday-short-${r.key}-${date}`, {
-      title: `🔻 Intraday SELL ${r.symbol} at ₹${p.entry.toFixed(2)} · score ${r.score}`,
-      message: `Sell first, buy back later (Intraday only). ${r.changePct.toFixed(1)}% today · ${r.why} · buy back if it rises to ₹${p.stop.toFixed(2)} · targets ₹${p.t1!.toFixed(2)} / ₹${p.target.toFixed(2)} (1:${p.rr}) · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. Buy back by 3:15 pm. Not a guarantee — you place the order yourself.`,
+      title: `🔻 Intraday SELL ${r.symbol} at ₹${p.entry.toFixed(2)} · score ${r.score}${proven ? '' : ' · practice only'}`,
+      message: `${proven ? '' : 'New signal type, not proven yet — use Practice money only. '}Sell first, buy back later (Intraday only). ${r.changePct.toFixed(1)}% today · ${r.why} · buy back if it rises to ₹${p.stop.toFixed(2)} · targets ₹${p.t1!.toFixed(2)} / ₹${p.target.toFixed(2)} (1:${p.rr}) · ${r.size.qty} shares, risk ₹${Math.round(r.size.risk)} with charges. Buy back by 3:15 pm. Not a guarantee — you place the order yourself.`,
       priority: 2,
       detail: {
         symbol: r.symbol,
@@ -651,11 +654,17 @@ async function followSignals(view: Map<string, Snap>, barsOf: (k: string) => Bar
   if (prev?.date !== date || !prev.track) return;
   const track = { ...prev.track };
   let changed = false;
+  // review fix (1.20.2): each finished signal's result goes to the record shown on the list
+  const results: SignalResult[] = [];
+  const finish = (s: IntradayTracked, exit: number, outcome: SignalOutcome) =>
+    results.push({ key: s.key, symbol: s.symbol, side: s.side, at: s.at, entry: s.entry, exit, outcome, t1Hit: s.state === 't1', qty: s.qty, pnl: signalPnl(s, exit, s.state === 't1') });
   for (const [id, s] of Object.entries(track)) {
     if (s.state === 'done') continue;
     if (t >= INTRADAY.lastT) {
       track[id] = { ...s, state: 'done' };
       changed = true;
+      const v = view.get(s.key);
+      if (v && now - v.at <= 120_000) finish(s, v.ltp, 'close');
       continue;
     }
     const v = view.get(s.key);
@@ -668,6 +677,7 @@ async function followSignals(view: Map<string, Snap>, barsOf: (k: string) => Bar
     const next: IntradayTracked = { ...s, state: step.event === 't1' ? 't1' : 'done' };
     track[id] = next;
     changed = true;
+    if (step.event !== 't1') finish(s, v.ltp, step.event);
     if (!on) continue;
     const detail: AlertDetail = {
       symbol: s.symbol,
@@ -698,6 +708,11 @@ async function followSignals(view: Map<string, Snap>, barsOf: (k: string) => Bar
     const latest = await getSession('intradayAlerted');
     const base = latest?.date === date ? latest : prev;
     await setSession('intradayAlerted', { ...base, date, track: { ...(base.track ?? {}), ...track } });
+  }
+  if (results.length) {
+    let rec = (await getLocal('intradayRecord')) ?? [];
+    for (const r of results) rec = addResult(rec, date, r);
+    await setLocal('intradayRecord', rec);
   }
 }
 

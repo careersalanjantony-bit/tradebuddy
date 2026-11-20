@@ -344,6 +344,9 @@ export interface LocalStore {
   alertHistory: import('../alerts/history').AlertHistory;
   /** app v1.19: the Intraday scanner's past test on the stored 5-minute history (once a day) */
   intradayTest: import('../intraday/backtest').IntradayTestReport | null;
+  /** review fix (1.20.2): each Intraday BUY / SELL signal's result (target, stop-loss, invalidated, 3:15), 20 days.
+   * No migration step on purpose: like intradayTest, a missing value reads as "no record yet". */
+  intradayRecord: import('../intraday/record').RecordDay[] | null;
 }
 
 export type LocalKey = keyof LocalStore;
