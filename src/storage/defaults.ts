@@ -94,11 +94,11 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     earlyTest: null,
     preopenRecord: null,
     riseRecord: null,
+    intradayRecord: null,
     breakoutAlerted: null,
     scanLists: null,
     ideaAlerts: null,
     alertHistory: { items: [], clearedAt: null, seen: {}, dismissed: {} },
     intradayTest: null,
-    intradayRecord: null,
   };
 }
