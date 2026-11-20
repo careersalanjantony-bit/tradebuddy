@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetIntraday, intradayTick, type IntradayState } from '../src/background/intradayJobs';
 import { __resetDb, getDb } from '../src/storage/db';
+import { configureHistoricalRequests } from '../src/upstox/client';
+import { DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE } from '../src/upstox/rateLimiter';
 import { installChromeMock } from './chromeMock';
 
 /**
@@ -27,20 +29,28 @@ const never = () => new Promise<Response>(() => undefined);
 
 let chrome: ReturnType<typeof installChromeMock>;
 let hang = { quotes: false, candles: false, history: false };
+// each test its own stock: a "stuck" test's never-answering requests stay with its own stock (on the
+// server-backend branch candle requests are shared per stock and history downloads queue per stock; a
+// real request is cut off by its 15 s timeout, a test's never ends)
+let KEY = URBANCO;
+let n = 0;
 
 beforeEach(async () => {
   chrome = installChromeMock();
   __resetIntraday({ quotes: 150, bars: 100, history: 50, bars1: 50 });
+  // and a fresh history queue (the paced queue of server-backend)
+  configureHistoricalRequests(DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE);
+  KEY = `NSE_EQ|INE0URBAN${String(++n).padStart(2, '0')}`;
   await __resetDb();
   hang = { quotes: false, candles: false, history: false };
   await chrome.storage.local.set({ secrets: { upstoxAnalyticsToken: 'test-token' }, settings: undefined });
-  await (await getDb()).put('instruments', { instrument_key: URBANCO, trading_symbol: 'URBANCO', name: 'Urban Company', isin: 'INE0URBAN01', tick: 0.05, lot_size: 1, instrument_type: 'EQ' });
+  await (await getDb()).put('instruments', { instrument_key: KEY, trading_symbol: 'URBANCO', name: 'Urban Company', isin: KEY.split('|')[1]!, tick: 0.05, lot_size: 1, instrument_type: 'EQ' });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       const u = decodeURIComponent(String(url));
       const ok = (data: unknown) => new Response(JSON.stringify({ status: 'success', data }), { status: 200 });
-      if (u.includes('/v3/market-quote/quotes')) return hang.quotes ? never() : ok({ 'NSE_EQ:URBANCO': { instrument_token: URBANCO, last_price: 101.9, prev_close_price: 100, volume: 520_000, average_price: 100.84, total_buy_quantity: 60_000, total_sell_quantity: 40_000 } });
+      if (u.includes('/v3/market-quote/quotes')) return hang.quotes ? never() : ok({ 'NSE_EQ:URBANCO': { instrument_token: KEY, last_price: 101.9, prev_close_price: 100, volume: 520_000, average_price: 100.84, total_buy_quantity: 60_000, total_sell_quantity: 40_000 } });
       if (u.includes('/historical-candle/intraday/')) return hang.candles ? never() : ok({ candles: [...TODAY].reverse() });
       if (u.includes('/historical-candle/')) return hang.history ? never() : ok({ candles: DAILY });
       return new Response('{}', { status: 404 });
@@ -84,6 +94,8 @@ describe('Intraday list on a busy phone', () => {
   });
 
   it('when nothing is stuck it is the same BUY as before (the morning logic, unchanged)', async () => {
+    // server-backend paces history downloads 2 s apart (30 a minute): room for one gap, as on the server
+    __resetIntraday({ quotes: 150, bars: 2_000, history: 2_500, bars1: 50 });
     await intradayTick(NOW, true);
     await intradayTick(NOW + 15_000, true);
     const st = (await state())!;

@@ -12,6 +12,7 @@ export type UpstoxErrorKind =
   | 'server' // 5xx
   | 'network'
   | 'timeout'
+  | 'cancelled'
   | 'bad_response';
 
 export class UpstoxError extends Error {
@@ -39,18 +40,18 @@ export const CONFIG_ERROR_CODES = new Set(['UDAPI100068', 'UDAPI100069', 'UDAPI1
 export function firstError(body: unknown): { code: string | null; message: string | null } {
   const errs = (body as { errors?: unknown })?.errors;
   if (Array.isArray(errs) && errs.length) {
-    const e = errs[0] as Record<string, unknown>;
-    const code = (e.error_code ?? e.errorCode) as unknown;
-    const message = e.message as unknown;
+    const e = errs[0] as Record<string, unknown> | null | undefined;
+    const code = e?.error_code ?? e?.errorCode;
+    const message = e?.message;
     return { code: typeof code === 'string' ? code : null, message: typeof message === 'string' ? message : null };
   }
   return { code: null, message: null };
 }
 
 export function parseRetryAfter(header: string | null | undefined, now = Date.now()): number | null {
-  if (!header) return null;
-  const secs = Number(header);
-  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  if (!header?.trim()) return null;
+  const ms = Number(header) * 1000;
+  if (Number.isFinite(ms)) return Math.max(0, ms);
   const t = Date.parse(header);
   return Number.isFinite(t) ? Math.max(0, t - now) : null;
 }
@@ -73,9 +74,9 @@ export function loginErrorMessage(err: unknown, redirectUrl?: string): string {
 export function errorFromResponse(status: number, body: unknown, retryAfter?: string | null): UpstoxError {
   const { code, message } = firstError(body);
   const msg = message ?? `HTTP ${status}`;
+  if (status === 429 || code === 'UDAPI100099') return new UpstoxError(msg, 'rate_limit', status, code, parseRetryAfter(retryAfter));
   if (code && CONFIG_ERROR_CODES.has(code)) return new UpstoxError(msg, 'config', status, code);
   if (status === 401 || (code && AUTH_ERROR_CODES.has(code))) return new UpstoxError(msg, 'auth', status, code);
-  if (status === 429 || code === 'UDAPI100099') return new UpstoxError(msg, 'rate_limit', status, code, parseRetryAfter(retryAfter));
   if (status >= 500) return new UpstoxError(msg, 'server', status, code);
   return new UpstoxError(msg, 'client', status, code);
 }

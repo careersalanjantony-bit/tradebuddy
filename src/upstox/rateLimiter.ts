@@ -15,6 +15,16 @@ export const UPSTOX_LIMITS: RateWindow[] = [
   { ms: 30 * 60_000, max: 1800, label: 'per 30 min' },
 ];
 
+export const DEFAULT_HISTORICAL_REQUESTS_PER_MINUTE = 30;
+export const MAX_HISTORICAL_REQUESTS_PER_MINUTE = UPSTOX_LIMITS[1]!.max;
+
+export function historicalWindows(requestsPerMinute: number): RateWindow[] {
+  if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 1 || requestsPerMinute > MAX_HISTORICAL_REQUESTS_PER_MINUTE) {
+    throw new RangeError(`Historical requests per minute must be an integer from 1 to ${MAX_HISTORICAL_REQUESTS_PER_MINUTE}`);
+  }
+  return UPSTOX_LIMITS.map((w) => w.ms === 60_000 ? { ...w, max: requestsPerMinute } : w);
+}
+
 export class RateLimiter {
   private stamps: number[];
   private readonly longest: number;

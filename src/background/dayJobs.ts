@@ -1,5 +1,5 @@
 import { newId } from '../alerts/rules';
-import { marketState } from '../data/calendar';
+import { isTradingDay, marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { getInstrument } from '../data/instruments';
 import { SCAN_HISTORY_SESSIONS, fetchTodayBars, pool, pruneIntraday, syncIntraday } from '../data/intraday';
@@ -17,13 +17,13 @@ import type { DaySignal, DayTrade, Side } from '../daytrade/types';
 import { createLogger } from '../lib/log';
 import { createQueue } from '../lib/queue';
 import { errorMessage } from '../lib/serialize';
-import { istDate } from '../lib/time';
+import { addDays, istDate } from '../lib/time';
 import { notify } from '../notify/chrome';
 import { playSound } from '../notify/sound';
 import { getDb } from '../storage/db';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
-import { UpstoxError } from '../upstox/errors';
+import { historyNeedsResume, runHistoryBatch, withHistoryJob } from './historicalJobs';
 import { scoreLive } from './mlJobs';
 import { buyersMeter } from '../data/flow';
 import { stockSentiment } from '../data/sentiment';
@@ -52,54 +52,48 @@ export const listKeys = testKeys;
 
 // ---------------------------------------------------------------- 5-minute history
 
-let intradayRunning: Promise<{ ok: number; failed: number }> | null = null;
+/** The 5-minute history ends before today, so closed days share the same completed window. */
+export async function intradayHistoryWindow(now: number): Promise<string> {
+  const cal = await getCalendar();
+  const yesterday = addDays(istDate(now), -1);
+  let date = yesterday;
+  for (let i = 0; i < 30; i++, date = addDays(date, -1)) {
+    if (isTradingDay(date, cal)) return date;
+  }
+  return yesterday;
+}
 
-/** Downloads missing 5-minute history for every watched stock (4 at a time). One run at a time. */
-export function syncIntradayAll(now = Date.now()): Promise<{ ok: number; failed: number }> {
-  intradayRunning ??= (async () => {
+/** Downloads missing 5-minute history, checkpointing each stock before advancing. */
+export async function syncIntradayAll(now = Date.now()): Promise<{ ok: number; failed: number }> {
+  const window = await intradayHistoryWindow(now);
+  return withHistoryJob('intraday', window, async () => {
     const [settings, scan, list] = await Promise.all([getSettings(), dayKeys(), listKeys()]);
-    // the Stocks-tab list and the Nifty 100 (the sell-first past test) keep the full past-test window;
-    // the rest of the scan list a short one (enough for the live scanners). Stocks-tab stocks first.
+    // Stocks-tab members and Nifty 100 keep the full past-test window. Stocks-tab stocks go first.
     const long = new Set([...list, ...scan.filter((k) => NIFTY100_KEYS.has(k))]);
-    const keys = [...new Set([...list, ...scan])];
-    const sessionsOf = (k: string) => (long.has(k) ? settings.dayTrade.testSessions : Math.min(SCAN_HISTORY_SESSIONS, settings.dayTrade.testSessions));
-    let ok = 0;
-    let failed = 0;
-    let fatal: string | undefined;
-    await setSession('intradayProgress', { done: 0, total: keys.length, running: true, at: Date.now() });
-    try {
-      await pool(keys, 4, async (key) => {
-        if (fatal) return;
-        try {
-          const n = await syncIntraday(key, sessionsOf(key), now);
-          if (n > 20) await pruneIntraday(key, sessionsOf(key), now);
-          ok++;
-        } catch (err) {
-          if (err instanceof UpstoxError && (err.kind === 'not_logged_in' || err.kind === 'auth')) fatal = errorMessage(err);
-          failed++;
-          if (failed <= 3) log.warn(`5-minute history failed for ${key}`, { error: err });
-        }
-        if ((ok + failed) % 4 === 0) await setSession('intradayProgress', { done: ok + failed, total: keys.length, running: true, at: Date.now() });
-      });
-    } finally {
-      await setSession('intradayProgress', { done: ok + failed, total: keys.length, running: false, at: Date.now(), ...(fatal ? { error: fatal } : {}) });
-      // a run that stopped for lack of a login is tried again as soon as there is one
-      await setSession('intradayCheckedAt', fatal ? 0 : Date.now());
-    }
-    log.info(`5-minute history: ${ok} stocks up to date, ${failed} failed`);
-    return { ok, failed };
-  })().finally(() => {
-    intradayRunning = null;
+    const stocks = [...new Set([...list, ...scan])].map((key) => ({
+      key, parameter: long.has(key) ? settings.dayTrade.testSessions : Math.min(SCAN_HISTORY_SESSIONS, settings.dayTrade.testSessions),
+    }));
+    let loggedErrors = 0;
+    const { ok, failed, pending } = await runHistoryBatch('intraday', window, stocks, async ({ key, parameter }) => {
+      await syncIntraday(key, parameter, now);
+      // A normal refresh adds one session. Run retention before marking the stock complete,
+      // including when a restart has already committed its newest candles.
+      await pruneIntraday(key, parameter, now);
+    }, (key, err) => {
+      if (loggedErrors++ < 3) log.warn(`5-minute history failed for ${key}`, { error: err });
+    });
+    await setSession('intradayCheckedAt', pending.length ? 0 : Date.now());
+    log.info(`5-minute history: ${ok} stocks up to date, ${failed.length} failed, ${pending.length} pending`);
+    return { ok, failed: failed.length + pending.length };
   });
-  return intradayRunning;
 }
 
 /** Called at start-up and after a login: keeps the 5-minute history current when day trading is on. */
-export async function ensureIntraday(now = Date.now()): Promise<void> {
+export async function ensureIntraday(now = Date.now(), due = false): Promise<void> {
   if (!(await getSettings()).dayTrade.enabled) return;
   const checked = await getSession('intradayCheckedAt');
-  if (checked && now - checked < 30 * 60_000) return;
-  void syncIntradayAll(now).catch((err: unknown) => log.info('5-minute history waits for a login or an Analytics Token', { reason: String(err) }));
+  if (!due && checked && now - checked < 30 * 60_000 && !(await historyNeedsResume('intraday'))) return;
+  void syncIntradayAll(now).catch((err: unknown) => log.info('5-minute history check stopped', { reason: errorMessage(err) }));
 }
 
 /** Opening volumes of the last `n` stored sessions (oldest first). */

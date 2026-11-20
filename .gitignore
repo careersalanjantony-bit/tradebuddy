@@ -17,3 +17,6 @@ android/signing/
 *.jks
 *.keystore
 lineage.bin
+# TradeBuddy server: local database and environment file (secrets)
+server-data/
+server/.env

@@ -22,7 +22,7 @@ export default defineConfig({
   },
   server: { port: 5173 },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'server/tests/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['tests/setup.ts'],
   },

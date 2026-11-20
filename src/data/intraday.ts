@@ -3,6 +3,7 @@ import { createLogger } from '../lib/log';
 import { addDays, istDate } from '../lib/time';
 import { getDb } from '../storage/db';
 import { upstoxRequest } from '../upstox/client';
+import { historyByInstrument, mergeRanges, missingRanges, type DateRange } from './historyCoverage';
 
 /**
  * 5-minute candles for the day-trade mode (v0.11.0). Upstox v3 (docs checked 11 Nov 2026):
@@ -25,8 +26,8 @@ const CHUNK_DAYS = 28;
  * enough for a phone. Stocks-tab stocks keep the full past-test window.
  */
 export const SCAN_HISTORY_SESSIONS = 25;
-/** stocks whose older history was already filled in during this run (so it is asked once) */
-const backfilled = new Set<string>();
+const byInstrument = historyByInstrument();
+const liveRequests = new Map<string, Promise<Bars | null>>();
 
 /** Groups a candles response by IST date; bars sorted by time, market hours only. */
 export function parseIntraday(data: unknown): Map<string, Bars> {
@@ -84,11 +85,13 @@ async function lastIntradayDate(key: string): Promise<string | null> {
   return cur ? cur.value.date : null;
 }
 
-async function store(key: string, days: Map<string, Bars>): Promise<void> {
-  if (!days.size) return;
-  const tx = (await getDb()).transaction('intraday', 'readwrite');
-  for (const [date, b] of days) void tx.store.put({ key, date, ...b });
-  await tx.done;
+async function store(key: string, days: Map<string, Bars>, covered: DateRange[]): Promise<void> {
+  const tx = (await getDb()).transaction(['intraday', 'historyState'], 'readwrite');
+  const bars = tx.objectStore('intraday');
+  const writes = [...days].map(([date, b]) => bars.put({ key, date, ...b }));
+  const checkpoint = Promise.all(writes).then(() =>
+    tx.objectStore('historyState').put({ id: `intraday:${key}`, intraday: covered }));
+  await Promise.all([checkpoint, tx.done]);
 }
 
 /** Calendar days to go back for `sessions` trading days (weekends + holidays). */
@@ -98,46 +101,73 @@ export const calendarDaysFor = (sessions: number): number => Math.ceil(sessions 
  * Downloads the missing 5-minute history for one stock up to yesterday (the first time ≈ `sessions`
  * trading days, 1 request per 28 days; afterwards only the new days). Returns the number of days stored.
  */
-export async function syncIntraday(key: string, sessions: number, now = Date.now()): Promise<number> {
+export function syncIntraday(key: string, sessions: number, now = Date.now()): Promise<number> {
+  return byInstrument(key, () => downloadIntraday(key, sessions, now));
+}
+
+async function downloadIntraday(key: string, sessions: number, now: number): Promise<number> {
   const today = istDate(now);
   const end = addDays(today, -1);
-  const last = await lastIntradayDate(key);
   const earliest = addDays(today, -calendarDaysFor(sessions));
-  let from = last && last >= earliest ? addDays(last, 1) : earliest;
-  let stored = 0;
-  const download = async (start: string, stop: string) => {
-    let f = start;
-    while (f <= stop) {
-      const to = addDays(f, CHUNK_DAYS - 1) < stop ? addDays(f, CHUNK_DAYS - 1) : stop;
-      const data = await upstoxRequest<unknown>(`/v3/historical-candle/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}/${to}/${f}`, { tokenKind: 'market' });
-      const days = parseIntraday(data);
-      await store(key, days);
-      stored += days.size;
-      f = addDays(to, 1);
-    }
-  };
-  // a stock that had only the short scan history and now needs the longer window (it joined the
-  // Stocks-tab list): fill in the older days once
-  if (from !== earliest && !backfilled.has(`${key}|${sessions}`)) {
-    backfilled.add(`${key}|${sessions}`);
-    const first = await firstIntradayDate(key);
-    if (first && first > addDays(earliest, 10)) await download(earliest, addDays(first, -1));
+  const db = await getDb();
+  let covered = (await db.get('historyState', `intraday:${key}`))?.intraday;
+  if (!covered) {
+    // Existing installations have bars but no range journal. Preserve their existing window.
+    const [first, last] = await Promise.all([firstIntradayDate(key), lastIntradayDate(key)]);
+    covered = first && last ? [{ from: first, to: last }] : [];
   }
-  await download(from, end);
+  let stored = 0;
+  for (const gap of missingRanges({ from: earliest, to: end }, covered)) {
+    for (let from = gap.from; from <= gap.to;) {
+      const lastDayInChunk = addDays(from, CHUNK_DAYS - 1);
+      const to = lastDayInChunk < gap.to ? lastDayInChunk : gap.to;
+      const data = await upstoxRequest<unknown>(`/v3/historical-candle/${encodeURIComponent(key)}/minutes/${INTRADAY_INTERVAL}/${to}/${from}`, { tokenKind: 'market' });
+      const days = parseIntraday(data);
+      covered = mergeRanges([...covered, { from, to }]);
+      await store(key, days, covered);
+      stored += days.size;
+      from = addDays(to, 1);
+    }
+  }
   if (stored) log.debug(`Intraday ${key}: ${stored} day(s) stored`);
   return stored;
 }
 
 /** Removes days older than the test window (keeps storage small). */
-export async function pruneIntraday(key: string, sessions: number, now = Date.now()): Promise<void> {
-  const cutoff = addDays(istDate(now), -calendarDaysFor(sessions) - 30);
-  await (await getDb()).delete('intraday', IDBKeyRange.bound([key, ''], [key, cutoff]));
+export function pruneIntraday(key: string, sessions: number, now = Date.now()): Promise<void> {
+  return byInstrument(key, async () => {
+    const cutoff = addDays(istDate(now), -calendarDaysFor(sessions) - 30);
+    const db = await getDb();
+    const id = `intraday:${key}`;
+    const saved = (await db.get('historyState', id))?.intraday;
+    const tx = db.transaction(['intraday', 'historyState'], 'readwrite');
+    const update = tx.objectStore('intraday').delete(IDBKeyRange.bound([key, ''], [key, cutoff])).then(() => {
+      if (saved) {
+        const intraday = saved.filter((r) => r.to > cutoff)
+          .map((r) => ({ from: r.from <= cutoff ? addDays(cutoff, 1) : r.from, to: r.to }));
+        return tx.objectStore('historyState').put({ id, intraday });
+      }
+      return undefined;
+    });
+    await Promise.all([update, tx.done]);
+  });
 }
 
-/** Today's 5-minute bars so far (current trading day). App v1.20: `minutes` = 1 for 1-minute candles. */
-export async function fetchTodayBars(key: string, now = Date.now(), minutes: 1 | 5 = INTRADAY_INTERVAL): Promise<Bars | null> {
-  const data = await upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${minutes}`, { tokenKind: 'market' });
-  return parseIntraday(data).get(istDate(now)) ?? null;
+/**
+ * Today's bars so far (current trading day): 5-minute candles, or 1-minute ones with `minutes` = 1
+ * (app v1.20, the Intraday SELL confirmation). The same request already running is shared, never
+ * sent twice at once (one per stock, day and candle size).
+ */
+export function fetchTodayBars(key: string, now = Date.now(), minutes: 1 | 5 = INTRADAY_INTERVAL): Promise<Bars | null> {
+  const date = istDate(now);
+  const id = `${key}:${date}:${minutes}`;
+  const active = liveRequests.get(id);
+  if (active) return active;
+  const request = upstoxRequest<unknown>(`/v3/historical-candle/intraday/${encodeURIComponent(key)}/minutes/${minutes}`, { tokenKind: 'market' })
+    .then((data) => parseIntraday(data).get(date) ?? null)
+    .finally(() => liveRequests.delete(id));
+  liveRequests.set(id, request);
+  return request;
 }
 
 /** Runs `fn` over `items` with at most `n` running at once. */

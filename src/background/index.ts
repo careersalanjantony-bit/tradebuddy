@@ -22,7 +22,7 @@ import { parseFunds } from '../advisor/capital';
 import { registerRouter, type Handlers } from './router';
 import { notify } from '../notify/chrome';
 import { playSound, toneJustPlayed } from '../notify/sound';
-import { catchUp, isJob, POLL_ALARM, runJob, runPoll, scheduleAll } from './scheduler';
+import { catchUp, isJob, POLL_ALARM, refreshIntradayHistory, retryDailyHistory, runJob, runPoll, scheduleAll } from './scheduler';
 import { checkPracticeTrades, practiceBuy, practiceReset, practiceSell } from './practiceJobs';
 import { dayClose, dayReset, dayTake, dayTick, ensureIntraday, syncIntradayAll } from './dayJobs';
 import { ensureFeed } from './feed';
@@ -92,6 +92,7 @@ async function startup(): Promise<void> {
 }
 
 const ready = startup();
+export { ready as backgroundReady };
 ready.catch(() => undefined); // logged above; keep the rejection from being "unhandled"
 // Missed jobs (expiry, reminder, holidays). Separate from `ready` because it may call Upstox.
 ready.then(() => catchUp()).catch((err: unknown) => log.warn('Startup catch-up failed', { error: err }));
@@ -138,7 +139,11 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   void ready.then(() => {
-    if (alarm.name === POLL_ALARM) return runPoll();
+    if (alarm.name === POLL_ALARM) {
+      void retryDailyHistory().catch((err: unknown) => log.info('Daily history retry stopped', { reason: errorMessage(err) }));
+      void refreshIntradayHistory().catch((err: unknown) => log.info('5-minute history retry stopped', { reason: errorMessage(err) }));
+      return runPoll();
+    }
     if (isJob(alarm.name)) return runJob(alarm.name);
     log.warn(`Unknown alarm "${alarm.name}" cleared`);
     return chrome.alarms.clear(alarm.name).then(() => undefined);
@@ -176,12 +181,14 @@ const handlers: Handlers = {
   'auth:complete': async ({ redirectUrl }) => {
     const r = await completeLogin(redirectUrl);
     // Fresh login: holidays, then yesterday's candles (not published the same evening) for every stock.
-    void refreshCalendarIfNeeded()
+    const calendar = refreshCalendarIfNeeded();
+    void calendar
       .then(() => syncAllTracked())
       .then((s) => log.info(`After login: history updated for ${s.ok} stocks`))
-      .then(() => setSession('intradayCheckedAt', 0))
-      .then(() => ensureIntraday())
       .catch((err: unknown) => log.warn('History update after login failed', { error: err }));
+    void calendar
+      .then(() => ensureIntraday(Date.now(), true))
+      .catch((err: unknown) => log.warn('5-minute history check after login failed', { error: err }));
     void syncPortfolio(Date.now(), true).catch(() => undefined);
     return r;
   },
@@ -226,10 +233,8 @@ const handlers: Handlers = {
     // app v1.12: the five lists everything studies (NSE, weekly; bundled copy as fallback)
     const lists = await ensureScanLists(!!force).catch((err: unknown) => (log.info('Scan lists check skipped', { reason: String(err) }), null));
     // download history for any new stocks without blocking the reply
-    void syncAllTracked()
-      .then(() => setSession('intradayCheckedAt', 0))
-      .then(() => ensureIntraday())
-      .catch((err: unknown) => log.info('History download for the studied list waits for a login or an Analytics Token', { reason: String(err) }));
+    void syncAllTracked().catch((err: unknown) => log.info('Daily history check for the studied list stopped', { reason: errorMessage(err) }));
+    void ensureIntraday(Date.now(), true).catch((err: unknown) => log.info('5-minute history check for the studied list stopped', { reason: errorMessage(err) }));
     const fromNse = lists ? Object.values(lists.lists).filter((l) => l?.source === 'nse').length : 0;
     return { index: 'all', count: (await universeKeys()).length, source: fromNse === 5 ? 'nse' : fromNse ? `nse (${fromNse} of 5)` : 'bundled' };
   },
@@ -242,7 +247,8 @@ const handlers: Handlers = {
   },
   'stocks:syncAll': async () => {
     try {
-      return await syncAllTracked();
+      const { ok, failed } = await syncAllTracked();
+      return { ok, failed };
     } catch (err) {
       throw new Error(friendlyMessage(err, redirectUri()));
     }

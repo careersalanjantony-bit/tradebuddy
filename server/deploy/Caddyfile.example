@@ -1,0 +1,14 @@
+# HTTPS in front of the TradeBuddy server with Caddy (automatic Let's Encrypt certificates).
+#   sudo apt install caddy   (see https://caddyserver.com/docs/install)
+#   sudo cp server/deploy/Caddyfile.example /etc/caddy/Caddyfile   — then put your domain below
+#   sudo systemctl reload caddy
+# The EC2 security group should allow 443 (and 80 for the certificate check) — never 8787.
+
+tradebuddy.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}

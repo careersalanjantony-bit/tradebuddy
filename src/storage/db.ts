@@ -5,6 +5,7 @@ import type { Candle } from '../indicators/types';
 import type { CorporateAction } from '../indicators/adjust';
 import type { AlertFiring } from '../alerts/rules';
 import type { DayBars } from '../daytrade/types';
+import type { HistoricalRequestState } from '../upstox/historicalQueue';
 
 /**
  * IndexedDB (spec §17): instruments, candles (instrument_key + date), adjustments,
@@ -16,7 +17,7 @@ import type { DayBars } from '../daytrade/types';
  */
 
 export const DB_NAME = 'swing-assistant';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export type LogContext = 'background' | 'sidepanel' | 'popup' | 'offscreen' | 'test' | 'unknown';
 
@@ -52,6 +53,13 @@ export interface AdjustmentOverride {
 
 export type AlertLogEntry = AlertFiring & { id?: number };
 
+export interface HistoryRecord {
+  id: string;
+  daily?: { today: string; final: boolean; closingRecheck: boolean };
+  intraday?: { from: string; to: string }[];
+  requests?: HistoricalRequestState;
+}
+
 export interface SwingDB extends DBSchema {
   instruments: { key: string; value: Instrument; indexes: { by_symbol: string; by_isin: string } };
   candles: { key: [string, string]; value: CandleRow; indexes: { by_instrument: string } };
@@ -65,6 +73,7 @@ export interface SwingDB extends DBSchema {
   logs: { key: number; value: LogEntry; indexes: { by_ts: number } };
   /** 5-minute candles, one record per stock per day (day-trade mode, v0.11.0) */
   intraday: { key: [string, string]; value: DayBars };
+  historyState: { key: string; value: HistoryRecord };
 }
 
 export type SwingStore = StoreNames<SwingDB>;
@@ -81,6 +90,7 @@ export const ALL_STORES: SwingStore[] = [
   'alertLog',
   'logs',
   'intraday',
+  'historyState',
 ];
 
 export function upgradeDb(
@@ -122,11 +132,25 @@ export function upgradeDb(
   if (oldVersion < 2) {
     db.createObjectStore('intraday', { keyPath: ['key', 'date'] });
   }
+  if (oldVersion < 3) {
+    db.createObjectStore('historyState', { keyPath: 'id' });
+  }
 }
 
 let dbPromise: Promise<IDBPDatabase<SwingDB>> | null = null;
+let provider: (() => Promise<IDBPDatabase<SwingDB>>) | null = null;
+
+/**
+ * The TradeBuddy server (Node, no IndexedDB) puts its own storage behind the same calls
+ * (server/src/storage/idb.ts, SQLite). The app never calls this.
+ */
+export function __setDbProvider(p: (() => Promise<IDBPDatabase<SwingDB>>) | null): void {
+  provider = p;
+  dbPromise = null;
+}
 
 export function getDb(name = DB_NAME): Promise<IDBPDatabase<SwingDB>> {
+  if (provider) return provider();
   if (!dbPromise) {
     dbPromise = openDB<SwingDB>(name, DB_VERSION, {
       upgrade: upgradeDb,
