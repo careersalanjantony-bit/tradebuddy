@@ -1,0 +1,6 @@
+Safer price-history downloads from Upstox (from a fix made on the server branch): downloads are paced, remembered and resumed, so Upstox's limits are not hit. Your stored history is kept.
+New: the Intraday list keeps its own record - how each BUY and SELL alert ended (target, stop-loss or 3:15) and the money result after charges.
+SELL alerts are new and not proven yet: they say "practice only" until their record shows they work.
+New: "Save mobile data" in Settings - the Intraday list then checks the Nifty 500 every 30 seconds instead of every NSE stock every 15 seconds.
+Fixed: the practice order window's price boxes - prices like 247.05 can be typed easily now.
+Not a guarantee - you place every order yourself.
