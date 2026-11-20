@@ -49,6 +49,17 @@ export interface TradePrefill {
 }
 
 const EVENT = 'tb-trade';
+/**
+ * Review fix (1.20.2): price boxes are plain decimal text boxes. A phone's number box could reset or
+ * re-format a price while it was typed (the order window refreshes with every live price), which made a
+ * trigger like 247.05 hard to enter. Keeps digits and one decimal point; commas (₹1,500) are dropped.
+ */
+export function decimalText(v: string): string {
+  const s = v.replace(/[^0-9.]/g, '');
+  const i = s.indexOf('.');
+  return i < 0 ? s : s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '');
+}
+
 export function openTrade(prefill: TradePrefill = {}): void {
   window.dispatchEvent(new CustomEvent<TradePrefill>(EVENT, { detail: prefill }));
 }
@@ -478,13 +489,13 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
           {(type === 'limit' || type === 'sl') && (
             <label class="field">
               <span>{type === 'sl' ? 'Limit price ₹' : side === 'buy' ? 'Buy at ₹ (or lower)' : 'Sell at ₹ (or higher)'}</span>
-              <input type="number" step="0.05" min="0" value={limit} placeholder={ltp ? String(ltp) : ''} data-field="trade-limit" onInput={(e) => setLimit((e.currentTarget as HTMLInputElement).value)} />
+              <input type="text" inputMode="decimal" autoComplete="off" value={limit} placeholder={ltp ? String(ltp) : ''} data-field="trade-limit" onInput={(e) => setLimit(decimalText((e.currentTarget as HTMLInputElement).value))} />
             </label>
           )}
           {(type === 'sl' || type === 'slm') && (
             <label class="field">
               <span>Trigger price ₹</span>
-              <input type="number" step="0.05" min="0" value={trigger} data-field="trade-trigger" onInput={(e) => setTrigger((e.currentTarget as HTMLInputElement).value)} />
+              <input type="text" inputMode="decimal" autoComplete="off" value={trigger} data-field="trade-trigger" onInput={(e) => setTrigger(decimalText((e.currentTarget as HTMLInputElement).value))} />
             </label>
           )}
         </div>
@@ -537,11 +548,11 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
             <div class="grid2">
               <label class="field">
                 <span>Stop-loss: sell if it falls to ₹</span>
-                <input type="number" step="0.05" min="0" value={stop} data-field="trade-stop" onInput={(e) => setStop((e.currentTarget as HTMLInputElement).value)} />
+                <input type="text" inputMode="decimal" autoComplete="off" value={stop} data-field="trade-stop" onInput={(e) => setStop(decimalText((e.currentTarget as HTMLInputElement).value))} />
               </label>
               <label class="field">
                 <span>Target: take profit at ₹</span>
-                <input type="number" step="0.05" min="0" value={target} data-field="trade-target" onInput={(e) => setTarget((e.currentTarget as HTMLInputElement).value)} />
+                <input type="text" inputMode="decimal" autoComplete="off" value={target} data-field="trade-target" onInput={(e) => setTarget(decimalText((e.currentTarget as HTMLInputElement).value))} />
               </label>
             </div>
             {product !== 'intraday' && (
@@ -556,15 +567,15 @@ function TradeSheet({ prefill, onClose }: { prefill: TradePrefill; onClose: () =
           <div class="grid3">
             <label class="field">
               <span>Buy back if it rises to ₹</span>
-              <input type="number" step="0.05" min="0" value={stop} data-field="short-stop" onInput={(e) => setStop((e.currentTarget as HTMLInputElement).value)} />
+              <input type="text" inputMode="decimal" autoComplete="off" value={stop} data-field="short-stop" onInput={(e) => setStop(decimalText((e.currentTarget as HTMLInputElement).value))} />
             </label>
             <label class="field">
               <span>Target 1 (half) ₹</span>
-              <input type="number" step="0.05" min="0" value={t1} placeholder="optional" data-field="short-t1" onInput={(e) => setT1((e.currentTarget as HTMLInputElement).value)} />
+              <input type="text" inputMode="decimal" autoComplete="off" value={t1} placeholder="optional" data-field="short-t1" onInput={(e) => setT1(decimalText((e.currentTarget as HTMLInputElement).value))} />
             </label>
             <label class="field">
               <span>Target 2 (rest) ₹</span>
-              <input type="number" step="0.05" min="0" value={target} placeholder="optional" data-field="short-t2" onInput={(e) => setTarget((e.currentTarget as HTMLInputElement).value)} />
+              <input type="text" inputMode="decimal" autoComplete="off" value={target} placeholder="optional" data-field="short-t2" onInput={(e) => setTarget(decimalText((e.currentTarget as HTMLInputElement).value))} />
             </label>
           </div>
         )}

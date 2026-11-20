@@ -120,6 +120,8 @@ const bars1Cache = new Map<string, { minute: number; bars: Bars }>();
 const avgVol = new Map<string, { date: string; avg: number | null; prevLow: number | null }>();
 let round = 0;
 let lastRun = 0;
+/** review fix (1.20.2): 30 s between rounds while "Save mobile data" is on */
+let everyMs = INTRADAY_EVERY_MS;
 let running: Promise<number> | null = null;
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -202,7 +204,7 @@ const finishedWithin = (p: Promise<unknown>, ms: number): Promise<boolean> =>
 export function intradayTick(now = Date.now(), force = false): Promise<number> {
   if (running && Date.now() - runningSince < STUCK_MS) return running;
   if (running) log.warn('An Intraday round took over a minute — starting a new one');
-  if (!force && now - lastRun < INTRADAY_EVERY_MS - 500) return Promise.resolve(0);
+  if (!force && now - lastRun < everyMs - 500) return Promise.resolve(0);
   const id = ++runId;
   runningSince = Date.now();
   const p = scan(now, force, id)
@@ -233,7 +235,10 @@ async function scan(now: number, force: boolean, id = runId): Promise<number> {
   lastRun = now;
   const date = istDate(now);
   const settings = await getSettings();
-  const list = await eligible(now);
+  // review fix (1.20.2): "Save mobile data" — Nifty 500 only (most of it comes from the live feed), every 30 s
+  const saveData = !!settings.data.saveData;
+  everyMs = saveData ? 30_000 : INTRADAY_EVERY_MS;
+  const list = saveData ? (await eligible(now)).filter((i) => tierOf(i.instrument_key) !== 'other') : await eligible(now);
   const live = await getQuotes();
   let error: string | undefined;
 
@@ -757,6 +762,7 @@ export function __resetIntraday(budget?: Partial<typeof BUDGET>): void {
   avgVol.clear();
   round = 0;
   lastRun = 0;
+  everyMs = INTRADAY_EVERY_MS;
   running = null;
   runningSince = 0;
   quotesJob = barsJob = historyJob = bars1Job = null;

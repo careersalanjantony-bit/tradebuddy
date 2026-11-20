@@ -160,4 +160,19 @@ describe('Intraday scanner with BUY and SELL, live', () => {
     // SELL is new and unproven: its alert says practice only
     expect(created().find((c) => c.id.startsWith('alert:intraday-short-'))!.title).toMatch(/practice only$/);
   });
+  it('review fix (1.20.2): "Save mobile data" — only Nifty 500 stocks are asked for, and rounds come every 30 s', async () => {
+    const { DEFAULT_SETTINGS } = await import('../src/storage/defaults');
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.data.saveData = true;
+    await chrome.storage.local.set({ settings });
+    await intradayTick(NOW, true);
+    const quoteCalls = calls.filter((u) => u.includes('/v3/market-quote/quotes'));
+    expect(quoteCalls.length).toBeGreaterThan(0);
+    expect(quoteCalls.some((u) => u.includes(SHORTK))).toBe(true); // Nifty 500: still checked
+    expect(quoteCalls.some((u) => u.includes(SMALL) || u.includes(URBANCO))).toBe(false); // outside Nifty 500: not asked for
+    // the next round is paced 30 s apart (not 15 s)
+    const n = calls.length;
+    expect(await intradayTick(NOW + 16_000)).toBe(0);
+    expect(calls.length).toBe(n);
+  });
 });

@@ -38,3 +38,14 @@ describe('Intraday record', () => {
     expect(followStep(s, 98.9, null, null, null)?.event).toBe('stop');
   });
 });
+
+describe('practice order window price boxes (review fix 1.20.2)', () => {
+  it('keeps digits and one decimal point; commas (thousands) are dropped', async () => {
+    const { decimalText } = await import('../src/ui/components/TradeSheet');
+    expect(decimalText('247.05')).toBe('247.05');
+    expect(decimalText('247.')).toBe('247.');
+    expect(decimalText('2.4.7')).toBe('2.47');
+    expect(decimalText('₹ 1,500.50')).toBe('1500.50');
+    expect(decimalText('abc')).toBe('');
+  });
+});
