@@ -6,6 +6,7 @@ import { alertChannel } from '../notify/toneList';
 import { getLocal, getSettings, onLocalChanged, setLocal } from '../storage/local';
 import { ALERT_EVENT, notificationClicked } from './chromeShim';
 import { registerPlugin } from '@capacitor/core';
+import type { PushNotificationsPlugin } from '@capacitor/push-notifications';
 import { appFetch, isNative } from './http';
 import { deleteCloudCredential, readCloudCredential, saveCloudCredential } from './secureStore';
 
@@ -29,9 +30,27 @@ const log = createLogger('push');
 
 type PushData = Record<string, unknown> | undefined;
 
-/** The plugin is loaded only on a phone (and only when cloud alerts are used). */
-async function plugin() {
-  return (await import('@capacitor/push-notifications')).PushNotifications;
+/**
+ * The plugin is loaded only on a phone (and only when cloud alerts are used) — wrapped in a plain object.
+ * RC2 fix: a Capacitor plugin object answers every property, also `then`; returned from an async function
+ * (or awaited) it is taken for a promise that never settles. That is what made pairing hang on a real
+ * phone in m4-fcm-rc1 (see secureStore.ts). `{ P }` is not "thenable".
+ */
+async function pushPlugin(): Promise<{ P: PushNotificationsPlugin }> {
+  const { PushNotifications } = await import('@capacitor/push-notifications');
+  return { P: PushNotifications };
+}
+
+/** RC2: a native call that does not answer must not hang the screen (Android's permission dialog excepted). */
+export const NATIVE_CALL_TIMEOUT_MS = 15_000;
+function withTimeout<T>(p: Promise<T>, what: string, ms = NATIVE_CALL_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new CloudError(`${what} did not answer within ${Math.round(ms / 1000)} s.`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 export class CloudError extends Error {
@@ -45,7 +64,7 @@ const NO_FIREBASE = 'This copy of the app was built without Firebase (google-ser
 /** Firebase must be set up in the APK before its push calls are used (otherwise Android stops the app). */
 export async function firebaseReady(): Promise<boolean> {
   if (!isNative()) return false;
-  return (await PushSetup.status().catch(() => ({ configured: false }))).configured;
+  return (await withTimeout(PushSetup.status(), 'The app’s Firebase check').catch(() => ({ configured: false }))).configured;
 }
 
 let localHttpForTests = false;
@@ -116,13 +135,34 @@ export async function pairWithServer(serverUrl: string, code: string, name: stri
   });
   const json = (await res.json().catch(() => ({}))) as { deviceId?: string; credential?: string; message?: string };
   if (!res.ok || !json.deviceId || !json.credential) throw new CloudError(json.message ?? `Pairing failed (the server answered ${res.status}).`);
-  // review fix: the credential goes to the Android Keystore-backed storage, not the app's ordinary storage
-  await saveCloudCredential(json.credential);
+  log.info(`Pairing: the server accepted this phone (device ${json.deviceId.slice(0, 8)}…)`);
   const state: CloudState = { serverUrl: base, deviceId: json.deviceId, name: name.trim() || 'Android phone', pairedAt: Date.now(), categories: [...DEFAULT_CLOUD_CATEGORIES], tokenSentAt: null, lastError: null, serverOkAt: null };
-  await setLocal('cloud', state);
+  try {
+    // review fix: the credential goes to the Android Keystore-backed storage, not the app's ordinary storage
+    const where = await saveCloudCredential(json.credential);
+    await setLocal('cloud', state);
+    log.info(`Pairing: saved on the phone (credential in ${where === 'keystore' ? 'the Android Keystore' : 'the app storage'})`);
+  } catch (err) {
+    // RC2: the server has this phone now but the phone could not keep it — undo it on the server (with the
+    // phone's own new credential), so no half-paired registration is left behind, and say so
+    const reason = err instanceof Error ? err.message : String(err);
+    const revoked = await revokeOnServer(base, json.credential);
+    await deleteCloudCredential().catch(() => undefined);
+    throw new CloudError(`The server accepted this phone, but the phone could not save the pairing (${reason}). ${revoked ? 'The server registration was removed again' : 'Ask for it to be revoked on the server'} — try again with a new code.`);
+  }
   await syncPreferences().catch(() => undefined);
   await startPush().catch((err: unknown) => patchCloud({ lastError: err instanceof Error ? err.message : String(err) }));
   return (await getLocal('cloud')) ?? state;
+}
+
+/** Removes a just-made registration on the server with its own credential (best effort, 10 s). */
+async function revokeOnServer(base: string, credential: string): Promise<boolean> {
+  try {
+    const res = await appFetch(`${base}/v1/device`, { method: 'DELETE', headers: { Authorization: `Bearer ${credential}`, Accept: 'application/json' }, timeoutMs: 10_000 });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Sends the FCM token to the server (first time and whenever Firebase changes it). */
@@ -211,8 +251,9 @@ export function __resetCloudPush(): void {
 export async function startPush(): Promise<void> {
   if (!isNative()) throw new CloudError('Push notifications work in the Android app only.');
   if (!(await firebaseReady())) throw new CloudError(NO_FIREBASE);
-  const P = await plugin();
-  let perm = await P.checkPermissions();
+  const { P } = await pushPlugin();
+  let perm = await withTimeout(P.checkPermissions(), 'Android (notification permission)');
+  // Android's own dialog: no time limit, the user answers it (the pairing is already saved by then)
   if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') perm = await P.requestPermissions();
   if (perm.receive !== 'granted') throw new CloudError('Notifications are not allowed for TradeBuddy. Allow them in Android settings → Apps → TradeBuddy → Notifications.');
   if (!listening) {
@@ -222,7 +263,7 @@ export async function startPush(): Promise<void> {
     await P.addListener('pushNotificationReceived', (n) => void handlePushReceived(n.data as PushData));
     await P.addListener('pushNotificationActionPerformed', (a) => void handlePushTapped(a.notification.data as PushData));
   }
-  await P.register();
+  await withTimeout(P.register(), 'Firebase (registering for push)');
 }
 
 /** Unpairs: the server forgets this phone, Firebase stops its token, the credential is deleted. */
@@ -230,9 +271,9 @@ export async function unpair(): Promise<void> {
   await api('/v1/device', 'DELETE').catch((err: unknown) => log.info('Server not reached while unpairing (the phone forgets it anyway)', { reason: String(err) }));
   if (await firebaseReady()) {
     try {
-      const P = await plugin();
-      await P.unregister();
-      await P.removeAllListeners();
+      const { P } = await pushPlugin();
+      await withTimeout(P.unregister(), 'Firebase (unregistering)');
+      await withTimeout(P.removeAllListeners(), 'Firebase (listeners)');
       listening = false;
     } catch {
       /* Firebase not reachable: the server has forgotten this phone anyway */
