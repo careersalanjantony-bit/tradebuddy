@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { secretsOverlay } from '../src/adapters/secrets';
 import { ChangeHub, SqliteKV, type StorageChange } from '../src/storage/kv';
-import { openStore, type Store } from '../src/storage/sqlite';
+import { DB_SCHEMA_VERSION, openStore, type Store } from '../src/storage/sqlite';
 import { tempDir } from './helpers';
 
 const open: Store[] = [];
@@ -22,7 +22,7 @@ afterEach(() => {
 describe('SQLite store', () => {
   it('creates the schema once, answers pings and keeps a small journal', () => {
     const { store, dir } = fresh();
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(DB_SCHEMA_VERSION);
     expect(store.ping()).toBe(true);
     store.event('start', { pid: 1 }, 1000);
     store.event('stop', undefined, 2000);
@@ -33,7 +33,7 @@ describe('SQLite store', () => {
     store.close();
     expect(store.ping()).toBe(false);
     const again = fresh(dir).store;
-    expect(again.schemaVersion).toBe(3);
+    expect(again.schemaVersion).toBe(DB_SCHEMA_VERSION);
     expect(again.recentEvents(10)).toHaveLength(2);
   });
 });

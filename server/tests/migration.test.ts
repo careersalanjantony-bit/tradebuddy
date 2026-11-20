@@ -68,15 +68,15 @@ const tables = (path: string) => {
   return t;
 };
 
-describe('schema 2 → 3 (milestone 3 → milestone 4)', () => {
+describe('schema 2 → 3 (milestone 3 → milestone 4), now ending at schema 4', () => {
   it('keeps every existing record exactly — settings, watchlist, alert history, models, wallet, signals, candles, alarms, journal', () => {
     tmp = tempDir();
     const path = milestone3Db(tmp.dir);
     const before = dump(path);
     expect(before.idb_rows).toHaveLength(302);
     const store = openStore(tmp.dir);
-    expect(store.schemaVersion).toBe(3);
-    expect(DB_SCHEMA_VERSION).toBe(3);
+    expect(store.schemaVersion).toBe(DB_SCHEMA_VERSION); // 2 → 3 → 4 in one start (app 1.22 adds the auto-trader tables)
+    expect(DB_SCHEMA_VERSION).toBe(4);
     store.close();
     expect(dump(path)).toEqual(before); // nothing changed, nothing lost
     expect(tables(path)).toEqual(expect.arrayContaining(['devices', 'pairing_codes', 'push_outbox', 'kv', 'idb_rows', 'alarms', 'server_events', 'server_lock']));
@@ -91,7 +91,7 @@ describe('schema 2 → 3 (milestone 3 → milestone 4)', () => {
     openStore(tmp.dir).close();
     const after1 = dump(join(tmp.dir, 'tradebuddy.db'));
     const s = openStore(tmp.dir);
-    expect(s.schemaVersion).toBe(3);
+    expect(s.schemaVersion).toBe(DB_SCHEMA_VERSION);
     s.close();
     expect(dump(join(tmp.dir, 'tradebuddy.db'))).toEqual(after1);
   });
@@ -131,8 +131,76 @@ describe('schema 2 → 3 (milestone 3 → milestone 4)', () => {
     milestone3Db(tmp.dir);
     openStore(tmp.dir).close();
     const db = new DatabaseSync(join(tmp.dir, 'tradebuddy.db'));
-    db.prepare('UPDATE schema_version SET version = 4').run();
+    db.prepare('UPDATE schema_version SET version = ?').run(DB_SCHEMA_VERSION + 1);
     db.close();
     expect(() => openStore(tmp.dir)).toThrow(/newer than this server/);
+  });
+});
+
+/** A database exactly as a milestone 4 server leaves it (schema 3, on AWS today): with its own auto-trader, paired phones, pushes. */
+function milestone4Db(dir: string): string {
+  const path = milestone3Db(dir);
+  const db = new DatabaseSync(path);
+  db.exec(MIGRATIONS[2]!);
+  db.prepare('UPDATE schema_version SET version = 3').run();
+  const kv = db.prepare('INSERT INTO kv (area, key, value, updated_at) VALUES (?, ?, ?, ?)');
+  // the auto-trader the milestone 4 server ran by itself (TB_JOBS=on): it must be kept exactly
+  kv.run('local', 'bot', JSON.stringify({ v: 1, enabled: true, createdAt: 11, wallet: { v: 1, cash: 4_990_000, startCash: 5_000_000, createdAt: 11, holdings: [], orders: [], fills: [{ key: 'K', pnl: -10_000 }] }, brain: { v: 1, n: 1, wins: 0 }, trades: [{ id: 'B1', status: 'closed' }], log: [], day: { date: '2026-11-19', opened: 1 }, lastRun: 12, lastDecideAt: 12, note: null, looked: 3, equity: [] }), 12);
+  db.prepare("INSERT INTO devices (id, name, platform, app_version, secret_hash, token_state, categories, created_at) VALUES ('d1', 'Alan RC2', 'android', '1.21.0', 'h', 'active', '[]', 13)").run();
+  db.prepare("INSERT INTO push_outbox (alert_id, device_id, payload, status, next_at, created_at) VALUES ('test-push-d1', 'd1', '{}', 'sent', 14, 14)").run();
+  db.close();
+  return path;
+}
+
+describe('schema 3 → 4 (milestone 4 → app 1.22, the cloud auto-trader)', () => {
+  const all = (path: string) => {
+    const out = dump(path);
+    const db = new DatabaseSync(path, { readOnly: true });
+    for (const t of ['devices', 'push_outbox', 'pairing_codes']) out[t] = db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all();
+    db.close();
+    return out;
+  };
+
+  it('keeps every row — the server’s own auto-trader too — and starts on standby with empty audit and backups', () => {
+    tmp = tempDir();
+    const path = milestone4Db(tmp.dir);
+    const before = all(path);
+    openStore(tmp.dir).close();
+    expect(all(path)).toEqual(before);
+    const db = new DatabaseSync(path, { readOnly: true });
+    const a = db.prepare('SELECT * FROM bot_authority').all() as Array<{ id: number; server_id: string; mode: string; epoch: number; controller_id: string | null }>;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ id: 1, mode: 'standby', epoch: 0, controller_id: null });
+    expect(a[0]!.server_id).toMatch(/^[0-9a-f]{32}$/);
+    for (const t of ['bot_audit', 'bot_backups']) expect((db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n).toBe(0);
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(4);
+    db.close();
+  });
+
+  it('a failed migration 4 leaves schema 3 and every row untouched', () => {
+    tmp = tempDir();
+    const path = milestone4Db(tmp.dir);
+    const db = new DatabaseSync(path);
+    db.exec('CREATE TABLE bot_backups (x INTEGER)'); // in the way of migration 4
+    db.close();
+    const before = all(path);
+    expect(() => openStore(tmp.dir)).toThrow();
+    const check = new DatabaseSync(path, { readOnly: true });
+    expect((check.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(3);
+    expect(check.prepare("SELECT name FROM sqlite_master WHERE name IN ('bot_authority', 'bot_audit')").all()).toEqual([]);
+    check.close();
+    expect(all(path)).toEqual(before);
+  });
+
+  it('the server id stays the same on every start (the phone recognises its server)', () => {
+    tmp = tempDir();
+    milestone4Db(tmp.dir);
+    const id = () => {
+      const s = openStore(tmp.dir);
+      const r = s.db.prepare('SELECT server_id FROM bot_authority').get() as { server_id: string };
+      s.close();
+      return r.server_id;
+    };
+    expect(id()).toBe(id());
   });
 });

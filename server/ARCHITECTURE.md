@@ -5,6 +5,21 @@ Status: milestones 1, 2, 3 and 4 (cloud alerts through FCM) are built and tested
 unchanged, driven by `src/market/feedSupervisor.ts`; the app's jobs run unchanged through
 `src/engine/jobs.ts`.
 
+## App 1.22 as built (cloud auto-trader)
+
+* **One auto-trader, one writer** — `setBotGate()` in `src/background/botJobs.ts`: on the server
+  (`src/bot/cloudBot.ts`) it allows the app's own `runBot()` only after the owner moved the auto-trader
+  here (`bot_authority.mode = 'cloud'`); on the phone (`src/background/cloudBotJobs.ts`) it blocks the
+  local one while the server runs it. Every run and change goes through one queue (`withBotLock`).
+* **API** `src/http/botRoutes.ts` (device credential to read; one controlling phone to change; admin token
+  for stop / controller / backups), **audit** and **backups** in SQLite (schema 4), the move in one
+  transaction (`SqliteKV.writeNow` + `BEGIN IMMEDIATE`), repeat-safe by request id.
+* **Health**: every run reports to the server (`setBotObserver`); `/v1/health` → `autoTrader`; a 30 s
+  watchdog pushes one alert when the server's auto-trader stops trading in market hours (old prices,
+  no runs) and one when it recovers. No new trades from prices older than 2 minutes (shared code).
+* **Phone**: the Auto-trader screen shows the server's state (its money totals and prices) and sends
+  controls; `botArchive` keeps the phone's own copy; see [docs/CLOUD_AUTOTRADER.md](../docs/CLOUD_AUTOTRADER.md).
+
 ## Milestone 4 as built (cloud alerts)
 
 * **Server** — `src/push/google.ts` signs a service-account JWT (RS256, `node:crypto`) and swaps it for an
@@ -24,8 +39,8 @@ unchanged, driven by `src/market/feedSupervisor.ts`; the app's jobs run unchange
   in the shim until the screens are ready, then opens the alert's details. `PushSetupPlugin.java` tells
   the app whether the APK was built with `google-services.json`, so an APK without Firebase never calls
   Firebase (that would stop the app). Settings → **Cloud alerts** is the only new screen part.
-* **Not pushed** (phone-only until milestone 5, because the server's copy differs): practice money, price
-  alerts on the phone's plans, the auto-trader. Those still alert from the phone.
+* **Not pushed** (each phone's own data): practice money, price alerts on the phone's plans. The
+  auto-trader is pushed by the server once it runs there (app 1.22); before that it alerts from the phone.
 * Guide for the owner: [docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md).
 
 ## Milestone 3 as built

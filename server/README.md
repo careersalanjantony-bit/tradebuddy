@@ -190,6 +190,26 @@ server does not push the phone-only messages (Upstox login reminder, session exp
 summary); its own "Analytics Token rejected" goes out as `server-analytics-invalid`. Delivery is best
 effort — FCM and the phone decide in the end.
 
+### Cloud auto-trader (app 1.22)
+
+The auto-trader (pretend money) can run on the server — only after the owner moves it there once from a
+phone; until then the server is on **standby** and its own copy never trades. Full design, security model,
+API, tests and the cutover runbook: [docs/CLOUD_AUTOTRADER.md](../docs/CLOUD_AUTOTRADER.md).
+
+| Address | Who | What |
+| --- | --- | --- |
+| `GET /v1/bot` | any paired phone | the server's auto-trader for the screen (`?have=<rev>:<updatedAt>` leaves the big part out when unchanged) |
+| `GET /v1/bot/preflight` | any paired phone | before the move: the server's copy (summary + digest), whether it can run it |
+| `POST /v1/bot/cutover` | a paired phone | the one-time move (`import` / `keep-server` / `fresh`), one SQLite transaction, repeat-safe (request id) |
+| `POST /v1/bot/commands` | the controlling phone | switch, amount, protection, start again (with `ifRev`), past test — each in `bot_audit` |
+| `POST /v1/bot/release` | the controlling phone | back to that phone: standby, full state in the answer |
+| `GET /v1/bot/audit` | any paired phone | who changed what |
+| `GET /v1/bot/admin`, `…/admin/preflight` | admin token | status / the read-only dry run |
+| `POST /v1/bot/admin/standby`, `…/resume`, `…/controller`, `…/restore`; `GET …/admin/backups/{id}` | admin token | emergency stop, start again, the controlling phone, backups |
+
+Requests with a body to these addresses must be JSON (415 otherwise). The schema 4 migration adds
+`bot_authority` (standby, a random server id), `bot_audit` and `bot_backups`; nothing existing changes.
+
 ## How it works
 
 * `src/engine.ts` starts everything in order and stops it in reverse order.
