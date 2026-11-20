@@ -1,0 +1,4 @@
+New (optional): Cloud alerts - pair the app with your own TradeBuddy server (Settings → Cloud alerts) and its alerts reach the phone as push notifications, also when the app is closed.
+Fixed: pairing no longer stays on "Pairing…". The phone now saves the pairing, says clearly if something fails, and never waits forever.
+Everything else is as in 1.20.2. Your practice trades, settings and stored history are kept.
+Not a guarantee - you place every order yourself.
