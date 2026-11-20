@@ -66,6 +66,29 @@ export function SettingsScreen() {
         </label>
       </section>
 
+      {/* review fix (1.20.2): the switch was only on the Breakouts card, which is off since app 1.14 */}
+      <section class="card" data-testid="settings-data">
+        <h2>Mobile data</h2>
+        <label class="switch-row">
+          <span>
+            <b>Save mobile data</b>
+            <span class="tiny muted">
+              {settings.data.saveData
+                ? 'On: the Intraday list checks the Nifty 500 stocks every 30 seconds, and live prices come without volume details (volume is checked about every 10 seconds).'
+                : 'Off: the Intraday list checks every NSE stock every 15 seconds with full live details — this uses a lot of data; Wi-Fi is best. Turn on if your data pack is small.'}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            class="switch"
+            data-field="save-data"
+            checked={!!settings.data.saveData}
+            onChange={(e) => void updateSettings({ data: { saveData: (e.currentTarget as HTMLInputElement).checked } })}
+          />
+        </label>
+      </section>
+
       <section class="card">
         <h2>Appearance</h2>
         <div class="field">

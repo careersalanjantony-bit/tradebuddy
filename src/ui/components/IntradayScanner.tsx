@@ -8,6 +8,7 @@ import type { Go } from '../App';
 import { useStockData } from '../data';
 import { useLocal, useSessionValue } from '../hooks';
 import { LevelsCard } from './LevelsCard';
+import { PROVEN_MIN, sideStats, type SideStats } from '../../intraday/record';
 import { toast, useFlash } from './Motion';
 import { openTrade } from './TradeSheet';
 
@@ -40,6 +41,9 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
   const counts = intradayCounts(all);
   const rows = all.filter((r) => filter === 'all' || r.call === filter);
   const fresh = !!s && now - s.at < 45_000;
+  const rec = useLocal('intradayRecord');
+  const buyStats = sideStats(rec, 'buy');
+  const sellStats = sideStats(rec, 'sell');
   return (
     <div class="intra" data-testid="intraday">
       <p class="small muted intra-head" data-testid="intraday-head">
@@ -49,6 +53,7 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
             ? 'All NSE stocks (EQ series) checked every 15 s · the first round is on its way…'
             : 'Every NSE stock (EQ series — never BE / T2T) is checked every 15 seconds from 9:15 to 3:15: rising ones for a BUY, falling Nifty 500 ones for a SELL (sell first).'}
       </p>
+      <RecordLine buy={buyStats} sell={sellStats} />
       {s?.gate && (
         <div class="banner warn small" data-testid="intraday-gate">
           <b>Market falling</b> ({s.gate}) — no BUY now; rising stocks show as WAIT.
@@ -86,7 +91,7 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
       ) : (
         <div class="mv-list" data-testid="intraday-list">
           {rows.map((r) => (
-            <IntradayItem r={r} key={r.key} go={go} />
+            <IntradayItem r={r} key={r.key} go={go} sellProven={sellStats.proven} />
           ))}
         </div>
       )}
@@ -94,7 +99,21 @@ export function IntradayList({ open, now, go }: { open: boolean; now: number; go
   );
 }
 
-function IntradayItem({ r, go }: { r: IntradayRow; go: Go }) {
+/** Review fix (1.20.2): how the scanner's own BUY and SELL alerts turned out (target, stop-loss, invalidated, 3:15). */
+function RecordLine({ buy, sell }: { buy: SideStats; sell: SideStats }) {
+  const part = (name: string, x: SideStats) =>
+    x.finished ? `${name} ${x.finished} finished — ${x.wins} made money, ${x.losses} lost, ${x.pnl >= 0 ? '+' : '−'}₹${Math.abs(Math.round(x.pnl)).toLocaleString('en-IN')} after charges` : `${name}: no finished alert yet`;
+  const losing = (buy.finished >= 5 && buy.pnl < 0) || (sell.finished >= 5 && sell.pnl < 0);
+  return (
+    <p class={`tiny intra-record ${losing ? 'err-text' : ''}`} data-testid="intraday-record">
+      📒 <b>Record of these alerts:</b> {part('BUY', buy)} · {part('SELL', sell)}.
+      {!sell.proven && ` SELL is new and not proven yet (${Math.min(sell.finished, PROVEN_MIN)} of ${PROVEN_MIN} results) — practice money only.`}
+      {losing && ' So far they lost money — practice only.'}
+    </p>
+  );
+}
+
+function IntradayItem({ r, go, sellProven }: { r: IntradayRow; go: Go; sellProven: boolean }) {
   const [open, setOpen] = useState(false);
   const flash = useFlash(r.price);
   const line =
@@ -111,6 +130,11 @@ function IntradayItem({ r, go }: { r: IntradayRow; go: Go }) {
           <span class="row" style={{ gap: '6px' }}>
             <b>{r.symbol}</b>
             <span class={`chip intra-call ${CALL_CLS[r.call]}`}>{r.call}</span>
+            {r.call === 'SELL' && !sellProven && (
+              <small class="chip intra-practice" data-testid="sell-practice-only">
+                practice only
+              </small>
+            )}
             {r.breakoutT !== null && <small class="muted">⚡ {hhmmT(r.breakoutT)}</small>}
             {sellSide && r.breakdownT !== null && r.breakdownT !== undefined && <small class="muted">▼ {hhmmT(r.breakdownT)}</small>}
           </span>
@@ -350,6 +374,7 @@ export function IntradayTestLine() {
           ? `${r.from} – ${r.to}, ${r.days} market days: ${r.trades} BUYs, ${Math.round((r.winRate ?? 0) * 100)}% ended in profit, average ${r.avgR ?? 0}R, ${formatINR(r.netPnl, 0)} after charges for your trade sizes (target ${r.byExit.target}, stop-loss ${r.byExit.stop}, 3:15 exit ${r.byExit.time}). The same rules as the live list; the waiting buy / sell quantities and the market gate are not in the history. Past results do not promise future ones.`
           : `${r.days} market days of 5-minute history: no BUY under these rules.`
         : 'runs once a day after the close on the stored 5-minute history.'}{' '}
+      SELL has no past test (the app keeps no 1-minute or NIFTY history for past days) — its live record above is its only test.{' '}
       <button class="link-btn" type="button" disabled={busy} onClick={run}>
         {busy ? 'testing…' : 'Test now'}
       </button>

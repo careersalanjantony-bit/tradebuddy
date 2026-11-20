@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ALL_STORES, DB_VERSION, getDb, type LogEntry } from '../src/storage/db';
+import { ALL_STORES, DB_NAME, DB_VERSION, __resetDb, getDb, type LogEntry } from '../src/storage/db';
 import { addLog, clearLogs, countLogs, listLogs, trimLogs } from '../src/storage/logStore';
 
 const entry = (i: number, over: Partial<LogEntry> = {}): LogEntry => ({
@@ -71,5 +71,35 @@ describe('log ring buffer', () => {
     expect(first.map((e) => e.msg)).toEqual(['entry 4', 'entry 3']);
     const next = await listLogs({ limit: 2, beforeId: first.at(-1)!.id });
     expect(next.map((e) => e.msg)).toEqual(['Feed stale', 'entry 1']);
+  });
+});
+
+describe('upgrade of a phone on app 1.20.1 (database version 2) to version 3', () => {
+  it('keeps the stored 5-minute history and instruments, and adds the empty download-state store', async () => {
+    const { openDB, deleteDB } = await import('idb');
+    const name = DB_NAME;
+    await __resetDb();
+    await deleteDB(name);
+    // the database exactly as app 1.20.1 left it: version 2, with data in it
+    const old = await openDB(name, 2, {
+      upgrade(db) {
+        db.createObjectStore('instruments', { keyPath: 'instrument_key' });
+        db.createObjectStore('candles', { keyPath: ['instrument_key', 'date'] });
+        db.createObjectStore('intraday', { keyPath: ['key', 'date'] });
+      },
+    });
+    await old.put('instruments', { instrument_key: 'NSE_EQ|INE002A01018', trading_symbol: 'RELIANCE' });
+    await old.put('intraday', { key: 'NSE_EQ|INE002A01018', date: '2026-11-19', t: [555], o: [1], h: [1], l: [1], c: [1], v: [10] });
+    old.close();
+    // the new app opens it
+    const db = await getDb();
+    expect(db.version).toBe(DB_VERSION);
+    expect(db.objectStoreNames.contains('historyState')).toBe(true);
+    expect(await db.get('instruments', 'NSE_EQ|INE002A01018')).toMatchObject({ trading_symbol: 'RELIANCE' });
+    expect(await db.get('intraday', ['NSE_EQ|INE002A01018', '2026-11-19'])).toMatchObject({ v: [10] });
+    expect(await db.get('historyState', 'intraday:NSE_EQ|INE002A01018')).toBeUndefined();
+    // leave a full, fresh database for the other tests
+    await __resetDb();
+    await deleteDB(name);
   });
 });

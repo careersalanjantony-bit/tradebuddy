@@ -40,6 +40,31 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.20.2
+
+- **Fixes from the server branch reach the phone app.** Alan's merged PR #2 (paced, remembered and
+  resumable Upstox history downloads; theme waits for storage upgrades at start) was only on
+  `server-backend`; it is now in the app. Saved data moves from database version 2 to 3 by adding one
+  empty store — stored history is kept (tested).
+- **The Intraday alerts' own record:** every BUY / SELL alert's result (target, stop-loss, invalidated
+  or 3:15 pm; ₹ after charges) is written down for 20 market days and shown above the list.
+- **SELL is "practice only" until proven:** it has no past test (no stored 1-minute or NIFTY history), so
+  its rows and alerts say so until 20 finished SELL alerts won more often than they lost and made money.
+- **Save mobile data** is in Settings (it was only on the switched-off Breakouts card): the Intraday
+  scan then checks the Nifty 500 every 30 s instead of every NSE stock every 15 s.
+- **Practice order window:** price boxes are plain decimal boxes, so a trigger like 247.05 can be typed.
+- **One base branch:** `main` now holds the app and the server; new work branches start from `main`
+  and come back to it by pull request; releases are built from `main` (see "Working together" below).
+
+## Working together
+
+- `main` is the one shared branch. Start every change on a new branch from the latest `main`, open a
+  pull request into `main`, and merge it there. `app-v1` and `server-backend` are kept equal to `main`
+  for older links and setups; do not commit to them directly.
+- Releases (`npm run apk`, then `npm run release`) are built only from an up-to-date `main`. The
+  signing keys and `google-services.json` stay in the private `tradebuddy-keys` repository.
+- Never commit secrets: `.gitignore` blocks key files, `.env` files and Firebase service-account files.
+
 ## New in 1.20.1
 
 - **The Intraday list shows on every phone.** A stock whose 5-minute candles had not loaded yet (after
