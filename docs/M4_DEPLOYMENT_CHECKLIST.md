@@ -107,13 +107,14 @@ curl -m 5 http://<EC2-ADDRESS>:8787/healthz || echo "not reachable from outside:
 
 ## 7. Deploy the reviewed commit
 
-Use the exact head commit of PR #4 (shown on the PR page; it is printed in the final review report).
+Deploy the frozen release candidate: the annotated tag `m4-fcm-rc1`. It never moves (the PR head
+may); the final review report gives the commit it points at.
 
 ```bash
 cd /opt/tradebuddy
-sudo git fetch origin
-sudo git checkout --detach <REVIEWED-COMMIT>
-git log -1 --oneline                               # must show the reviewed commit
+sudo git fetch origin --tags
+sudo git checkout --detach m4-fcm-rc1
+git rev-parse HEAD                                 # must equal the commit in the review report
 sudo npm ci
 sudo npm run server:typecheck && sudo npm run server:test && sudo npm run server:build
 ```
@@ -157,7 +158,7 @@ During market hours also check that signals continue (`/v1/health` → feed and 
 ## 10. Build and install the Firebase-enabled APK (on your Ubuntu computer)
 
 ```bash
-cd ~/tradebuddy && git fetch origin && git checkout --detach <REVIEWED-COMMIT>
+cd ~/tradebuddy && git fetch origin --tags && git checkout --detach m4-fcm-rc1   # the same commit as the server
 ls -l android/app/google-services.json             # present (never committed — .gitignore blocks it)
 grep -c '"package_name": "in.tradebuddy.app"' android/app/google-services.json   # 1
 npm ci
@@ -173,9 +174,10 @@ unzip -l "$APK" | grep -i -E 'service.?account|adminsdk|private_key' || echo "no
 ```
 
 Install over the current app (same signing key, data kept): `adb install -r "$APK"`, or copy the file
-to the phone and open it. (This APK is built from the M4 branch, i.e. app 1.20.1 plus cloud alerts — the
-same version number as the published 1.20.1, so Android installs it over that one. If a newer app version
-has been published since, merge `app-v1` into this branch first: Android refuses an older version.)
+to the phone and open it. (This APK is the release candidate: app 1.20.2 plus cloud alerts — versionName
+1.20.2, versionCode 12002, the same as the published 1.20.2, so Android installs it over that one and keeps
+your data. If a newer app version has been published since, Android refuses an older version: a new release
+candidate is needed — merge `main` into this branch and tag it again, e.g. `m4-fcm-rc2`.)
 
 ## 11. Pair the phone
 
