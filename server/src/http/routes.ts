@@ -9,6 +9,7 @@ import type { ServerEvent } from '../storage/sqlite';
 import type { TickerStatus } from '../util/ticker';
 import { BadRequest, Router } from './router';
 import { BOT_API_VERSION } from '../../../src/bot/cloud';
+import { APP_COMMIT } from '../config';
 
 /**
  * The REST API (version 1). Health checks need no token; everything under /v1 does.
@@ -57,7 +58,8 @@ export function buildRouter(d: ApiDeps): Router {
   const r = new Router();
 
   // app 1.22: `botApi` — the cloud auto-trader contract this server speaks (the phone checks it)
-  r.add('GET', '/healthz', () => ({ body: { status: 'ok', version: d.version, uptimeSeconds: uptime(), botApi: BOT_API_VERSION } }), { auth: false, quiet: true });
+  // the release pipeline: `commit` = the exact build (checked after every deploy)
+  r.add('GET', '/healthz', () => ({ body: { status: 'ok', version: d.version, commit: APP_COMMIT, uptimeSeconds: uptime(), botApi: BOT_API_VERSION } }), { auth: false, quiet: true });
 
   r.add(
     'GET',

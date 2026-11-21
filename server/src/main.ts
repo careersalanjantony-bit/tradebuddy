@@ -1,4 +1,6 @@
-import { ConfigError, loadConfig } from './config';
+import { APP_COMMIT, APP_VERSION, ConfigError, loadConfig } from './config';
+import { DB_SCHEMA_VERSION } from './storage/sqlite';
+import { BOT_API_VERSION } from '../../src/bot/cloud';
 import { startServer, type RunningServer } from './engine';
 import { createLogger } from './log';
 
@@ -11,6 +13,15 @@ import { createLogger } from './log';
 
 const EXIT_CONFIG = 78;
 const log = createLogger('main');
+
+/**
+ * The release pipeline: `node server/dist/main.js --version-info` prints what this build is — version,
+ * commit, the database schema it needs, the cloud auto-trader contract — and exits without starting
+ * anything (no database, no network). The deploy compares it with the running server before switching.
+ */
+export function versionInfo(): { version: string; commit: string; schema: number; botApi: number } {
+  return { version: APP_VERSION, commit: APP_COMMIT, schema: DB_SCHEMA_VERSION, botApi: BOT_API_VERSION };
+}
 
 async function main(): Promise<void> {
   let config;
@@ -56,6 +67,11 @@ async function main(): Promise<void> {
   process.on('unhandledRejection', (reason) => {
     log.error('Unhandled promise rejection', { reason });
   });
+}
+
+if (process.argv.includes('--version-info')) {
+  process.stdout.write(`${JSON.stringify(versionInfo())}\n`);
+  process.exit(0);
 }
 
 main().catch((err: unknown) => {
