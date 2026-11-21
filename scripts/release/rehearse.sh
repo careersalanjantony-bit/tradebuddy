@@ -119,7 +119,9 @@ check 'python3 -c "import json; p=json.load(open(\"$W/plan.json\")); assert p[\"
 
 echo "── 5. deploy through the exact Systems Manager command (dash), real npm / build / server tests"
 if [ "$(id -u)" = 0 ]; then
-  # production belongs to another account (the one that set the server up), the deploy runs as root
+  # production belongs to another account (the one that set the server up), the deploy runs as root;
+  # like EC2, no machine-wide Git configuration (a safe.directory=* there would hide the check)
+  export GIT_CONFIG_NOSYSTEM=1
   chown -R 65534:65534 "$P/opt-tradebuddy"
   snap() { find "$1" -printf '%P %U %m %s %T@\n' | sort; }
   snap "$P/opt-tradebuddy" > "$W/prod-before.txt"
