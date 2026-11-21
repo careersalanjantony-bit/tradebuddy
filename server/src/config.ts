@@ -7,6 +7,10 @@ declare const __APP_VERSION__: string;
 /** The app version this server was built from (package.json, set at build time). */
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0-dev';
 
+declare const __APP_COMMIT__: string;
+/** The git commit this server was built from (set at build time; 'dev' when run from source). */
+export const APP_COMMIT: string = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev';
+
 /**
  * Server settings. Everything comes from environment variables (on EC2: the systemd EnvironmentFile,
  * /etc/tradebuddy/server.env, readable by root and the service only). Secrets are never read from or

@@ -10,7 +10,8 @@ tests/fixtures/private/
 smoke-output/
 *.log
 .DS_Store
-release/
+# the built APK (scripts/build-apk.mjs → release/TradeBuddy-x.y.z.apk); not scripts/release or tests/release
+/release/
 # signing keys live only in the private tradebuddy-keys repository
 android/signing/
 *.p12

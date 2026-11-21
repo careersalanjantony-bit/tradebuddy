@@ -1,0 +1,63 @@
+# TradeBuddy CI — every pull request and every push to main.
+# It has NO secrets and read-only permissions: it cannot sign an APK, reach AWS or publish anything.
+# The job name "checks" is what the release pipeline requires to be green on a release commit.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # a newer push to the same pull request replaces the older run; every push to main gets its own run
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out (with tags, for the release gate)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js 24 (the server's version)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Install from the lockfile (no install scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Type check (app and server)
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run server:typecheck
+
+      - name: Unit and integration tests (app, server, release pipeline)
+        run: npx vitest run
+
+      - name: Build (app and server)
+        run: |
+          set -euo pipefail
+          npm run build
+          npm run server:build
+          node server/dist/main.js --version-info
+
+      - name: Release gate (version only goes up, release notes, lockfile)
+        run: node scripts/release/gate.mjs
+
+      - name: Smoke test (the app in a real browser against a fake Upstox)
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+          npm run smoke

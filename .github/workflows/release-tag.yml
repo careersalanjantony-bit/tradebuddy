@@ -1,0 +1,72 @@
+# Release tag — after CI passed on main, a commit that raised the app version gets its immutable
+# release tag v<version> (annotated). That tag is the ONLY thing the release pipeline (in the private
+# tradebuddy-keys repository) deploys and publishes. Pull requests, other branches and forks never get
+# here: this runs only for CI runs of pushes to main, in this repository.
+name: Release tag
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag a new release
+    if: >-
+      github.repository == 'careersalanjantony-bit/tradebuddy' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out the commit CI checked (with tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Only a commit that is on main
+        run: |
+          set -euo pipefail
+          git fetch -q origin main
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+
+      - name: Is it a new release?
+        id: gate
+        run: node scripts/release/gate.mjs --tag "$SHA"
+
+      - name: Create the immutable release tag
+        if: steps.gate.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG exists already — tags never move"; exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "$TAG" -m "TradeBuddy ${TAG#v}" "$SHA"
+          git push origin "refs/tags/$TAG"
+          {
+            echo "### Release tag $TAG"
+            echo "- Commit: \`$SHA\`"
+            echo "- The release pipeline (tradebuddy-keys) picks it up within about 15 minutes."
+          } >> "$GITHUB_STEP_SUMMARY"
