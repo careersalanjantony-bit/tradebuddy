@@ -92,10 +92,20 @@ its server runs.
 ## 4. The server deploy (`server/deploy/deploy-release.sh`)
 
 Run as root on EC2 by Systems Manager. The command sent is fixed and small (`ssm-deploy.sh`): fetch the tag
-from GitHub, check it is the commit, run the deploy script **from that commit**. The script builds the
-release in `/opt/tradebuddy-releases/stage-<sha>` while the old server keeps running (npm ci, server build,
+from GitHub into a new temporary repository owned by root, check it is the commit, run the deploy script
+**from that commit**. The script builds the release in `/opt/tradebuddy-releases/stage-<sha>` — a fresh
+checkout of the tag from GitHub, owned by root — while the old server keeps running (npm ci, server build,
 server tests, `--version-info`), then stops, backs up, swaps directories (`/opt/tradebuddy` ↔ the previous
 one kept as `prev-…`), starts and checks. Full log: `/var/log/tradebuddy-deploy/`.
+
+**Git as root on a checkout another user owns.** `/opt/tradebuddy` was set up by the server's login account;
+Git refuses such a checkout for root (`fatal: detected dubious ownership`). The pipeline never writes to it
+and reads it once (`git rev-parse`, which commit runs) with an exception for exactly that directory on that
+one command line (`git -c safe.directory=/opt/tradebuddy …`) — never `safe.directory=*`, never stored in any
+Git configuration. After the first automatic deploy `/opt/tradebuddy` belongs to root (the service only
+reads it); to look at it by hand use `sudo git -C /opt/tradebuddy log -1` (a rollback brings the old,
+other-owned checkout back, which the pipeline also handles). Every Git step that fails ends the deploy with
+an explicit failure (`refused` / `build_failed`), never as a success.
 
 | Outcome | Meaning | What to do |
 | --- | --- | --- |
@@ -116,13 +126,15 @@ one kept as `prev-…`), starts and checks. Full log: `/var/log/tradebuddy-deplo
   Manager command under `dash`** (real `npm ci`, build, server tests), the checks (version, commit, the
   auto-trader's owner and state digest, backup integrity, no secret in any output), a replay, the publish to
   a local copy of the `updates` branch, and then a broken release that never starts → automatic rollback.
-  Last result: 20/20.
+  Run as root, "production" belongs to another user (like `/opt/tradebuddy` on EC2) and the rehearsal first
+  checks that plain Git refuses it.
 * **On GitHub, after the private pull request is merged:** Actions → *Release TradeBuddy* → Run workflow →
   mode `dry-run`. It runs plan, validate and the **signed** APK build, prints the exact deploy command and the
   exact `latest.json`, and changes nothing (no AWS session, no push).
 * **Tests:** `tests/release/` (deploy script in a sandbox, rules, gate, plan, publish, workflow safety) and
   `tradebuddy-keys/.github/tests/` (target, Systems Manager with a stand-in `aws`, the remote command under
-  `dash`, workflow order and permissions).
+  `dash`, workflow order and permissions). CI runs the deploy tests a second time **as root** with the
+  checkout owned by another user — what Systems Manager does (real Git, real ownership check).
 
 ## 6. One-time setup (the owner)
 
@@ -216,10 +228,12 @@ offered anything; older phones get 1.22.0).
 5. **A harmless first command** (proves the path, changes nothing):
 
    ```bash
-   aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --parameters 'commands=["cd /opt/tradebuddy && git rev-parse HEAD && node --version && df -h / | tail -1"]' --query Command.CommandId --output text
+   aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --parameters 'commands=["git -c safe.directory=/opt/tradebuddy -C /opt/tradebuddy rev-parse HEAD && node --version && df -h / | tail -1"]' --query Command.CommandId --output text
    ```
 
-   Then Systems Manager → Run Command → that command → Output.
+   Then Systems Manager → Run Command → that command → Output. (Systems Manager runs commands as root: a
+   plain `git rev-parse` there says "detected dubious ownership" when `/opt/tradebuddy` belongs to another
+   account — hence the exception for exactly that directory.)
 
 ### 6.6 Check everything with a GitHub dry run
 

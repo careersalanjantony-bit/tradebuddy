@@ -61,3 +61,8 @@ jobs:
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.63.0
           npx playwright install --with-deps chromium
           npm run smoke
+
+      # last, because it runs as root: the deploy tests again as AWS Systems Manager runs the deploy — as root,
+      # on a checkout another user owns (real Git ownership check; TB_REQUIRE_ROOT_TESTS fails if not root)
+      - name: Server deploy as root on a checkout another user owns (like AWS Systems Manager)
+        run: sudo env "PATH=$PATH" HOME=/root TB_REQUIRE_ROOT_TESTS=1 ./node_modules/.bin/vitest run tests/release/deployScript.test.ts

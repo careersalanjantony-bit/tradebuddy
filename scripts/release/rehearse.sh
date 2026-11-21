@@ -4,13 +4,16 @@
 # (cloud auto-trader on, a controlling phone), the real deploy script through the exact Systems Manager
 # command list under dash, real npm ci / build / server tests, and the publisher against a local
 # copy of the updates branch.
+# Run as root (like Systems Manager), "production" first belongs to ANOTHER user, like /opt/tradebuddy on
+# EC2: Git refuses such a checkout for root ("detected dubious ownership") — the rehearsal checks that,
+# then that the deploy works anyway, never writes the other user's checkout and stores no Git exception.
 # Needs: this repository (HEAD = what would be on main), the private tradebuddy-keys checkout next to it
 # (or TRADEBUDDY_KEYS=<path>) for its release scripts, Node, npm (network to the npm registry), python3,
 # git, dash, curl. Takes a few minutes. See docs/RELEASE_PIPELINE.md.
 set -uo pipefail
 PUB=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 KEYS=${TRADEBUDDY_KEYS:-$PUB/../tradebuddy-keys}
-PROD_REF=${TB_PROD_REF:-production-cloudbot-rc1}   # what "production" runs at the start
+PROD_REF=${TB_PROD_REF:-m5-cloudbot-rc1}   # what "production" runs at the start (the frozen 1.22.0 tag)
 W=${TB_REHEARSAL_DIR:-${TMPDIR:-/tmp}/tb-release-rehearsal}
 [ -f "$KEYS/.github/scripts/ssm-deploy.sh" ] || { echo "the tradebuddy-keys checkout was not found at $KEYS (set TRADEBUDDY_KEYS)"; exit 2; }
 rm -rf "$W"; mkdir -p "$W"
@@ -115,12 +118,22 @@ cat "$W/plan.json" | python3 -c 'import json,sys; p=json.load(sys.stdin); print(
 check 'python3 -c "import json; p=json.load(open(\"$W/plan.json\")); assert p[\"kind\"]==\"coordinated\" and p[\"steps\"]==[\"validate\",\"build-apk\",\"deploy-server\",\"publish-app\"] and not p[\"defer\"]"' "plan: coordinated, in the right order"
 
 echo "── 5. deploy through the exact Systems Manager command (dash), real npm / build / server tests"
+if [ "$(id -u)" = 0 ]; then
+  # production belongs to another account (the one that set the server up), the deploy runs as root
+  chown -R 65534:65534 "$P/opt-tradebuddy"
+  snap() { find "$1" -printf '%P %U %m %s %T@\n' | sort; }
+  snap "$P/opt-tradebuddy" > "$W/prod-before.txt"
+  check '! git -C "$P/opt-tradebuddy" rev-parse HEAD >/dev/null 2>"$W/dubious.txt" && grep -q "detected dubious ownership" "$W/dubious.txt"' "as root, plain git refuses production (it belongs to another user, like on EC2)"
+else
+  echo "      (not root: the other-owner check is skipped — run as root to rehearse what Systems Manager does)"
+fi
 CMDS=$(bash "$KEYS/.github/scripts/ssm-deploy.sh" --instance i-0abc12345def67890 --tag v$V1 --sha "$REL" --version $V1 --print-only | sed -n 's/^  //p')
+check '! printf "%s" "$CMDS" | grep -q -e /opt/tradebuddy -e safe.directory -e "git config"' "the Systems Manager command never uses the production checkout and stores no Git exception"
 LOCAL=$(printf '%s' "$CMDS" | sed "s#/opt/tradebuddy#$P/opt-tradebuddy#g; s#/root#$P/root#g; s#https://github.com/careersalanjantony-bit/tradebuddy.git#$W/github.git#g")
 export TB_RELEASES_DIR="$P/releases" TB_STATE_DIR="$P/state" TB_DB_FILE="$P/state/tradebuddy.db" TB_BACKUP_DIR="$P/backups" TB_ENV_FILE="$P/server.env" \
   TB_LOCAL_URL="http://127.0.0.1:$PORT" TB_LOCK_FILE="$P/deploy.lock" TB_DEPLOY_LOG_DIR="$P/logs" TB_ORIGIN="$W/github.git" TB_MIN_FREE_MB=100 TB_READY_TIMEOUT=60
 start=$SECONDS
-dash -c "$LOCAL" > "$W/deploy1.out" 2>&1; rc=$?
+env -u SUDO_UID -u SUDO_GID -u SUDO_USER dash -c "$LOCAL" > "$W/deploy1.out" 2>&1; rc=$?
 echo "      deploy took $((SECONDS - start)) s (npm ci + server build + server tests on the 'instance')"
 grep '^\[deploy\]' "$W/deploy1.out" | sed 's/^/      /'
 R1=$(grep '^TB_DEPLOY_RESULT ' "$W/deploy1.out" | tail -1 | cut -c18-)
@@ -131,7 +144,12 @@ check 'python3 -c "import json,sys; b=json.loads(sys.argv[1]); a=json.loads(sys.
 BK=$(printf '%s' "$R1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["backup"])')
 check 'python3 -c "import sqlite3,sys; c=sqlite3.connect(\"file:\"+sys.argv[1]+\"?mode=ro\",uri=True); assert c.execute(\"pragma integrity_check\").fetchone()[0]==\"ok\" and c.execute(\"select version from schema_version\").fetchone()[0]==4 and c.execute(\"select count(*) from kv where key=\x27bot\x27\").fetchone()[0]==1" "$BK/tradebuddy.db"' "backup: integrity ok, schema 4, the auto-trader inside"
 check '! grep -q "$TOKEN" "$W/deploy1.out" "$P"/logs/*' "the admin token appears in no output and no log"
-dash -c "$LOCAL" > "$W/deploy1b.out" 2>&1
+if [ "$(id -u)" = 0 ]; then
+  PREVDIR=$(ls -1d "$P"/releases/prev-* | head -1)
+  check '[ "$(stat -c %u "$P/opt-tradebuddy")" = 0 ] && [ "$(stat -c %u "$PREVDIR")" = 65534 ] && [ "$(snap "$PREVDIR")" = "$(cat "$W/prod-before.txt")" ]' "the new release belongs to root; the other user's checkout (kept for a rollback) is unchanged, byte for byte"
+  check '[ ! -e "$P/root/.gitconfig" ] && [ ! -e /etc/gitconfig -o -z "$(git config --system --get-all safe.directory 2>/dev/null)" ] && [ -z "$(ls -A "$P/root")" ]' "no Git exception stored anywhere; the temporary repository is gone"
+fi
+env -u SUDO_UID -u SUDO_GID -u SUDO_USER dash -c "$LOCAL" > "$W/deploy1b.out" 2>&1
 check 'grep -q "\"outcome\": \"already\"" "$W/deploy1b.out"' "the same deploy again: already running (a replay is harmless)"
 
 echo "── 6. publish to the (local) updates branch — only now, after the deploy"
@@ -149,7 +167,7 @@ echo "── 7. a broken release (the server does not start) → the previous re
 BAD=$(git -C "$D" rev-parse HEAD)
 CMDS2=$(bash "$KEYS/.github/scripts/ssm-deploy.sh" --instance i-0abc12345def67890 --tag v$V2 --sha "$BAD" --version $V2 --print-only | sed -n 's/^  //p')
 LOCAL2=$(printf '%s' "$CMDS2" | sed "s#/opt/tradebuddy#$P/opt-tradebuddy#g; s#/root#$P/root#g; s#https://github.com/careersalanjantony-bit/tradebuddy.git#$W/github.git#g")
-TB_READY_TIMEOUT=20 dash -c "$LOCAL2" > "$W/deploy2.out" 2>&1; rc2=$?
+TB_READY_TIMEOUT=20 env -u SUDO_UID -u SUDO_GID -u SUDO_USER dash -c "$LOCAL2" > "$W/deploy2.out" 2>&1; rc2=$?
 grep '^\[deploy\]' "$W/deploy2.out" | sed 's/^/      /'
 R2=$(grep '^TB_DEPLOY_RESULT ' "$W/deploy2.out" | tail -1 | cut -c18-)
 echo "      result: $(printf '%s' "$R2" | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["outcome"], "—", r["message"][:160])')"

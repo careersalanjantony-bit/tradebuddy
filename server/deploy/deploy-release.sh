@@ -11,9 +11,10 @@
 #
 # What it does, in this order (any failure before step 5 changes NOTHING in production):
 #   1. one deploy at a time (a lock); the tag must point at exactly --sha
-#   2. builds the release in a NEW directory beside the running one (npm ci, server build, server tests)
-#      while the old server keeps running; checks version, commit and the database schema it needs
-#      (a build older than the database is refused)
+#   2. builds the release in a NEW directory beside the running one — a fresh checkout of the tag from the
+#      public repository, owned by root (npm ci, server build, server tests) — while the old server keeps
+#      running; checks the checked-out commit, version and the database schema it needs (a build older
+#      than the database is refused)
 #   3. stops the service (a clean stop checkpoints SQLite's WAL), takes a consistent SQLite backup with
 #      SQLite's own backup API, checks it (integrity_check, schema) and records its SHA-256
 #   4. swaps the directories (old one kept for a rollback) and starts the service
@@ -24,6 +25,12 @@
 #      older build cannot open a newer database and restoring the backup would lose data) — it stops with
 #      the backup's path and the recovery steps
 # Never touched: /etc/tradebuddy/server.env (secrets), the Firebase key, the systemd unit, Caddy.
+# Git as root: /opt/tradebuddy may belong to the account that set the server up, and Git refuses such a
+# checkout for root ("detected dubious ownership"). Git only ever READS it (`rev-parse`: which commit
+# runs), with an exception for exactly that directory on that one command line
+# (`git -c safe.directory=<its real path>`) — never safe.directory=*, never written to any Git config.
+# The release itself is a fresh checkout owned by root (step 2): nothing is copied from the old one.
+# Every Git step that fails ends the deploy with an explicit failure result; none can look like success.
 # The last line of the output is `TB_DEPLOY_RESULT {json}`; the full log is in $LOG_DIR.
 set -Eeuo pipefail
 umask 022
@@ -60,7 +67,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+cd /   # never inside a directory this script moves
+# unique per run (to the nanosecond): two deploys in the same second must never share a log, a backup
+# or a previous-release directory name
+STAMP=$(date -u +%Y%m%dT%H%M%S.%NZ)
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 LOG="$LOG_DIR/deploy-$STAMP-${VERSION:-unknown}.log"
@@ -141,6 +151,9 @@ print(c.execute("select version from schema_version").fetchone()[0])
 PY
 }
 
+# Git on the running checkout (see the header): read-only, this one directory trusted, nothing stored
+app_git() { git -c safe.directory="$APP_REAL" -C "$APP_REAL" "$@"; }
+
 get() { curl -fsS -m 10 "$LOCAL_URL$1"; }
 get_admin() { curl -fsS -m 10 -H @"$HDR" "$LOCAL_URL$1"; }
 
@@ -193,11 +206,13 @@ fi
 say "TradeBuddy $TAG ($SHA) — log: $LOG"
 
 [ -d "$APP_DIR/.git" ] || finish false refused "$APP_DIR is not a git checkout"
+APP_REAL=$(cd "$APP_DIR" && pwd -P) || finish false refused "cannot open $APP_DIR"
 [ -f "$DB_FILE" ] || finish false refused "no database at $DB_FILE"
 TOKEN=$(sed -n 's/^TB_API_TOKEN=//p' "$ENV_FILE" 2>/dev/null | tail -n 1 || true)
 [ -n "$TOKEN" ] && printf 'Authorization: Bearer %s\n' "$TOKEN" >"$HDR"
 unset TOKEN
-OLD_SHA=$(git -C "$APP_DIR" rev-parse HEAD)
+OLD_SHA=$(app_git rev-parse -q --verify 'HEAD^{commit}' 2>>"$LOG") || OLD_SHA=''
+[[ "$OLD_SHA" =~ ^[0-9a-f]{40}$ ]] || finish false refused "cannot read the running commit in $APP_DIR with git (see the log) — nothing was changed"
 CUR=$(get /healthz 2>/dev/null || true)
 OLD_VERSION=$(printf '%s' "$CUR" | jget version)
 OLD_COMMIT=$(printf '%s' "$CUR" | jget commit)
@@ -223,12 +238,16 @@ PHASE=build
 STAGE="$RELEASES_DIR/stage-$SHA"
 rm -rf "$STAGE"
 say "building in $STAGE (the running server is not touched)"
-run git clone -q --no-checkout "$APP_DIR" "$STAGE" || finish false build_failed "could not copy the repository"
-run git -C "$STAGE" remote set-url origin "$ORIGIN"
-run git -C "$STAGE" fetch -q origin "refs/tags/$TAG:refs/tags/$TAG" || { rm -rf "$STAGE"; finish false build_failed "could not fetch $TAG"; }
-AT=$(git -C "$STAGE" rev-parse "$TAG^{commit}" 2>/dev/null || true)
+# a fresh repository owned by root, filled from the public repository only: nothing is read from (or
+# written to) the running checkout, so its owner does not matter and none of its files reach the release
+run git init -q -b release "$STAGE" || { rm -rf "$STAGE"; finish false build_failed "could not create $STAGE"; }
+run git -C "$STAGE" remote add origin "$ORIGIN" || { rm -rf "$STAGE"; finish false build_failed "could not set up $STAGE"; }
+run git -C "$STAGE" fetch -q --no-tags origin "refs/tags/$TAG:refs/tags/$TAG" || { rm -rf "$STAGE"; finish false build_failed "could not fetch $TAG from $ORIGIN"; }
+AT=$(git -C "$STAGE" rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>>"$LOG") || AT=''
 [ "$AT" = "$SHA" ] || { rm -rf "$STAGE"; finish false refused "$TAG points at ${AT:-nothing}, not $SHA (tags never move)"; }
-run git -C "$STAGE" checkout -q --detach "$SHA"
+run git -C "$STAGE" checkout -q --detach "$SHA" || { rm -rf "$STAGE"; finish false build_failed "could not check out $SHA"; }
+AT=$(git -C "$STAGE" rev-parse -q --verify 'HEAD^{commit}' 2>>"$LOG") || AT=''
+[ "$AT" = "$SHA" ] || { rm -rf "$STAGE"; finish false refused "the checkout is at ${AT:-nothing}, not $SHA"; }
 ( cd "$STAGE" && export TB_BUILD_COMMIT="$SHA" && run "$NPM" ci --ignore-scripts --no-audit --no-fund && run "$NPM" run server:build ) || { rm -rf "$STAGE"; finish false build_failed "npm ci / server build failed (see the log)"; }
 if [ "$RUN_TESTS" = 1 ]; then
   ( cd "$STAGE" && run "$NPM" run server:test ) || { rm -rf "$STAGE"; finish false build_failed "the server tests failed on this machine (see the log)"; }
@@ -286,8 +305,8 @@ say "backup ok: $BACKUP (schema $SCHEMA_BEFORE, sha256 ${BK:0:16}…)"
 
 PHASE=switched
 PREV="$RELEASES_DIR/prev-${OLD_SHA:0:12}-$STAMP"
-mv "$APP_DIR" "$PREV"
-mv "$STAGE" "$APP_DIR"
+mv -T "$APP_DIR" "$PREV"     # -T: fail rather than move into an existing directory
+mv -T "$STAGE" "$APP_DIR"
 STAGE=''
 run systemctl start "$SERVICE" || true
 
@@ -299,6 +318,7 @@ if ! wait_ready; then
 else
   H=$(get /healthz 2>/dev/null || true)
   [ "$(printf '%s' "$H" | jget version)" = "$VERSION" ] || problem="/healthz says version $(printf '%s' "$H" | jget version), expected $VERSION"
+  [ -z "$problem" ] && [ "$(app_git rev-parse -q --verify 'HEAD^{commit}' 2>>"$LOG" || true)" != "$SHA" ] && problem="the code in $APP_DIR is not at $SHA"
   [ -z "$problem" ] && [ "$(printf '%s' "$H" | jget commit)" != "$SHA" ] && problem="/healthz says commit $(printf '%s' "$H" | jget commit), expected $SHA"
   [ -z "$problem" ] && [ -n "$BOTAPI_NEW" ] && [ "$(printf '%s' "$H" | jget botApi)" != "$BOTAPI_NEW" ] && problem="/healthz says auto-trader API $(printf '%s' "$H" | jget botApi), expected $BOTAPI_NEW"
   if [ -z "$problem" ] && [ -s "$HDR" ]; then
@@ -335,8 +355,8 @@ run systemctl stop "$SERVICE" || true
 SCHEMA_AFTER=$(db_schema 2>/dev/null || echo unknown)
 if [ "$SCHEMA_AFTER" = "$SCHEMA_BEFORE" ]; then
   say "the database schema did not change ($SCHEMA_AFTER): putting the previous release back"
-  mv "$APP_DIR" "$RELEASES_DIR/failed-${SHA:0:12}-$STAMP"
-  mv "$PREV" "$APP_DIR"
+  mv -T "$APP_DIR" "$RELEASES_DIR/failed-${SHA:0:12}-$STAMP"
+  mv -T "$PREV" "$APP_DIR"
   run systemctl start "$SERVICE" || true
   if wait_ready && [ "$(get /healthz 2>/dev/null | jget version)" = "$OLD_VERSION" ]; then
     SCHEMA_NEW=$SCHEMA_AFTER

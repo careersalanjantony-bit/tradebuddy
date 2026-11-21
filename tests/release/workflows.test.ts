@@ -40,6 +40,9 @@ describe('public workflows', () => {
     const steps = w.jobs.checks.steps.map((s: any) => s.run ?? s.uses).join('\n');
     for (const must of ['npm ci --ignore-scripts', 'npm run typecheck', 'npm run server:typecheck', 'npx vitest run', 'npm run build', 'npm run server:build', '--version-info', 'scripts/release/gate.mjs', 'npm run smoke']) expect(steps).toContain(must);
     expect(w.jobs.checks.steps[0].with['persist-credentials']).toBe(false);
+    // the deploy tests also run as root (what Systems Manager does), last because they run as root
+    const last = w.jobs.checks.steps.at(-1).run as string;
+    expect(last).toMatch(/^sudo env .*TB_REQUIRE_ROOT_TESTS=1 .*vitest run tests\/release\/deployScript\.test\.ts$/);
   });
 
   it.skipIf(!hasYaml)('tagger: only after a successful CI run of a push to main in this repository; it can write tags, nothing else', () => {
