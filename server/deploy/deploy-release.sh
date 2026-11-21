@@ -2,7 +2,12 @@
 # TradeBuddy server — deploy one release on the EC2 instance (run as root by the release pipeline
 # through AWS Systems Manager; see docs/RELEASE_PIPELINE.md). Never run it by hand during market hours.
 #
-#   deploy-release.sh --tag v1.23.0 --sha <40-hex commit> --version 1.23.0 [--skip-server-tests]
+#   deploy-release.sh --tag v1.23.0 --sha <40-hex commit> --version 1.23.0 [--skip-server-tests] [--retry-failed]
+#
+# A release whose switch failed (rolled back, or failed after a migration) is NEVER tried again
+# automatically (the pipeline looks every 15 minutes: it would restart production again and again) —
+# only with --retry-failed (the owner's deliberate retry) or as a new version. A build that failed
+# before anything changed is tried again at most every 2 hours.
 #
 # What it does, in this order (any failure before step 5 changes NOTHING in production):
 #   1. one deploy at a time (a lock); the tag must point at exactly --sha
@@ -39,16 +44,18 @@ POLL_SECONDS=${TB_POLL_SECONDS:-2}
 MIN_FREE_MB=${TB_MIN_FREE_MB:-1500}
 KEEP_RELEASES=${TB_KEEP_RELEASES:-2}
 KEEP_BACKUPS=${TB_KEEP_BACKUPS:-10}
+BUILD_RETRY_SECONDS=${TB_BUILD_RETRY_SECONDS:-7200}
 NPM=${TB_NPM:-npm}
 NODE=${TB_NODE:-node}
 
-TAG='' SHA='' VERSION='' RUN_TESTS=1
+TAG='' SHA='' VERSION='' RUN_TESTS=1 RETRY_FAILED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tag) TAG=${2:-}; shift 2 ;;
     --sha) SHA=${2:-}; shift 2 ;;
     --version) VERSION=${2:-}; shift 2 ;;
     --skip-server-tests) RUN_TESTS=0; shift ;;
+    --retry-failed) RETRY_FAILED=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -63,13 +70,21 @@ chmod 600 "$HDR"
 PHASE=start PREV='' STAGE='' BACKUP='' OLD_SHA='' OLD_VERSION='' SCHEMA_BEFORE='' SCHEMA_NEW='' BOTAPI_NEW='' BOT_BEFORE=''
 
 say() { echo "[deploy] $*"; echo "[$(date -u +%H:%M:%S)] $*" >>"$LOG"; }
-run() { "$@" >>"$LOG" 2>&1; }
+# fd 9 is the deploy lock: a process started from here (the server!) must not keep it open
+run() { "$@" >>"$LOG" 2>&1 9>&-; }
 
 # the result line (JSON written by python, so every value is escaped)
 finish() {
   local ok=$1 outcome=$2 message=$3 code=0
   [ "$ok" = true ] || code=1
   rm -f "$HDR"
+  # remember a failed release (see the header): the next automatic attempt is refused or delayed
+  case "$outcome" in
+    rolled_back|failed_no_rollback|rollback_failed|failed|build_failed|backup_failed|refused)
+      [[ "${SHA:-}" =~ ^[0-9a-f]{40}$ ]] && printf '%s %s\n' "$outcome" "$(date -u +%s)" >"$LOG_DIR/failed-$SHA" ;;
+    deployed|already)
+      [[ "${SHA:-}" =~ ^[0-9a-f]{40}$ ]] && rm -f "$LOG_DIR/failed-$SHA" ;;
+  esac
   OK="$ok" OUTCOME="$outcome" MESSAGE="$message" python3 - <<'PY' || true
 import json, os
 e = os.environ
@@ -92,10 +107,10 @@ on_err() {
   echo "[deploy] unexpected error at line $line (phase $PHASE)" >>"$LOG"
   case "$PHASE" in
     stopped)
-      systemctl start "$SERVICE" >>"$LOG" 2>&1 || true
+      systemctl start "$SERVICE" >>"$LOG" 2>&1 9>&- || true
       finish false failed "unexpected error at line $line before the switch — nothing was changed, the previous server was started again" ;;
     switched)
-      systemctl start "$SERVICE" >>"$LOG" 2>&1 || true
+      systemctl start "$SERVICE" >>"$LOG" 2>&1 9>&- || true
       finish false failed "unexpected error at line $line after the switch — check the server (log $LOG, backup $BACKUP, previous release $PREV)" ;;
     *)
       [ -n "$STAGE" ] && rm -rf "$STAGE"
@@ -160,6 +175,21 @@ print("%s|%s|%s|%s" % (a.get("mode", ""), a.get("epoch", ""), c.get("deviceId", 
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || finish false refused "--sha must be a full 40-character commit"
 exec 9>"$LOCK_FILE"
 flock -n 9 || finish false locked "another deploy is running"
+if [ -f "$LOG_DIR/failed-$SHA" ] && [ "$RETRY_FAILED" = 0 ]; then
+  read -r last_outcome last_at <"$LOG_DIR/failed-$SHA" || true
+  case "$last_outcome" in
+    build_failed|backup_failed|failed|refused)
+      if [ $(( $(date -u +%s) - ${last_at:-0} )) -lt "$BUILD_RETRY_SECONDS" ]; then
+        trap - ERR; rm -f "$HDR"
+        OK=false OUTCOME=waiting MESSAGE="$TAG failed to build here less than $((BUILD_RETRY_SECONDS / 60)) minutes ago ($last_outcome) — tried again later" python3 -c 'import json,os; e=os.environ; print("TB_DEPLOY_RESULT " + json.dumps({"ok": False, "outcome": e["OUTCOME"], "message": e["MESSAGE"], "tag": e["TAG"], "sha": e["SHA"], "version": e["VERSION"]}))'
+        exit 1
+      fi ;;
+    *)
+      trap - ERR; rm -f "$HDR"
+      OK=false OUTCOME=refused_failed_before MESSAGE="$TAG failed in production before ($last_outcome): not tried again automatically. Release a fixed version, or retry deliberately (release workflow → retry_failed_deploy)." python3 -c 'import json,os; e=os.environ; print("TB_DEPLOY_RESULT " + json.dumps({"ok": False, "outcome": e["OUTCOME"], "message": e["MESSAGE"], "tag": e["TAG"], "sha": e["SHA"], "version": e["VERSION"]}))'
+      exit 1 ;;
+  esac
+fi
 say "TradeBuddy $TAG ($SHA) — log: $LOG"
 
 [ -d "$APP_DIR/.git" ] || finish false refused "$APP_DIR is not a git checkout"

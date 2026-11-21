@@ -53,6 +53,8 @@ if cmd == "start":
     commit = subprocess.run(["git", "-C", app, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     if info["schema"] > db_schema(): set_schema(info["schema"])   # the new server migrates on start
     save("running.json", {**info, "commit": commit})
+    # like a real long-running server process: it inherits whatever files the caller left open
+    subprocess.Popen(["sleep", "20"], close_fds=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     starts = load("starts.json", []); starts.append(info["version"]); save("starts.json", starts)
     sys.exit(0)
 if cmd == "is-active":
@@ -272,7 +274,7 @@ describe('server deploy (server/deploy/deploy-release.sh)', { timeout: 120_000 }
     knobs({ npm_ci_fails: '1.1.0' });
     expect(deploy('1.1.0').result).toMatchObject({ ok: false, outcome: 'build_failed' });
     knobs({ server_tests_fail: '1.1.0' });
-    const r = deploy('1.1.0');
+    const r = deploy('1.1.0', { extraEnv: { TB_BUILD_RETRY_SECONDS: '0' } });
     expect(r.result).toMatchObject({ ok: false, outcome: 'build_failed' });
     expect(r.result.message).toMatch(/server tests failed/);
     expect(head()).toBe(releases['1.0.0']);
@@ -295,18 +297,39 @@ describe('server deploy (server/deploy/deploy-release.sh)', { timeout: 120_000 }
     expect(r.result).toMatchObject({ ok: false, outcome: 'rolled_back' });
     expect(r.result.message).toMatch(/owner changed \(cloud\/2\/dev-1 -> standby\/2\/dev-1\)/);
     knobs({ bot_after: { '1.1.0': { rev: 49 } } });
-    r = deploy('1.1.0');
+    r = deploy('1.1.0', { args: ['--retry-failed'] });
     expect(r.result).toMatchObject({ ok: false, outcome: 'rolled_back' });
     expect(r.result.message).toMatch(/went back in history \(version 50 -> 49\)/);
     knobs({ bot_after: { '1.1.0': { rev: 51 } } }); // it traded meanwhile: fine
-    expect(deploy('1.1.0').result).toMatchObject({ ok: true, outcome: 'deployed' });
+    expect(deploy('1.1.0', { args: ['--retry-failed'] }).result).toMatchObject({ ok: true, outcome: 'deployed' });
+  });
+
+  it('a release that failed in production is NOT tried again automatically (the pipeline looks every 15 minutes)', () => {
+    knobs({ not_ready: '1.1.0' });
+    expect(deploy('1.1.0').result).toMatchObject({ outcome: 'rolled_back' });
+    knobs({});
+    const again = deploy('1.1.0');
+    expect(again.result).toMatchObject({ ok: false, outcome: 'refused_failed_before' });
+    expect(again.result.message).toMatch(/not tried again automatically/);
+    expect(JSON.parse(readFileSync(join(box, 'starts.json'), 'utf8'))).toEqual(['1.0.0', '1.1.0', '1.0.0']); // not restarted again
+    // the owner's deliberate retry (after fixing the cause) works, and clears the mark
+    expect(deploy('1.1.0', { args: ['--retry-failed'] }).result).toMatchObject({ ok: true, outcome: 'deployed' });
+    expect(existsSync(join(box, 'logs', `failed-${releases['1.1.0']}`))).toBe(false);
+  });
+
+  it('a build that failed before anything changed is tried again only after a pause (no build every 15 minutes)', () => {
+    knobs({ npm_ci_fails: '1.1.0' });
+    expect(deploy('1.1.0').result).toMatchObject({ outcome: 'build_failed' });
+    knobs({});
+    expect(deploy('1.1.0').result).toMatchObject({ ok: false, outcome: 'waiting', message: expect.stringMatching(/tried again later/) });
+    expect(deploy('1.1.0', { extraEnv: { TB_BUILD_RETRY_SECONDS: '0' } }).result).toMatchObject({ ok: true, outcome: 'deployed' });
   });
 
   it('one deploy at a time; not enough disk space; bad arguments — all refused before anything happens', () => {
     const holder = spawnSync('bash', ['-c', `exec 9>"${join(box, 'deploy.lock')}"; flock -n 9 && bash "${SCRIPT}" --tag v1.1.0 --sha ${releases['1.1.0']} --version 1.1.0`], { env: env(), encoding: 'utf8' });
     expect(holder.stdout).toContain('"outcome": "locked"');
     expect(deploy('1.1.0', { extraEnv: { TB_MIN_FREE_MB: '999999999' } }).result).toMatchObject({ ok: false, outcome: 'refused', message: expect.stringMatching(/not enough disk space/) });
-    expect(deploy('1.1.0', { tag: 'v9.9.9' }).result).toMatchObject({ ok: false, outcome: 'refused' });
+    expect(deploy('1.1.0', { tag: 'v9.9.9', extraEnv: { TB_BUILD_RETRY_SECONDS: '0' } }).result).toMatchObject({ ok: false, outcome: 'refused' });
     expect(head()).toBe(releases['1.0.0']);
     expect(running()).toMatchObject({ version: '1.0.0' });
   });
