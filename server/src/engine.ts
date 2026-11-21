@@ -36,6 +36,9 @@ import { DeviceStore } from './push/devices';
 import { FcmClient } from './push/fcm';
 import { AccessTokenSource, loadServiceAccount } from './push/google';
 import { PushService, serverPushAlert } from './push/outbox';
+import { setBotGate, setBotObserver } from '../../src/background/botJobs';
+import { CloudBot } from './bot/cloudBot';
+import { addBotRoutes } from './http/botRoutes';
 
 /**
  * Starts everything, in this order: logging → database → chrome.storage replacement → the app's own
@@ -54,6 +57,8 @@ export interface EngineOptions {
   startTasks?: boolean;
   /** tests only: a stand-in for Firebase */
   fcm?: Pick<FcmClient, 'send' | 'projectId'>;
+  /** tests only: what the cloud auto-trader believes about the jobs and the Upstox token (the test drives the runs itself) */
+  bot?: { jobs?: boolean; hasToken?: boolean; analytics?: () => Promise<string> };
 }
 
 export interface RunningServer {
@@ -70,6 +75,8 @@ export interface RunningServer {
   /** milestone 4: paired phones and the push outbox */
   readonly devices: DeviceStore;
   readonly push: PushService;
+  /** app 1.22: the cloud auto-trader (standby until the owner moves it here) */
+  readonly bot: CloudBot;
   ready(): boolean;
   close(reason: string): Promise<void>;
 }
@@ -151,9 +158,32 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   let poller: QuotePoller | null = null;
   let isReady = false;
   const hasToken = !!config.upstoxAnalyticsToken;
+  const analyticsStatus = async () => (hasToken ? ((await getAuth()).analytics?.status ?? 'unchecked') : 'missing');
+
+  // app 1.22: the cloud auto-trader. The app's own runBot() (in the price jobs) runs here only after the
+  // owner moved the auto-trader to this server; until then the server is on standby and changes nothing.
+  const bot = new CloudBot({
+    db: store.db,
+    local,
+    devices,
+    now,
+    jobs: opts.bot?.jobs ?? config.jobs,
+    hasToken: opts.bot?.hasToken ?? hasToken,
+    analytics: opts.bot?.analytics ?? analyticsStatus,
+    market: async (t) => {
+      const m = marketState(t, await getCalendar());
+      return { phase: m.phase, label: m.label };
+    },
+    quotes: getQuotes,
+    feedConnected: () => feed?.health().connected ?? null,
+  });
+  setBotGate({ check: () => bot.gate() });
+  setBotObserver(bot.observer);
 
   let intelligence: Intelligence | null = null;
   const undo = () => {
+    setBotGate(null);
+    setBotObserver(null);
     uninstallChrome();
     g.WebSocket = previousWebSocket;
     __setDbProvider(null);
@@ -232,6 +262,8 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       );
       tasks.push(new Ticker('push-prune', 6 * 3_600_000, async () => `${push.prune()} old rows removed`, 60_000));
     }
+    // app 1.22: the cloud auto-trader's watchdog — a problem in market hours (old prices, no runs) is pushed once
+    tasks.push(new Ticker('auto-trader', 30_000, () => bot.watch(), 30_000));
 
     const router = buildRouter({
       version: config.version,
@@ -257,8 +289,10 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       readLocal: async (k) => (await local.get(k))[k],
       readSession: async (k) => (await session.get(k))[k],
       jobs: () => (config.jobs ? { scheduled: scheduler.getAll(), running: scheduler.runningNames(), fired: scheduler.fired, skipped: scheduler.skipped } : null),
+      autoTrader: async () => ({ authority: bot.authority(), ...(await bot.telemetry()) }),
       now,
     });
+    addBotRoutes(router, bot);
     addDeviceRoutes(router, {
       devices,
       push,
@@ -305,6 +339,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     intelligence,
     devices,
     push,
+    bot,
     ready: () => isReady,
     close(reason: string) {
       closing ??= (async () => {

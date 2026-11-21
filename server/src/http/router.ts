@@ -29,6 +29,10 @@ export interface Route {
   auth: boolean | 'device';
   /** logged at debug level only (health checks every few seconds) */
   quiet: boolean;
+  /** app 1.22: the largest request body this route takes (default MAX_BODY_BYTES, 16 KB) */
+  maxBodyBytes?: number;
+  /** app 1.22: a request with a body must say Content-Type: application/json (a web page cannot send that to another site without asking first) */
+  requireJson?: boolean;
   handler: Handler;
 }
 
@@ -41,8 +45,17 @@ export type Match = { route: Route; params: Record<string, string> } | { allowed
 export class Router {
   private readonly routes: Array<Route & { parts: string[] }> = [];
 
-  add(method: string, path: string, handler: Handler, opts: { auth?: boolean | 'device'; quiet?: boolean } = {}): this {
-    this.routes.push({ method: method.toUpperCase(), path, auth: opts.auth ?? true, quiet: opts.quiet ?? false, handler, parts: path.split('/').filter(Boolean) });
+  add(method: string, path: string, handler: Handler, opts: { auth?: boolean | 'device'; quiet?: boolean; maxBodyBytes?: number; requireJson?: boolean } = {}): this {
+    this.routes.push({
+      method: method.toUpperCase(),
+      path,
+      auth: opts.auth ?? true,
+      quiet: opts.quiet ?? false,
+      ...(opts.maxBodyBytes !== undefined ? { maxBodyBytes: opts.maxBodyBytes } : {}),
+      ...(opts.requireJson ? { requireJson: true } : {}),
+      handler,
+      parts: path.split('/').filter(Boolean),
+    });
     return this;
   }
 

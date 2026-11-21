@@ -10,9 +10,9 @@ export const ALL_CATEGORIES: readonly AlertCategory[] = ['rising', 'falling', 'b
 
 /**
  * Market-wide signals: the phone and the server find them the same way. In cloud mode the server pushes
- * these and the phone does not show its own copy. (Practice money, price alerts, plans and the
- * auto-trader are each device's own data — the server's copies differ from the phone's until
- * milestone 5 — so those stay local.)
+ * these and the phone does not show its own copy. (Practice money, price alerts and plans are each
+ * device's own data, so those stay local. The auto-trader's alerts come from wherever it runs: from the
+ * phone, or — after it was moved to the server, app 1.22 — only from the server, as 'autotrader'.)
  */
 export const MARKET_CATEGORIES: readonly AlertCategory[] = ['rising', 'falling', 'breakout', 'daytrade', 'intraday', 'early', 'picks'];
 

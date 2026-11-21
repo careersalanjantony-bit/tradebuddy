@@ -110,6 +110,14 @@ export interface BotState {
   guard?: DayGuard;
   /** app v1.13: the last time it could not run during market hours (app closed / phone asleep) */
   lastGap?: { from: number; to: number };
+  /**
+   * app v1.22 (cloud auto-trader): counts every change that matters — a fill, a trade opened or closed, a
+   * safety net moved, a setting changed (not the every-30-seconds "still running" saves). Controls sent
+   * from a phone can say which version they saw, so nothing is changed on top of a state nobody looked at.
+   */
+  rev?: number;
+  /** app v1.22: when this state was last saved */
+  updatedAt?: number;
 }
 
 export function newBot(now: number, brain: Brain = newBrain(), startCash = BOT_START): BotState {
@@ -123,9 +131,106 @@ let seq = 0;
 const newId = (now: number) => `B${now.toString(36)}${(seq++ % 1296).toString(36)}`;
 
 export async function getBot(now = Date.now()): Promise<BotState> {
-  const b = await getLocal('bot');
+  const g = await gate.check();
+  // app v1.22: a phone whose auto-trader runs on the server reads the server's copy (its brain, its rules)
+  const b = !g.run && gate.view ? await gate.view() : await getLocal('bot');
   // app v1.9: a brain saved by an older version learns the new kinds of trade (breakouts) too
   return b ? { ...b, brain: upgradeBrain(b.brain) } : newBot(now);
+}
+
+// ---------------------------------------------------------------- app v1.22: one auto-trader, one writer
+
+/**
+ * Who may run and change the auto-trader stored here. The phone: yes, unless its auto-trader was moved
+ * to the user's server (then the server is the only one that trades it, and the phone only shows it).
+ * The server: only after the owner moved it there (before that it is on standby and changes nothing).
+ * The default (no gate set) is the app as it always was: it runs here.
+ */
+export interface BotGateAnswer {
+  /** may run: open, manage and close trades, learn */
+  run: boolean;
+  /** may change it: switch, amount, protection, start again */
+  write: boolean;
+  /** in plain words, when not allowed */
+  reason: string;
+}
+
+export interface BotGate {
+  check(): BotGateAnswer | Promise<BotGateAnswer>;
+  /** where to read the auto-trader from when it does not run here (the phone: the server's copy) */
+  view?: () => Promise<BotState | null>;
+}
+
+const OPEN_GATE: BotGate = { check: () => ({ run: true, write: true, reason: '' }) };
+let gate: BotGate = OPEN_GATE;
+
+export function setBotGate(g: BotGate | null): void {
+  gate = g ?? OPEN_GATE;
+}
+
+/** The auto-trader runs somewhere else (on the server), so it cannot be changed here. */
+export class BotElsewhereError extends Error {
+  override name = 'BotElsewhereError';
+}
+
+async function mayWrite(): Promise<void> {
+  const g = await gate.check();
+  if (!g.write) throw new BotElsewhereError(g.reason || 'The auto-trader cannot be changed here.');
+}
+
+/** What one run did (for the server's health report). */
+export interface BotRunInfo {
+  at: number;
+  /** looked for new trades this time */
+  decided: boolean;
+  opened: number;
+  closed: number;
+  /** written to storage */
+  saved: boolean;
+  /** newest price it had (null = none) */
+  priceAt: number | null;
+  /** market open but prices not fresh: no new trades */
+  stale: boolean;
+  note: string | null;
+  rev: number;
+}
+
+export interface BotObserver {
+  onRun?(info: BotRunInfo): void;
+  /** gated: it did not run here (the reason) */
+  onSkip?(reason: string, at: number): void;
+  onError?(err: unknown, at: number): void;
+}
+
+let observer: BotObserver = {};
+export function setBotObserver(o: BotObserver | null): void {
+  observer = o ?? {};
+}
+
+/**
+ * Runs `fn` while no auto-trader run or change is going on (the same one-at-a-time line they use) — for
+ * the server's move of an auto-trader from a phone, which must not mix with a run.
+ */
+export function withBotLock<T>(fn: () => Promise<T>): Promise<T> {
+  return queue(fn);
+}
+
+/** Saves the auto-trader; `material` = a change that matters (a fill, a trade, a setting): a new version. */
+async function saveBot(bot: BotState, now: number, material: boolean, prev: BotState | null | undefined): Promise<BotState> {
+  const rev = (prev?.rev ?? bot.rev ?? 0) + (material || !prev ? 1 : 0);
+  const next: BotState = { ...bot, rev, updatedAt: now };
+  await setLocal('bot', next);
+  return next;
+}
+
+/** Prices older than this are not used for new trades (the same limit the practice wallet uses). */
+export const BOT_PRICE_MAX_AGE_MS = 2 * 60_000;
+
+/** The newest price time among the quotes (null = no prices at all). */
+export function newestPriceAt(quotes: Record<string, Quote>): number | null {
+  let t: number | null = null;
+  for (const q of Object.values(quotes)) if (q && q.ltp > 0 && (t === null || q.fetchedAt > t)) t = q.fetchedAt;
+  return t;
 }
 
 async function marketCtx(now: number): Promise<MarketCtx> {
@@ -610,115 +715,186 @@ export async function suggestIdeas(side: 'buy' | 'sell', now = Date.now()): Prom
 /** On every price update (exits) and once a minute (new trades). Never twice at the same time. */
 export function runBot(now = Date.now(), force = false): Promise<BotState | null> {
   return queue(async () => {
-    const stored = await getLocal('bot');
-    let bot = stored ?? newBot(now);
-    if (!bot.enabled) return bot;
-    const ctx = await marketCtx(now);
-    const quotes = await getQuotes();
-    const before = JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
-
-    if (ctx.open && bot.lastRun && now - bot.lastRun > 4 * 60_000 && istDate(bot.lastRun) === ctx.today) bot = { ...bot, lastGap: { from: bot.lastRun, to: now } };
-    if (ctx.open) bot = await catchUp(bot, ctx);
-    const riseS = await getSession('rise');
-    const riseTags = new Map<string, 'strong' | 'unclear' | 'fading'>();
-    if (riseS && riseS.date === ctx.today && now - riseS.at < 60_000) for (const h of riseS.held) if (h.source === 'auto') riseTags.set(h.key, h.tag);
-    bot = manageOpen(bot, quotes, ctx, riseTags);
-    bot = timeExits(bot, quotes, ctx);
-    bot = { ...bot, wallet: processWallet(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx).wallet };
-    bot = settleClosed(bot, now);
-    bot = guardDay(bot, quotes, ctx);
-    bot = settleClosed(bot, now);
-
-    if (bot.day.date !== ctx.today) bot = { ...bot, day: { date: ctx.today, opened: 0 } };
-    const sum = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx.today);
-
-    if (ctx.open && (force || now - bot.lastDecideAt >= 60_000)) {
-      await refreshStudies(now, sum.total);
-      const ideas = await gatherIdeas(now, quotes);
-      const openTrades = bot.trades.filter((t) => t.status === 'open');
-      const rules = protectRules(bot.rules);
-      const swingValue = openTrades.filter((t) => t.strategy === 'swing').reduce((a, t) => a + t.qty * (quotes[t.key]?.ltp ?? t.entry), 0);
-      const plan = decide(
-        bot.brain,
-        ideas,
-        { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue },
-        `${ctx.today}-${ctx.t}`,
-      );
-      for (const d of plan.decisions) {
-        const i = d.idea;
-        const q = wq(quotes[i.key]);
-        const source = `Auto-trader · ${STRATEGY_LABEL[i.strategy]}`;
-        const r = i.side === 'long'
-          ? // same-day buys as Upstox Intraday (cheaper charges), paid in full — no borrowing
-            placeOrder(bot.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: d.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source, ...(i.strategy !== 'swing' ? { product: 'intraday' as const, marginPct: 1 } : {}) }, q, ctx)
-          : openShort(bot.wallet, { key: i.key, symbol: i.symbol, qty: d.qty, stop: i.stop, t1: i.t1 ?? (i.price + i.target) / 2, t2: i.target, source }, q, ctx);
-        if (!r.ok || !r.fill) {
-          bot = addLog(bot, now, 'info', `Could not open ${i.symbol}: ${r.ok ? 'not filled' : r.error}`);
-          continue;
-        }
-        const entry = r.fill.price;
-        const trade: BotTrade = {
-          id: newId(now),
-          key: i.key,
-          symbol: i.symbol,
-          strategy: i.strategy,
-          side: i.side,
-          qty: d.qty,
-          entry,
-          stop: i.stop,
-          stop0: i.stop,
-          target: i.target,
-          ...(i.t1 !== undefined ? { t1: i.t1 } : {}),
-          openedAt: now,
-          date: ctx.today,
-          x: i.x,
-          chance: i.chance,
-          prior: i.ctx.prior,
-          riskRupees: Math.max(1, Math.round(Math.abs(entry - i.stop) * d.qty)),
-          explore: d.explore,
-          reasons: i.reasons,
-          sizeWhy: d.sizeWhy,
-          status: 'open',
-          best: entry,
-          worst: entry,
-          product: i.strategy === 'swing' ? 'delivery' : 'intraday',
-        };
-        bot = { ...bot, wallet: r.wallet, trades: [...bot.trades, trade].slice(-400), day: { ...bot.day, opened: bot.day.opened + 1 } };
-        bot = addLog(bot, now, 'open', `${i.side === 'long' ? 'Bought' : 'Sold first'} ${d.qty} ${i.symbol} at ${px(entry)} (${rupees(d.qty * entry)}) — ${STRATEGY_LABEL[i.strategy].toLowerCase()}, ${Math.round(i.chance * 100)}% chance. ${d.sizeWhy}`);
-        log.info(`Auto-trader ${i.side === 'long' ? 'bought' : 'sold first'} ${d.qty} ${i.symbol} @ ${entry}`);
-        void alertOpen(trade).catch(() => undefined);
-      }
-      bot = { ...bot, lastDecideAt: now, note: plan.note, looked: ideas.length };
-    } else if (!ctx.open) {
-      bot = { ...bot, note: 'Market closed — it trades by itself from 9:30 am on market days.' };
+    // app v1.22: only where the auto-trader lives (never a second copy trading the same money)
+    const g = await gate.check();
+    if (!g.run) {
+      observer.onSkip?.(g.reason, now);
+      return null;
     }
-
-    // one point per day for the chart
-    const eq = [...bot.equity];
-    if (eq.length && eq[eq.length - 1]!.date === ctx.today) eq[eq.length - 1] = { date: ctx.today, total: Math.round(sum.total) };
-    else eq.push({ date: ctx.today, total: Math.round(sum.total) });
-    bot = { ...bot, equity: eq.slice(-250), lastRun: now, wallet: { ...bot.wallet, fills: bot.wallet.fills.slice(-600), orders: bot.wallet.orders.filter((o) => o.status === 'open' || now - o.createdAt < 3 * 86_400_000) } };
-
-    const changed = before !== JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
-    if (!stored || changed || now - (stored.lastRun ?? 0) >= 30_000 || force) await setLocal('bot', bot);
-    return bot;
+    try {
+      return await runBotNow(now, force);
+    } catch (err) {
+      observer.onError?.(err, now);
+      throw err;
+    }
   });
 }
 
-export function botSetEnabled(enabled: boolean, now = Date.now()): Promise<void> {
+async function runBotNow(now: number, force: boolean): Promise<BotState | null> {
+  const stored = await getLocal('bot');
+  let bot = stored ?? newBot(now);
+  if (!bot.enabled) {
+    observer.onRun?.({ at: now, decided: false, opened: 0, closed: 0, saved: false, priceAt: null, stale: false, note: 'paused', rev: bot.rev ?? 0 });
+    return bot;
+  }
+  const ctx = await marketCtx(now);
+  const quotes = await getQuotes();
+  const before = JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
+  const closedBefore = bot.trades.filter((t) => t.status === 'closed').length;
+  const tradesBefore = bot.trades.length;
+  // app v1.22: no new trades from old prices (the server's Upstox token stopped, the feed went quiet…)
+  const priceAt = newestPriceAt(quotes);
+  const stale = ctx.open && (priceAt === null || now - priceAt > BOT_PRICE_MAX_AGE_MS);
+  let decided = false;
+
+  if (ctx.open && bot.lastRun && now - bot.lastRun > 4 * 60_000 && istDate(bot.lastRun) === ctx.today) bot = { ...bot, lastGap: { from: bot.lastRun, to: now } };
+  if (ctx.open) bot = await catchUp(bot, ctx);
+  const riseS = await getSession('rise');
+  const riseTags = new Map<string, 'strong' | 'unclear' | 'fading'>();
+  if (riseS && riseS.date === ctx.today && now - riseS.at < 60_000) for (const h of riseS.held) if (h.source === 'auto') riseTags.set(h.key, h.tag);
+  bot = manageOpen(bot, quotes, ctx, riseTags);
+  bot = timeExits(bot, quotes, ctx);
+  bot = { ...bot, wallet: processWallet(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx).wallet };
+  bot = settleClosed(bot, now);
+  bot = guardDay(bot, quotes, ctx);
+  bot = settleClosed(bot, now);
+
+  if (bot.day.date !== ctx.today) bot = { ...bot, day: { date: ctx.today, opened: 0 } };
+  const sum = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx.today);
+
+  if (ctx.open && stale) {
+    bot = { ...bot, note: priceAt === null ? 'No prices yet — no new trades until live prices arrive.' : `Prices are not up to date (the newest is from ${new Date(priceAt + 5.5 * 3_600_000).toISOString().slice(11, 16)}) — no new trades until they are.` };
+  } else if (ctx.open && (force || now - bot.lastDecideAt >= 60_000)) {
+    decided = true;
+    await refreshStudies(now, sum.total);
+    const ideas = await gatherIdeas(now, quotes);
+    const openTrades = bot.trades.filter((t) => t.status === 'open');
+    const rules = protectRules(bot.rules);
+    const swingValue = openTrades.filter((t) => t.strategy === 'swing').reduce((a, t) => a + t.qty * (quotes[t.key]?.ltp ?? t.entry), 0);
+    const plan = decide(
+      bot.brain,
+      ideas,
+      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue },
+      `${ctx.today}-${ctx.t}`,
+    );
+    for (const d of plan.decisions) {
+      const i = d.idea;
+      const q = wq(quotes[i.key]);
+      const source = `Auto-trader · ${STRATEGY_LABEL[i.strategy]}`;
+      const r = i.side === 'long'
+        ? // same-day buys as Upstox Intraday (cheaper charges), paid in full — no borrowing
+          placeOrder(bot.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: d.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source, ...(i.strategy !== 'swing' ? { product: 'intraday' as const, marginPct: 1 } : {}) }, q, ctx)
+        : openShort(bot.wallet, { key: i.key, symbol: i.symbol, qty: d.qty, stop: i.stop, t1: i.t1 ?? (i.price + i.target) / 2, t2: i.target, source }, q, ctx);
+      if (!r.ok || !r.fill) {
+        bot = addLog(bot, now, 'info', `Could not open ${i.symbol}: ${r.ok ? 'not filled' : r.error}`);
+        continue;
+      }
+      const entry = r.fill.price;
+      const trade: BotTrade = {
+        id: newId(now),
+        key: i.key,
+        symbol: i.symbol,
+        strategy: i.strategy,
+        side: i.side,
+        qty: d.qty,
+        entry,
+        stop: i.stop,
+        stop0: i.stop,
+        target: i.target,
+        ...(i.t1 !== undefined ? { t1: i.t1 } : {}),
+        openedAt: now,
+        date: ctx.today,
+        x: i.x,
+        chance: i.chance,
+        prior: i.ctx.prior,
+        riskRupees: Math.max(1, Math.round(Math.abs(entry - i.stop) * d.qty)),
+        explore: d.explore,
+        reasons: i.reasons,
+        sizeWhy: d.sizeWhy,
+        status: 'open',
+        best: entry,
+        worst: entry,
+        product: i.strategy === 'swing' ? 'delivery' : 'intraday',
+      };
+      bot = { ...bot, wallet: r.wallet, trades: [...bot.trades, trade].slice(-400), day: { ...bot.day, opened: bot.day.opened + 1 } };
+      bot = addLog(bot, now, 'open', `${i.side === 'long' ? 'Bought' : 'Sold first'} ${d.qty} ${i.symbol} at ${px(entry)} (${rupees(d.qty * entry)}) — ${STRATEGY_LABEL[i.strategy].toLowerCase()}, ${Math.round(i.chance * 100)}% chance. ${d.sizeWhy}`);
+      log.info(`Auto-trader ${i.side === 'long' ? 'bought' : 'sold first'} ${d.qty} ${i.symbol} @ ${entry}`);
+      void alertOpen(trade).catch(() => undefined);
+    }
+    bot = { ...bot, lastDecideAt: now, note: plan.note, looked: ideas.length };
+  } else if (!ctx.open) {
+    bot = { ...bot, note: 'Market closed — it trades by itself from 9:30 am on market days.' };
+  }
+
+  // one point per day for the chart
+  const eq = [...bot.equity];
+  if (eq.length && eq[eq.length - 1]!.date === ctx.today) eq[eq.length - 1] = { date: ctx.today, total: Math.round(sum.total) };
+  else eq.push({ date: ctx.today, total: Math.round(sum.total) });
+  bot = { ...bot, equity: eq.slice(-250), lastRun: now, wallet: { ...bot.wallet, fills: bot.wallet.fills.slice(-600), orders: bot.wallet.orders.filter((o) => o.status === 'open' || now - o.createdAt < 3 * 86_400_000) } };
+
+  const changed = before !== JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
+  const save = !stored || changed || now - (stored.lastRun ?? 0) >= 30_000 || force;
+  if (save) bot = await saveBot(bot, now, changed, stored);
+  const opened = bot.trades.length - tradesBefore;
+  const closed = bot.trades.filter((t) => t.status === 'closed').length - closedBefore;
+  observer.onRun?.({ at: now, decided, opened, closed: Math.max(0, closed), saved: save, priceAt, stale, note: bot.note, rev: bot.rev ?? 0 });
+  return bot;
+}
+
+/** app v1.22: who changed it, when the change came from a phone through the server (shown in its log, alerted) */
+export interface BotChangeBy {
+  name: string;
+}
+
+/**
+ * app v1.22: a change sent through the server. `ifRev` = the version the phone saw (the change is refused
+ * if the auto-trader changed since); `backup` gets the state just before the change (inside the same
+ * one-at-a-time line, so nothing can happen in between).
+ */
+export interface BotChangeOptions {
+  by?: BotChangeBy;
+  ifRev?: number;
+  backup?: (before: BotState | null) => void;
+}
+
+/** The auto-trader changed since the phone looked (another phone, or a trade): look again first. */
+export class BotConflictError extends Error {
+  override name = 'BotConflictError';
+  constructor(readonly rev: number) {
+    super('The auto-trader changed since you looked (a trade or another phone). Look at it again, then try again.');
+  }
+}
+
+const fromWhom = (by?: BotChangeBy) => (by ? ` (from ${by.name})` : '');
+
+/** Inside the queue: the gate, the version check and the backup, before any change. */
+async function beginChange(o: BotChangeOptions | undefined): Promise<BotState | null> {
+  await mayWrite();
+  const stored = (await getLocal('bot')) ?? null;
+  if (o?.ifRev !== undefined && (stored?.rev ?? 0) !== o.ifRev) throw new BotConflictError(stored?.rev ?? 0);
+  o?.backup?.(stored);
+  return stored;
+}
+
+export function botSetEnabled(enabled: boolean, now = Date.now(), o?: BotChangeOptions): Promise<void> {
+  const by = o?.by;
   return queue(async () => {
+    const stored = await beginChange(o);
     const bot = await getBot(now);
-    await setLocal('bot', addLog({ ...bot, enabled }, now, 'info', enabled ? 'Switched on — it trades by itself again.' : 'Paused by you — open trades are kept but nothing new is opened.'));
+    const next = await saveBot(addLog({ ...bot, enabled }, now, 'info', enabled ? `Switched on${fromWhom(by)} — it trades by itself again.` : `Paused${by ? fromWhom(by) : ' by you'} — open trades are kept but nothing new is opened.`), now, true, stored);
+    if (by) void alertControl(`alert:bot-control-${next.rev}`, enabled ? '🤖 Auto-trader switched on' : '🤖 Auto-trader paused', enabled ? `Switched on from ${by.name}. It trades by itself again (pretend money).` : `Paused from ${by.name}. Nothing new is opened, and open trades wait (their safety nets are not checked) until it is switched on again.`).catch(() => undefined);
   });
 }
 
 /** Start again with any amount (₹50 lakh by default); keep what it learned unless `forget`. */
-export function botReset(forget: boolean, startCash = BOT_START, now = Date.now()): Promise<void> {
+export function botReset(forget: boolean, startCash = BOT_START, now = Date.now(), o?: BotChangeOptions): Promise<void> {
+  const by = o?.by;
   return queue(async () => {
-    const old = await getLocal('bot');
+    const old = await beginChange(o);
     const cash = Number.isFinite(startCash) && startCash >= 10_000 ? Math.round(startCash) : BOT_START;
     const fresh = newBot(now, forget || !old ? newBrain() : old.brain, cash);
-    await setLocal('bot', addLog(fresh, now, 'info', forget ? `Reset: ${rupees(cash)} and a fresh brain.` : `Reset to ${rupees(cash)}; kept what it learned from ${old?.brain.n ?? 0} trades.`));
+    const next = await saveBot(addLog(fresh, now, 'info', `${forget ? `Reset: ${rupees(cash)} and a fresh brain` : `Reset to ${rupees(cash)}; kept what it learned from ${old?.brain.n ?? 0} trades`}${fromWhom(by)}.`), now, true, old);
+    if (by) void alertControl(`alert:bot-control-${next.rev}`, '🤖 Auto-trader started again', `Started again with ${rupees(cash)} from ${by.name}${forget ? ' and a fresh brain' : '; it kept what it learned'}.`).catch(() => undefined);
   });
 }
 
@@ -729,14 +905,15 @@ export function botReset(forget: boolean, startCash = BOT_START, now = Date.now(
  * again: more money is added to its cash, less is taken from its free cash. Open trades and what it
  * learned are kept; the overall result is counted from the new amount.
  */
-export function botSetAmount(amount: number, now = Date.now()): Promise<{ total: number; free: number }> {
+export function botSetAmount(amount: number, now = Date.now(), o?: BotChangeOptions): Promise<{ total: number; free: number }> {
+  const by = o?.by;
   return queue(async () => {
     if (!Number.isFinite(amount) || amount < 10_000) throw new Error('Enter at least ₹10,000.');
     const target = Math.round(amount);
-    const stored = await getLocal('bot');
+    const stored = await beginChange(o);
     if (!stored) {
-      const fresh = addLog(newBot(now, newBrain(), target), now, 'info', `Amount set to ${rupees(target)}.`);
-      await setLocal('bot', fresh);
+      const fresh = addLog(newBot(now, newBrain(), target), now, 'info', `Amount set to ${rupees(target)}${fromWhom(by)}.`);
+      await saveBot(fresh, now, true, null);
       return { total: target, free: target };
     }
     const bot = { ...stored, brain: upgradeBrain(stored.brain) };
@@ -747,18 +924,20 @@ export function botSetAmount(amount: number, now = Date.now()): Promise<{ total:
       throw new Error(`${rupees(sum.total - sum.free)} is in open trades right now, so the lowest amount it can go to is ${rupees(sum.total - sum.free)}. Try again when trades have closed.`);
     }
     const wallet: WalletState = { ...bot.wallet, cash: Math.round((bot.wallet.cash + delta) * 100) / 100, startCash: Math.round((bot.wallet.startCash + delta) * 100) / 100 };
-    const next = addLog({ ...bot, wallet }, now, 'info', `Amount set to ${rupees(target)} (${delta >= 0 ? 'added' : 'took out'} ${rupees(Math.abs(delta))}). Open trades and what it learned are kept.`);
-    await setLocal('bot', next);
+    const next = addLog({ ...bot, wallet }, now, 'info', `Amount set to ${rupees(target)}${fromWhom(by)} (${delta >= 0 ? 'added' : 'took out'} ${rupees(Math.abs(delta))}). Open trades and what it learned are kept.`);
+    await saveBot(next, now, true, stored);
     return { total: target, free: Math.round(sum.free + delta) };
   });
 }
 
 /** Changes the money protection (any missing value keeps its current setting). */
-export function botSetRules(patch: Partial<ProtectRules>, now = Date.now()): Promise<ProtectRules> {
+export function botSetRules(patch: Partial<ProtectRules>, now = Date.now(), o?: BotChangeOptions): Promise<ProtectRules> {
+  const by = o?.by;
   return queue(async () => {
+    const stored = await beginChange(o);
     const bot = await getBot(now);
     const rules = protectRules({ ...protectRules(bot.rules), ...patch });
-    await setLocal('bot', addLog({ ...bot, rules }, now, 'info', rules.on ? `Protection: keep the profit from +${rules.lockStartPct}%, daily loss limit −${rules.dayLossPct}%, few-days picks at most ${rules.swingSharePct}%, quick exit ${rules.quickExitMin ? `after ${rules.quickExitMin} min` : 'off'}.` : 'Protection switched off (as before 1.13: no day limits).'));
+    await saveBot(addLog({ ...bot, rules }, now, 'info', `${rules.on ? `Protection: keep the profit from +${rules.lockStartPct}%, daily loss limit −${rules.dayLossPct}%, few-days picks at most ${rules.swingSharePct}%, quick exit ${rules.quickExitMin ? `after ${rules.quickExitMin} min` : 'off'}` : 'Protection switched off (as before 1.13: no day limits)'}${fromWhom(by)}.`), now, true, stored);
     return rules;
   });
 }
@@ -797,6 +976,12 @@ async function alertClose(t: BotTrade, price: number): Promise<void> {
     message: `${t.exitWhy ?? 'closed'}. If you copied it: ${t.side === 'long' ? 'sell' : 'buy back'} the rest of ${t.symbol} in Upstox now (and cancel its stop-loss order).`,
     priority: 2,
   });
+}
+
+/** app v1.22: a change made from a phone through the server (switched on / paused / started again) */
+async function alertControl(id: `alert:${string}`, title: string, message: string): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(id, { title, message, priority: 1 });
 }
 
 async function alertHalt(why: 'lock' | 'loss', pnl: number, sold: number): Promise<void> {

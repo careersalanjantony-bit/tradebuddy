@@ -8,6 +8,7 @@ import type { QuotePollerHealth } from '../market/quotePoller';
 import type { ServerEvent } from '../storage/sqlite';
 import type { TickerStatus } from '../util/ticker';
 import { BadRequest, Router } from './router';
+import { BOT_API_VERSION } from '../../../src/bot/cloud';
 
 /**
  * The REST API (version 1). Health checks need no token; everything under /v1 does.
@@ -43,6 +44,8 @@ export interface ApiDeps {
   readSession?(key: string): Promise<unknown>;
   /** milestone 3: the app's scheduled jobs */
   jobs?(): { scheduled: Array<{ name: string; scheduledTime: number; periodInMinutes?: number }>; running: string[]; fired: number; skipped: number } | null;
+  /** app 1.22: the cloud auto-trader — who runs it and how it is doing */
+  autoTrader?(): Promise<unknown>;
   now?: () => number;
 }
 
@@ -53,7 +56,8 @@ export function buildRouter(d: ApiDeps): Router {
   const uptime = () => Math.round((now() - d.startedAt) / 1000);
   const r = new Router();
 
-  r.add('GET', '/healthz', () => ({ body: { status: 'ok', version: d.version, uptimeSeconds: uptime() } }), { auth: false, quiet: true });
+  // app 1.22: `botApi` — the cloud auto-trader contract this server speaks (the phone checks it)
+  r.add('GET', '/healthz', () => ({ body: { status: 'ok', version: d.version, uptimeSeconds: uptime(), botApi: BOT_API_VERSION } }), { auth: false, quiet: true });
 
   r.add(
     'GET',
@@ -69,8 +73,8 @@ export function buildRouter(d: ApiDeps): Router {
   r.add('GET', '/v1/health', async () => {
     const t = now();
     const mem = process.memoryUsage();
-    const [market, analytics, apiStatus, lastPoll, historical] = await Promise.all([
-      d.marketState(t), d.analytics(), d.apiStatus(), d.lastPoll(), d.historical?.(),
+    const [market, analytics, apiStatus, lastPoll, historical, autoTrader] = await Promise.all([
+      d.marketState(t), d.analytics(), d.apiStatus(), d.lastPoll(), d.historical?.(), d.autoTrader?.(),
     ]);
     return {
       body: {
@@ -88,6 +92,7 @@ export function buildRouter(d: ApiDeps): Router {
         poller: d.pollerHealth(),
         tasks: d.tasks(),
         jobs: d.jobs?.() ?? null,
+        autoTrader: autoTrader ?? null,
         readOnly: true,
       },
     };

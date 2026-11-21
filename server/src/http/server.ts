@@ -23,15 +23,15 @@ export interface HttpOptions {
 export const MAX_BODY_BYTES = 16 * 1024;
 
 /** The body as text; a body over the limit is read to the end and dropped (so the answer still arrives). */
-function readBody(req: IncomingMessage): Promise<{ text: string; tooBig: boolean }> {
+function readBody(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<{ text: string; tooBig: boolean }> {
   return new Promise((resolve, reject) => {
     let size = 0;
     const parts: Buffer[] = [];
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size <= MAX_BODY_BYTES) parts.push(c);
+      if (size <= limit) parts.push(c);
     });
-    req.on('end', () => resolve({ text: size > MAX_BODY_BYTES ? '' : Buffer.concat(parts).toString('utf8'), tooBig: size > MAX_BODY_BYTES }));
+    req.on('end', () => resolve({ text: size > limit ? '' : Buffer.concat(parts).toString('utf8'), tooBig: size > limit }));
     req.on('error', reject);
   });
 }
@@ -95,11 +95,14 @@ export function createHttpServer(o: HttpOptions): HttpServer {
         quiet = m.route.quiet;
         let body: unknown;
         let tooBig = false;
+        let notJson = false;
+        const limit = m.route.maxBodyBytes ?? MAX_BODY_BYTES;
         if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
-          const read = await readBody(req);
+          const read = await readBody(req, limit);
           tooBig = read.tooBig;
           const text = read.text;
-          if (text.trim()) {
+          notJson = !!m.route.requireJson && !!text.trim() && !/^application\/json\b/i.test(String(req.headers['content-type'] ?? ''));
+          if (text.trim() && !notJson) {
             try {
               body = JSON.parse(text);
             } catch {
@@ -109,7 +112,9 @@ export function createHttpServer(o: HttpOptions): HttpServer {
         }
         const ctx = { params: m.params, query: url.searchParams, requestId, ip, ...(body !== undefined ? { body } : {}) };
         if (tooBig) {
-          result = { status: 413, body: { error: 'too_large', message: `The request is larger than ${MAX_BODY_BYTES / 1024} KB.` } };
+          result = { status: 413, body: { error: 'too_large', message: `The request is larger than ${Math.round(limit / 1024)} KB.` } };
+        } else if (notJson) {
+          result = { status: 415, body: { error: 'json_only', message: 'Send the body as JSON (Content-Type: application/json).' } };
         } else if (m.route.auth === 'device') {
           // a paired phone's own credential (never the admin token)
           const device = limiter.blocked(ip, started) ? null : (o.deviceAuth?.(bearer(req.headers.authorization)) ?? null);

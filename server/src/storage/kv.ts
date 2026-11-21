@@ -155,6 +155,24 @@ export class SqliteKV {
     this.opts.hub?.emit(changes, this.area);
   }
 
+  /**
+   * App 1.22: writes one key to the database NOW and throws if that fails (unlike set(), which counts a
+   * failed write and goes on). What the code sees changes only when the returned `apply()` is called —
+   * after the caller's own transaction committed — so a rolled-back move never leaves a half state.
+   */
+  writeNow(key: string, value: unknown, now = Date.now()): () => void {
+    if (this.closedFlag) throw new Error('Storage is closed.');
+    if (this.opts.writeBehindMs) throw new Error('writeNow is for the local area only.');
+    const json = JSON.stringify(this.opts.overlay ? this.opts.overlay.write(key, value) : value);
+    if (json === undefined) throw new Error(`Nothing to write for ${key}.`);
+    this.upsert.run(this.area, key, json, now);
+    return () => {
+      const oldValue = this.view(key);
+      this.cache.set(key, JSON.parse(json));
+      this.opts.hub?.emit({ [key]: { oldValue, newValue: this.view(key) } }, this.area);
+    };
+  }
+
   async remove(keys: string | string[]): Promise<void> {
     const changes: Record<string, StorageChange> = {};
     for (const key of typeof keys === 'string' ? [keys] : keys) {

@@ -90,6 +90,46 @@ export const MIGRATIONS: readonly string[] = [
      UNIQUE (alert_id, device_id)
    );
    CREATE INDEX push_outbox_due ON push_outbox (status, next_at);`,
+  // 4 (app 1.22, cloud auto-trader): who runs the auto-trader (standby until the owner moves it here),
+  // every change made to it (who, what, the request id that makes a repeated request harmless) and the
+  // backups taken before every move, start-again or restore. Nothing existing is changed: the server's
+  // own copy in kv ('local', 'bot') stays exactly as it is and simply stops trading until the move.
+  `CREATE TABLE bot_authority (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     server_id TEXT NOT NULL,
+     mode TEXT NOT NULL CHECK (mode IN ('standby', 'cloud')),
+     epoch INTEGER NOT NULL,
+     controller_id TEXT,
+     activated_at INTEGER,
+     changed_at INTEGER NOT NULL
+   );
+   INSERT INTO bot_authority (id, server_id, mode, epoch, controller_id, activated_at, changed_at)
+     VALUES (1, lower(hex(randomblob(16))), 'standby', 0, NULL, NULL, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+   CREATE TABLE bot_audit (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     device_id TEXT,
+     action TEXT NOT NULL,
+     request_id TEXT,
+     epoch INTEGER NOT NULL,
+     rev_before INTEGER,
+     rev_after INTEGER,
+     ok INTEGER NOT NULL,
+     detail TEXT,
+     result TEXT
+   );
+   CREATE UNIQUE INDEX bot_audit_request ON bot_audit (device_id, request_id) WHERE request_id IS NOT NULL AND ok = 1;
+   CREATE INDEX bot_audit_at ON bot_audit (at);
+   CREATE TABLE bot_backups (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     reason TEXT NOT NULL,
+     source TEXT NOT NULL CHECK (source IN ('server', 'phone')),
+     device_id TEXT,
+     rev INTEGER,
+     digest TEXT,
+     state TEXT
+   );`,
 ];
 
 export const DB_SCHEMA_VERSION = MIGRATIONS.length;
