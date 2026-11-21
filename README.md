@@ -91,8 +91,12 @@ comes with Android Studio). On Windows build in a short folder path outside OneD
 - `main` is the one shared branch. Start every change on a new branch from the latest `main`, open a
   pull request into `main`, and merge it there. `app-v1` and `server-backend` are kept equal to `main`
   for older links and setups; do not commit to them directly.
-- Releases (`npm run apk`, then `npm run release`) are built only from an up-to-date `main`. The
-  signing keys and `google-services.json` stay in the private `tradebuddy-keys` repository.
+- **Releases are automatic** once switched on ([docs/RELEASE_PIPELINE.md](docs/RELEASE_PIPELINE.md)):
+  a merged pull request that raises the version (with `release-notes/x.y.z.txt`) is tagged `vx.y.z` by CI,
+  and the private `tradebuddy-keys` pipeline validates it, builds the signed APK, deploys the server and
+  publishes the update for **Update now**. Until it is switched on (and as a fallback): `npm run apk`, then
+  `npm run release`, from an up-to-date `main`. The signing keys and `google-services.json` stay in the
+  private `tradebuddy-keys` repository; rules for Claude Code are in [CLAUDE.md](CLAUDE.md).
 - Never commit secrets: `.gitignore` blocks key files, `.env` files and Firebase service-account files.
 
 ## New in 1.20.1

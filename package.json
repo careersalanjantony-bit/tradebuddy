@@ -20,7 +20,8 @@
     "server:dev": "npm run server:build && node --disable-warning=ExperimentalWarning --env-file-if-exists=server/.env server/dist/main.js",
     "server:typecheck": "tsc -p server/tsconfig.json",
     "server:test": "vitest run server/tests",
-    "bot:dryrun": "vitest run server/tests/cloudBot.test.ts tests/cloudBotPhone.test.ts tests/cloudBotContract.test.ts --reporter=verbose"
+    "bot:dryrun": "vitest run server/tests/cloudBot.test.ts tests/cloudBotPhone.test.ts tests/cloudBotContract.test.ts --reporter=verbose",
+    "release:rehearse": "bash scripts/release/rehearse.sh"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",
