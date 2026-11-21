@@ -14,6 +14,7 @@ import { useQuotes } from '../data';
 import { useLocal, useMarketState, useNow } from '../hooks';
 import { Icon } from './Icon';
 import { AnimatedNumber, Sparkline, toast, useFlash } from './Motion';
+import { botControls, cloudQuotes, cloudStatus, CloudBotPanel, useCloudRefresh, type BotControls } from './CloudBotPanel';
 
 /**
  * App v1.6 — the auto-trader on screen: ₹50 lakh of pretend money that trades by itself.
@@ -23,17 +24,28 @@ import { AnimatedNumber, Sparkline, toast, useFlash } from './Motion';
 const signed = (x: number) => `${x >= 0 ? '+' : '−'}${formatINR(Math.abs(x), 0)}`;
 const tone = (x: number) => (x > 0 ? 'ok-text' : x < 0 ? 'err-text' : 'muted');
 
+/**
+ * app v1.22: the auto-trader shown here — this phone's own, or (after it was moved to the user's server)
+ * the server's: its state, its prices and its money totals exactly as the server works them out.
+ */
 function useBotView() {
-  const bot = useLocal('bot');
-  const quotes = useQuotes();
+  const link = useLocal('botCloud');
+  const own = useLocal('bot');
+  const phoneQuotes = useQuotes();
   const now = useNow(3_000);
   const today = istDate(now);
+  const onServer = !!link;
+  const snap = link?.mode === 'cloud' ? link.snapshot : null;
+  const bot = onServer ? (snap?.bot ?? null) : own;
+  const quotes = onServer ? cloudQuotes(snap) : phoneQuotes;
   const wallet = bot?.wallet ?? newWallet(now, BOT_START);
-  const s = walletSummary(wallet, quotes, today);
-  return { bot, quotes, now, today, s };
+  const s0 = walletSummary(wallet, quotes, today);
+  const s = snap?.money ? { ...s0, total: snap.money.total, free: snap.money.free, todayPnl: snap.money.todayPnl, totalPnl: snap.money.totalPnl } : s0;
+  return { bot, quotes, now, today, s, link: link ?? null, ctl: botControls(link) };
 }
 
-function status(bot: BotState | null | undefined, marketOpen: boolean): { text: string; cls: string } {
+function status(bot: BotState | null | undefined, marketOpen: boolean, link: ReturnType<typeof useBotView>['link'] = null, now = Date.now()): { text: string; cls: string } {
+  if (link) return cloudStatus(link, now);
   if (!bot) return { text: 'Starting — needs live prices', cls: 'idle' };
   if (!bot.enabled) return { text: 'Paused by you', cls: 'idle' };
   if (marketOpen) return { text: 'Trading by itself', cls: 'live' };
@@ -42,9 +54,9 @@ function status(bot: BotState | null | undefined, marketOpen: boolean): { text: 
 
 /** Home: a small live card. */
 export function AutoTraderMini({ go }: { go: Go }) {
-  const { bot, s } = useBotView();
+  const { bot, s, link, now } = useBotView();
   const market = useMarketState();
-  const st = status(bot, market.phase === 'open');
+  const st = status(bot, market.phase === 'open', link, now);
   const open = (bot?.trades ?? []).filter((t) => t.status === 'open').length;
   return (
     <section class="card bot-mini" data-testid="bot-mini" onClick={() => go('practice', 'bot')}>
@@ -74,9 +86,10 @@ export function AutoTraderMini({ go }: { go: Go }) {
 
 /** Practice tab → Auto-trader. */
 export function AutoTraderView() {
-  const { bot, quotes, now, s } = useBotView();
+  const { bot, quotes, now, s, link, ctl } = useBotView();
   const market = useMarketState();
-  const st = status(bot, market.phase === 'open');
+  const st = status(bot, market.phase === 'open', link, now);
+  useCloudRefresh(link);
   const [confirm, setConfirm] = useState<null | 'money' | 'all'>(null);
   const [amount, setAmount] = useState(String(bot?.wallet.startCash ?? BOT_START));
   const startCash = Math.round(Number(amount.replace(/[^0-9.]/g, '')) || 0);
@@ -89,9 +102,14 @@ export function AutoTraderView() {
   if (!curve.length || curve[curve.length - 1] !== Math.round(s.total)) curve.push(s.total);
   const lessons = brain ? topLessons(brain) : [];
 
-  const toggle = (enabled: boolean) => void callBackground('bot:enable', { enabled }).catch((e: unknown) => toast(errorMessage(e), 'err'));
+  const toggle = (enabled: boolean) =>
+    void ctl
+      .enable(enabled)
+      .then(() => ctl.cloud && toast(enabled ? 'Switched on — on your server' : 'Paused — on your server', 'ok'))
+      .catch((e: unknown) => toast(errorMessage(e), 'err'));
   const reset = (forget: boolean) =>
-    void callBackground('bot:reset', { forget, startCash })
+    void ctl
+      .reset(forget, startCash)
       .then(() => toast(forget ? 'Auto-trader reset completely' : 'Money reset — it kept what it learned'))
       .catch((e: unknown) => toast(errorMessage(e), 'err'))
       .finally(() => setConfirm(null));
@@ -127,6 +145,8 @@ export function AutoTraderView() {
         </div>
       </section>
 
+      <CloudBotPanel link={link} bot={bot} />
+
       <section class="card">
         <label class="row switch-row">
           <span class="grow">
@@ -135,18 +155,19 @@ export function AutoTraderView() {
               It decides what to buy or sell first, how much, and when to close — every minute from 9:30 am. Pretend money only: it never touches your Upstox account.
             </span>
           </span>
-          <input type="checkbox" role="switch" class="switch" data-testid="bot-switch" checked={bot?.enabled ?? true} onChange={(e) => toggle((e.currentTarget as HTMLInputElement).checked)} />
+          <input type="checkbox" role="switch" class="switch" data-testid="bot-switch" checked={bot?.enabled ?? true} disabled={!ctl.canControl} onChange={(e) => toggle((e.currentTarget as HTMLInputElement).checked)} />
         </label>
+        {ctl.why && <p class="tiny muted" data-testid="bot-readonly">{ctl.why}</p>}
         {bot?.note && (
           <p class="small muted bot-note" data-testid="bot-note">
             <span class="think" aria-hidden="true" /> {bot.note}
           </p>
         )}
-        <GapNote bot={bot} now={now} marketOpen={market.phase === 'open'} />
+        {!link && <GapNote bot={bot} now={now} marketOpen={market.phase === 'open'} />}
       </section>
 
-      <AmountCard bot={bot} total={s.total} free={s.free} />
-      <ProtectCard bot={bot} todayPnl={s.todayPnl} total={s.total} />
+      <AmountCard bot={bot} total={s.total} free={s.free} ctl={ctl} />
+      <ProtectCard bot={bot} todayPnl={s.todayPnl} total={s.total} ctl={ctl} protectTest={link ? ((link.snapshot?.protectTest ?? null) as ReturnType<typeof useLocal<'botProtectTest'>>) : undefined} />
 
       <section class="card" data-testid="bot-open">
         <h2>
@@ -257,13 +278,14 @@ export function AutoTraderView() {
             </li>
             <li>About 1 decision in 8 is a small test trade on an idea it is unsure about — so it keeps learning.</li>
             <li>If the phone stopped the app during market hours, it replays the 5-minute candles it missed when you open it again, so a safety net that was hit counts as hit.</li>
+            <li>Moved to your server (app 1.22): the server runs exactly these rules every market minute, also with this app closed; this phone shows the server’s state and sends your changes to it — it never trades a second copy.</li>
           </ul>
         </details>
         <div class="row" style={{ gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-          <button class="btn small" type="button" data-testid="bot-reset" onClick={() => setConfirm('money')}>
+          <button class="btn small" type="button" data-testid="bot-reset" disabled={!ctl.canControl} onClick={() => setConfirm('money')}>
             Start again (keep learning)
           </button>
-          <button class="btn small danger" type="button" onClick={() => setConfirm('all')}>
+          <button class="btn small danger" type="button" disabled={!ctl.canControl} onClick={() => setConfirm('all')}>
             Forget everything
           </button>
         </div>
@@ -365,7 +387,7 @@ function GapNote({ bot, now, marketOpen }: { bot: BotState | null | undefined; n
 }
 
 /** App v1.13: the money it trades with — type it, or take what is in your Upstox account. */
-function AmountCard({ bot, total, free }: { bot: BotState | null | undefined; total: number; free: number }) {
+function AmountCard({ bot, total, free, ctl }: { bot: BotState | null | undefined; total: number; free: number; ctl: BotControls }) {
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState<null | 'funds' | 'set'>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -388,7 +410,7 @@ function AmountCard({ bot, total, free }: { bot: BotState | null | undefined; to
     setBusy('set');
     setMsg(null);
     try {
-      const r = await callBackground('bot:amount', { amount: typed });
+      const r = await ctl.amount(typed);
       setMsg({ ok: true, text: `Done — it now trades with ${formatINR(r.total, 0)} (${formatINR(r.free, 0)} free). Open trades and what it learned are kept.` });
       setAmount('');
     } catch (e) {
@@ -406,10 +428,10 @@ function AmountCard({ bot, total, free }: { bot: BotState | null | undefined; to
       </p>
       <div class="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
         <input type="text" inputMode="numeric" placeholder="e.g. 100000" value={amount} data-field="bot-set-amount" style={{ flex: '1 1 140px' }} onInput={(e) => setAmount((e.currentTarget as HTMLInputElement).value)} />
-        <button class="btn small primary" type="button" data-testid="bot-set-amount" disabled={busy !== null || typed < 10_000} onClick={() => void set()}>
+        <button class="btn small primary" type="button" data-testid="bot-set-amount" disabled={busy !== null || typed < 10_000 || !ctl.canControl} onClick={() => void set()}>
           {busy === 'set' ? 'Setting…' : 'Set amount'}
         </button>
-        <button class="btn small" type="button" data-testid="bot-upstox-funds" disabled={busy !== null} onClick={() => void fromUpstox()}>
+        <button class="btn small" type="button" data-testid="bot-upstox-funds" disabled={busy !== null || !ctl.canControl} onClick={() => void fromUpstox()}>
           {busy === 'funds' ? 'Asking Upstox…' : 'Use my Upstox balance'}
         </button>
       </div>
@@ -423,19 +445,22 @@ function AmountCard({ bot, total, free }: { bot: BotState | null | undefined; to
 const pctLabel = (x: number) => `${x}%`;
 
 /** App v1.13: keep the day's profit, the daily loss limit, the few-days share and the quick exit — with the past test. */
-function ProtectCard({ bot, todayPnl, total }: { bot: BotState | null | undefined; todayPnl: number; total: number }) {
+function ProtectCard({ bot, todayPnl, total, ctl, protectTest }: { bot: BotState | null | undefined; todayPnl: number; total: number; ctl: BotControls; protectTest?: ReturnType<typeof useLocal<'botProtectTest'>> }) {
   const rules = protectRules(bot?.rules);
-  const test = useLocal('botProtectTest');
+  const ownTest = useLocal('botProtectTest');
+  // app v1.22: on the server, its own past test (its own history)
+  const test = protectTest !== undefined ? protectTest : ownTest;
   const [busy, setBusy] = useState(false);
   const now = Date.now();
   const today = istDate(now);
   const guard = bot?.guard?.date === today ? bot.guard : undefined;
   const money = total - todayPnl;
   const keep = keepLevel(guard, money, rules);
-  const set = (patch: Partial<ProtectRules>) => void callBackground('bot:rules', { rules: patch }).catch((e: unknown) => toast(errorMessage(e), 'err'));
+  const set = (patch: Partial<ProtectRules>) => void ctl.rules(patch).catch((e: unknown) => toast(errorMessage(e), 'err'));
   const rerun = () => {
     setBusy(true);
-    void callBackground('bot:test')
+    void ctl
+      .protectTest()
       .then((r) => toast(r.ok ? `Past test done: ${r.days} days` : 'Not enough 5-minute history yet', r.ok ? 'ok' : 'err'))
       .catch((e: unknown) => toast(errorMessage(e), 'err'))
       .finally(() => setBusy(false));
@@ -443,7 +468,7 @@ function ProtectCard({ bot, todayPnl, total }: { bot: BotState | null | undefine
   const chips = <K extends keyof typeof PROTECT_CHOICES>(k: K, label: (v: number) => string) => (
     <span class="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
       {PROTECT_CHOICES[k].map((v) => (
-        <button type="button" class={`filter-chip ${rules[k] === v ? 'on' : ''}`} data-protect={`${k}-${v}`} disabled={!rules.on} onClick={() => set({ [k]: v } as Partial<ProtectRules>)}>
+        <button type="button" class={`filter-chip ${rules[k] === v ? 'on' : ''}`} data-protect={`${k}-${v}`} disabled={!rules.on || !ctl.canControl} onClick={() => set({ [k]: v } as Partial<ProtectRules>)}>
           {label(v)}
         </button>
       ))}
@@ -458,7 +483,7 @@ function ProtectCard({ bot, todayPnl, total }: { bot: BotState | null | undefine
             Keeps the day's profit, cuts losing trades early and stops on a bad day. Off = as before (no day limits).
           </span>
         </span>
-        <input type="checkbox" role="switch" class="switch" data-testid="bot-protect-switch" checked={rules.on} onChange={(e) => set({ on: (e.currentTarget as HTMLInputElement).checked })} />
+        <input type="checkbox" role="switch" class="switch" data-testid="bot-protect-switch" checked={rules.on} disabled={!ctl.canControl} onChange={(e) => set({ on: (e.currentTarget as HTMLInputElement).checked })} />
       </label>
       {rules.on && (
         <>
@@ -483,7 +508,7 @@ function ProtectCard({ bot, todayPnl, total }: { bot: BotState | null | undefine
           </div>
         </>
       )}
-      <ProtectTestLine test={test} busy={busy} rerun={rerun} />
+      <ProtectTestLine test={test} busy={busy || !ctl.canControl} rerun={rerun} />
     </section>
   );
 }

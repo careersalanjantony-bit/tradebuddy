@@ -1,0 +1,5 @@
+New (optional): the auto-trader can run on your own TradeBuddy server - it keeps trading its pretend money every market minute with this app closed or the phone off. Auto-trader → "Let it trade with the app closed" → compare and move it once.
+The phone then shows exactly what the server's auto-trader does (its trades, money, learning and log) and your switch, amount and protection changes go to the server. The phone never runs a second copy.
+Your phone's auto-trader is kept as a backup when it moves, and the server keeps backups too. Nothing is ever mixed; "Run it on this phone again" brings it back.
+Safer everywhere: no new auto-trader trades from prices older than 2 minutes.
+Pretend money only - nothing is ever sent to Upstox. Not a guarantee - you place every real order yourself.

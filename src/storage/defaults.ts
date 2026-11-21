@@ -101,5 +101,7 @@ export function initialLocalValues(): Omit<LocalStore, 'meta'> {
     alertHistory: { items: [], clearedAt: null, seen: {}, dismissed: {} },
     intradayTest: null,
     cloud: null,
+    botCloud: null,
+    botArchive: null,
   };
 }

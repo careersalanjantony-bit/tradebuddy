@@ -40,6 +40,22 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.22.0 (cloud auto-trader)
+
+- **The auto-trader can run on your server**, also with the app closed or the phone off. Auto-trader →
+  *Let it trade with the app closed* → **Compare and move to my server…** shows your phone's auto-trader
+  next to the server's and moves ONE of them — never a mix — with backups on both sides. Afterwards every
+  paired phone shows the server's trades, money (worked out with the server's prices), learning and log;
+  the phone that moved it sends your controls to the server; other phones only look. **Run it on this
+  phone again** brings it back. Design, security and the step-by-step cutover:
+  [docs/CLOUD_AUTOTRADER.md](docs/CLOUD_AUTOTRADER.md).
+- **One auto-trader, one writer:** while it runs on the server the phone never runs a copy of its own (on
+  price updates, resume, retries or offline); until you move it, the server's own copy stays frozen.
+- **No new trades from old prices** (older than 2 minutes), on the phone and on the server; the server
+  pushes one alert when its auto-trader stops trading for that reason, and one when it recovers.
+- Server: database schema 4 (who runs the auto-trader, its audit and backups; nothing existing changes).
+  Pretend money only — nothing is ever sent to Upstox.
+
 ## New in 1.21.0 (Milestone 4 release candidate 2, tag `m4-fcm-rc2`)
 
 - **Cloud alerts (optional):** Settings → Cloud alerts pairs the phone with your own TradeBuddy server;

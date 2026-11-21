@@ -55,6 +55,18 @@ function withTimeout<T>(p: Promise<T>, what: string, ms = NATIVE_CALL_TIMEOUT_MS
 
 export class CloudError extends Error {
   override name = 'CloudError';
+  /**
+   * `status` = the server's HTTP answer (undefined = no answer: offline, timed out), `code` = its error
+   * code, `data` = the whole answer (app v1.22).
+   */
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly code: string | null = null,
+    readonly data: unknown = null,
+  ) {
+    super(message);
+  }
 }
 
 /** The app's own check (android/.../PushSetupPlugin.java): was this APK built with google-services.json? */
@@ -91,6 +103,14 @@ export function normalizeServerUrl(input: string): string {
 }
 
 async function api<T>(path: string, method: string, body?: unknown): Promise<T> {
+  return cloudRequest<T>(path, method, body);
+}
+
+/**
+ * App v1.22: a request to the paired server with this phone's own credential (never the admin token).
+ * A refusal keeps the server's answer: `status` and its `error` code (e.g. 'conflict', 'not_controller').
+ */
+export async function cloudRequest<T>(path: string, method: string, body?: unknown, timeoutMs = 20_000): Promise<T> {
   const cloud = await getLocal('cloud');
   const cred = await readCloudCredential();
   if (!cloud || !cred) throw new CloudError('This phone is not paired with a server.');
@@ -98,10 +118,10 @@ async function api<T>(path: string, method: string, body?: unknown): Promise<T> 
     method,
     headers: { Authorization: `Bearer ${cred}`, Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    timeoutMs: 20_000,
+    timeoutMs,
   });
-  const json = (await res.json().catch(() => ({}))) as { message?: string };
-  if (!res.ok) throw new CloudError(json.message ?? `The server answered ${res.status}.`);
+  const json = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+  if (!res.ok) throw new CloudError(json.message ?? `The server answered ${res.status}.`, res.status, json.error ?? null, json);
   return json as T;
 }
 

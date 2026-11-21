@@ -43,8 +43,10 @@ const convert = (key: string, from: Product, to: Product) =>
 /** Practice tab (app v1.6): your own practice money, or the auto-trader's ₹50 lakh. */
 export function PracticeScreen({ go, view }: { go: Go; view?: string | null }) {
   const [tab, setTab] = useState<'me' | 'bot'>(view === 'bot' ? 'bot' : 'me');
-  const bot = useLocal('bot');
-  const botCash = bot?.wallet.startCash ?? 5_000_000;
+  const own = useLocal('bot');
+  // app v1.22: the auto-trader may run on the server (then its money is the server's)
+  const link = useLocal('botCloud');
+  const botCash = (link ? link.snapshot?.money?.startCash : own?.wallet.startCash) ?? 5_000_000;
   const short = (x: number) => (x >= 1e7 ? `₹${+(x / 1e7).toFixed(2)} Cr` : `₹${+(x / 1e5).toFixed(1)} L`);
   return (
     <>
