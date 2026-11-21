@@ -1,8 +1,32 @@
 # TradeBuddy server — architecture and compatibility plan
 
-Status: milestones 1, 2 and 3 are built and tested (see [README.md](README.md)); 4 (alerts + FCM) and
-5 (Android server mode) are next. The live feed reuses `src/background/feed.ts` unchanged, driven by
-`src/market/feedSupervisor.ts`; the app's jobs run unchanged through `src/engine/jobs.ts`.
+Status: milestones 1, 2, 3 and 4 (cloud alerts through FCM) are built and tested (see
+[README.md](README.md)); 5 (Android server mode) is next. The live feed reuses `src/background/feed.ts`
+unchanged, driven by `src/market/feedSupervisor.ts`; the app's jobs run unchanged through
+`src/engine/jobs.ts`.
+
+## Milestone 4 as built (cloud alerts)
+
+* **Server** — `src/push/google.ts` signs a service-account JWT (RS256, `node:crypto`) and swaps it for an
+  OAuth token (scope `firebase.messaging`); no Admin SDK, no new dependency. `src/push/fcm.ts` sends one
+  FCM HTTP v1 message (Android priority HIGH, TTL, the phone's notification channel, a tag per alert) and
+  sorts Google's answers into sent / retry / invalid token / refused. `src/push/devices.ts` keeps the
+  phones (table `devices`): one-time pairing codes (hash only), device credentials `tbd.<id>.<secret>`
+  (SHA-256 only, compared in constant time), FCM token and its state, choices, revocation.
+  `src/push/outbox.ts` is the queue (table `push_outbox`, `UNIQUE(alert_id, device_id)`), with backoff and
+  restart safety. `src/engine.ts` hooks the app's `notify()` (through the Chrome notifications adapter)
+  to the outbox, runs the sender every 2 s, and wires `src/http/deviceRoutes.ts`.
+* **Phone** (`@capacitor/push-notifications` 8.1.3, the maintained Capacitor plugin) —
+  `src/platform/push.ts`: pairing, permission, token registration and refresh (at every start),
+  received / tapped pushes, unpairing. `src/notify/cloudMode.ts` + `src/notify/categories.ts`: which alerts
+  the server pushes; the phone shows those in the app only (`inAppOnly` in the notification shim) and
+  ignores a push whose alert id it already has, so nothing appears twice. A tap that starts the app waits
+  in the shim until the screens are ready, then opens the alert's details. `PushSetupPlugin.java` tells
+  the app whether the APK was built with `google-services.json`, so an APK without Firebase never calls
+  Firebase (that would stop the app). Settings → **Cloud alerts** is the only new screen part.
+* **Not pushed** (phone-only until milestone 5, because the server's copy differs): practice money, price
+  alerts on the phone's plans, the auto-trader. Those still alert from the phone.
+* Guide for the owner: [docs/FIREBASE_SETUP.md](../docs/FIREBASE_SETUP.md).
 
 ## Milestone 3 as built
 

@@ -20,3 +20,9 @@ lineage.bin
 # TradeBuddy server: local database and environment file (secrets)
 server-data/
 server/.env
+# milestone 4: Firebase files never go into this repository
+google-services.json
+GoogleService-Info.plist
+*firebase-adminsdk*.json
+*service-account*.json
+firebase-service-account*.json

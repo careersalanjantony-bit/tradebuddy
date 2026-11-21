@@ -12,6 +12,12 @@ export interface RequestContext {
   params: Record<string, string>;
   query: URLSearchParams;
   requestId: string;
+  /** milestone 4: the JSON body of POST / PUT / DELETE (undefined when there is none) */
+  body?: unknown;
+  /** the caller's address (for rate limits) */
+  ip: string;
+  /** milestone 4: the paired phone, on routes with auth 'device' */
+  device?: unknown;
 }
 
 export type Handler = (ctx: RequestContext) => ApiResult | Promise<ApiResult>;
@@ -19,8 +25,8 @@ export type Handler = (ctx: RequestContext) => ApiResult | Promise<ApiResult>;
 export interface Route {
   method: string;
   path: string;
-  /** needs the API token (health checks do not) */
-  auth: boolean;
+  /** true = the admin API token; 'device' = a paired phone's own credential; false = none */
+  auth: boolean | 'device';
   /** logged at debug level only (health checks every few seconds) */
   quiet: boolean;
   handler: Handler;
@@ -35,7 +41,7 @@ export type Match = { route: Route; params: Record<string, string> } | { allowed
 export class Router {
   private readonly routes: Array<Route & { parts: string[] }> = [];
 
-  add(method: string, path: string, handler: Handler, opts: { auth?: boolean; quiet?: boolean } = {}): this {
+  add(method: string, path: string, handler: Handler, opts: { auth?: boolean | 'device'; quiet?: boolean } = {}): this {
     this.routes.push({ method: method.toUpperCase(), path, auth: opts.auth ?? true, quiet: opts.quiet ?? false, handler, parts: path.split('/').filter(Boolean) });
     return this;
   }

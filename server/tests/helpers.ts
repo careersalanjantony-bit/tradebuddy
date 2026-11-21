@@ -21,6 +21,7 @@ export function testConfig(dataDir: string, patch: Partial<ServerConfig> = {}): 
     liveFeed: false,
     backgroundTasks: false,
     jobs: false,
+    firebaseServiceAccountFile: null,
     historicalRequestsPerMinute: 30,
     shutdownTimeoutMs: 5000,
     version: 'test',

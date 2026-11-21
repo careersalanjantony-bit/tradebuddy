@@ -22,7 +22,7 @@ afterEach(() => {
 describe('SQLite store', () => {
   it('creates the schema once, answers pings and keeps a small journal', () => {
     const { store, dir } = fresh();
-    expect(store.schemaVersion).toBe(2);
+    expect(store.schemaVersion).toBe(3);
     expect(store.ping()).toBe(true);
     store.event('start', { pid: 1 }, 1000);
     store.event('stop', undefined, 2000);
@@ -33,7 +33,7 @@ describe('SQLite store', () => {
     store.close();
     expect(store.ping()).toBe(false);
     const again = fresh(dir).store;
-    expect(again.schemaVersion).toBe(2);
+    expect(again.schemaVersion).toBe(3);
     expect(again.recentEvents(10)).toHaveLength(2);
   });
 });

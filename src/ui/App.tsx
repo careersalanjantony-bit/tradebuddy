@@ -29,6 +29,7 @@ import { AccountScreen } from './screens/Account';
 import { Avatar, LockScreen, ProfileSetup } from './components/Lock';
 import { lockDue } from '../account/account';
 import { scrollMemory } from './persist';
+import { takePendingNotificationClick } from '../platform/chromeShim';
 
 /**
  * Every screen. The five `main` ones are in the bottom bar (Day trade is the raised centre button);
@@ -147,6 +148,9 @@ export function App() {
       openAlertDetail({ id });
     };
     chrome.notifications.onClicked.addListener(onClick);
+    // milestone 4: the tap that started the app (a pushed alert while the app was closed)
+    const first = takePendingNotificationClick();
+    if (first) onClick(first);
     return () => chrome.notifications.onClicked.removeListener(onClick);
   }, []);
   // a practice sale with a profit: a little celebration (and a toast for any sale) — only for sales
