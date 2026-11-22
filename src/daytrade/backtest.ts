@@ -79,6 +79,8 @@ export interface DayTestTrade {
   qty: number;
   pnl: number;
   pnlPct: number;
+  /** app v1.23: the safety net (so the auto-trader can read the result in R); missing in older reports */
+  stop?: number;
 }
 
 export interface DayTestResult {
@@ -267,7 +269,7 @@ export function simulatePolicy(
       if (qty < 1) continue;
       const out = c.outcomes[v.target];
       const { pnl } = dayTradePnl(c.side, qty, c.entry, out.price);
-      taken.push({ date, key: c.key, symbol: c.symbol, side: c.side, entryT: c.signalT, entry: c.entry, exitT: out.t, exit: out.price, reason: out.reason, qty, pnl, pnlPct: (pnl / (qty * c.entry)) * 100 });
+      taken.push({ date, key: c.key, symbol: c.symbol, side: c.side, entryT: c.signalT, entry: c.entry, exitT: out.t, exit: out.price, reason: out.reason, qty, pnl, pnlPct: (pnl / (qty * c.entry)) * 100, stop: c.stop });
     }
     if (taken.length) {
       trades.push(...taken);

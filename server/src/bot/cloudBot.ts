@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { BotConflictError, BotElsewhereError, botReset, botSetAmount, botSetEnabled, botSetRules, newBot, withBotLock, type BotGateAnswer, type BotObserver, type BotRunInfo, type BotState } from '../../../src/background/botJobs';
+import { BotConflictError, BotElsewhereError, botReset, botResume, botSetAmount, botSetEnabled, botSetPlaybook, botSetRules, newBot, withBotLock, type BotGateAnswer, type BotObserver, type BotRunInfo, type BotState } from '../../../src/background/botJobs';
 import { testProtect } from '../../../src/background/botTest';
 import { newBrain } from '../../../src/bot/brain';
 import { BOT_START } from '../../../src/bot/policy';
@@ -494,6 +494,17 @@ export class CloudBot {
           const r = await testProtect(now, true);
           out = { ok: !!r, days: r?.days ?? 0 };
           break;
+        }
+        // app v1.23: switch a kind of trade off / on, and trade again after the drawdown stop
+        case 'playbook':
+          await botSetPlaybook(cmd.playbook, cmd.off, now, { by, ...(ifRev !== undefined ? { ifRev } : {}) });
+          break;
+        case 'resume':
+          await botResume(now, { by, ...(ifRev !== undefined ? { ifRev } : {}) });
+          break;
+        default: {
+          const never: never = cmd;
+          return refused(400, 'bad_request', `Unknown control ${(never as { type: string }).type}.`);
         }
       }
       const after = await this.readBot();

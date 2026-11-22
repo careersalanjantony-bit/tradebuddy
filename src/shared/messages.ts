@@ -98,6 +98,10 @@ export interface ApiMap {
   'bot:amount': { req: { amount: number }; res: { total: number; free: number } };
   /** app v1.13: the money protection */
   'bot:rules': { req: { rules: Partial<import('../bot/protect').ProtectRules> }; res: import('../bot/protect').ProtectRules };
+  /** app v1.23: switch one kind of trade off / on again */
+  'bot:playbook': { req: { playbook: import('../bot/playbooks').PlaybookId; off: boolean }; res: { ok: boolean } };
+  /** app v1.23: trade again after the drawdown brake stopped it */
+  'bot:resume': { req: undefined; res: { ok: boolean } };
   /** app v1.13: run the protection's past test now */
   'bot:test': { req: undefined; res: { ok: boolean; days: number } };
   /** app v1.22: the cloud auto-trader (runs on the user's server; this phone shows it and sends controls) */

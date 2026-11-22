@@ -146,6 +146,35 @@ const round05 = (x: number, dir: 1 | -1) => Math.round((dir > 0 ? Math.floor(x *
 
 // ---------------------------------------------------------------- new trades
 
+// ---------------------------------------------------------------- app v1.23: money at risk, drawdown
+
+/**
+ * ₹ the open trades can still lose at their safety nets, counted from their entry price. A trade whose
+ * safety net is at its entry or better adds 0 (it can no longer lose, apart from a gap).
+ */
+export function openRiskOf(trades: ReadonlyArray<{ status: string; side: 'long' | 'short'; entry: number; stop: number; qty: number; left?: number }>): number {
+  let sum = 0;
+  for (const t of trades) {
+    if (t.status !== 'open') continue;
+    const dir = t.side === 'long' ? 1 : -1;
+    sum += (t.left ?? t.qty) * Math.max(0, (t.entry - t.stop) * dir);
+  }
+  return Math.round(sum * 100) / 100;
+}
+
+/** The drawdown brake: half size from 4 % below the best money, no new trades from 8 % (until Resume). */
+export const DRAWDOWN = { halfAtPct: 4, stopAtPct: 8 } as const;
+
+/** How far the money is below its best, 0–1. */
+export const drawdownOf = (total: number, peak: number | undefined): number => (peak !== undefined && peak > 0 && total < peak ? (peak - total) / peak : 0);
+
+/** The size factor for a drawdown: 1, 0.5 (from 4 %) or 0 (from 8 %). */
+export function drawdownFactor(dd: number): 1 | 0.5 | 0 {
+  if (dd >= DRAWDOWN.stopAtPct / 100) return 0;
+  if (dd >= DRAWDOWN.halfAtPct / 100) return 0.5;
+  return 1;
+}
+
 /** Market strongly against the trade (breadth in the trade's direction, −1…1). */
 export const AGAINST_MARKET = -0.35;
 

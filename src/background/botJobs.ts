@@ -2,12 +2,17 @@ import { calibrate, historyPairs, indicatorsOf, shortSellList, shortSetupAt, typ
 import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
 import { stockChance } from '../advisor/shortModel';
 import { dailyShortPlan, type DailyShortPlan } from '../advisor/shortPlan';
-import { newBrain, learnFrom, upgradeBrain, STRATEGY_LABEL, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
-import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, type Idea } from '../bot/policy';
-import { checkDay, manageTrade, protectRules, type DayGuard, type ProtectRules } from '../bot/protect';
+import { newBrain, learnFrom, upgradeBrain, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
+import { addSample, evaluateAll, priorsFrom, toSample, type EvidenceSummary, type PlaybookEvidence, type PlaybookMemo, type PlaybookState, type SampleBook } from '../bot/evidence';
+import { PLAYBOOK_LABEL, playbookOf, RISE_STRONG_REASON, type PlaybookId } from '../bot/playbooks';
+import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, type Idea, type MarketGates, type ShadowPick } from '../bot/policy';
+import { checkDay, drawdownFactor, drawdownOf, DRAWDOWN, manageTrade, openRiskOf, protectRules, type DayGuard, type ProtectRules } from '../bot/protect';
 import { notify } from '../notify/chrome';
 import { copyLine } from '../bot/copy';
-import { quickPlan as quickPlanFrom } from '../rising/momentum';
+import { marketGate, marketInputs } from '../early/early';
+import { sideStats } from '../intraday/record';
+import { marketRising } from '../intraday/short';
+import { PLAN as RISE_PLAN, quickPlan as quickPlanFrom } from '../rising/momentum';
 import { marketState } from '../data/calendar';
 import { getCalendar } from '../data/calendarSync';
 import { buyersMeter } from '../data/flow';
@@ -24,7 +29,8 @@ import { errorMessage } from '../lib/serialize';
 import { istDate } from '../lib/time';
 import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession } from '../storage/session';
-import { coverShort, newWallet, openShort, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type MarketCtx, type WalletQuote, type WalletState } from '../wallet/wallet';
+import { scanUniverse } from './scanList';
+import { coverShort, estimateCharges, newWallet, openShort, placeOrder, processWallet, sellFromBackground, updateHolding, walletSummary, type Fill, type MarketCtx, type WalletQuote, type WalletState } from '../wallet/wallet';
 
 /**
  * App v1.6 — the auto-trader. ₹50 lakh of pretend money that trades by itself during market hours:
@@ -79,6 +85,28 @@ export interface BotTrade {
   closeWhy?: string;
   /** app v1.13: Upstox product it was opened with (same-day buys: Intraday) */
   product?: 'intraday' | 'delivery';
+  /** app v1.23: the kind of trade it was judged as (older trades: read with bot/playbooks.playbookOf) */
+  playbook?: PlaybookId;
+  /** app v1.23: the kind's state when it was opened (trial = small size) */
+  state?: PlaybookState;
+  /** app v1.23: its charges in R when it was opened */
+  chargesR?: number;
+  /** app v1.23: the result in R before charges (the evidence counts this, bot/evidence.ts) */
+  grossR?: number;
+  /** app v1.23: a shadow trade — followed with no money, never alerted (only in `BotState.shadow`) */
+  shadow?: true;
+}
+
+/**
+ * App v1.23 — shadow trades: the ideas of kinds of trade that may not use money yet (not proven, paused,
+ * two losses today), followed in a separate pretend wallet so they can prove themselves. They never count
+ * in the auto-trader's money, its open trades, its limits or its alerts.
+ */
+export interface ShadowBook {
+  wallet: WalletState;
+  trades: BotTrade[];
+  /** IST date and shadow trades opened that day */
+  day: { date: string; opened: number };
 }
 
 export interface BotLogEntry {
@@ -118,7 +146,27 @@ export interface BotState {
   rev?: number;
   /** app v1.22: when this state was last saved */
   updatedAt?: number;
+  /** app v1.23: shadow trades (see ShadowBook) */
+  shadow?: ShadowBook;
+  /** app v1.23: the newest results of each kind of trade (kept when it starts again without forgetting) */
+  samples?: SampleBook;
+  /** app v1.23: switched off by you / paused, per kind of trade */
+  playbooks?: Partial<Record<PlaybookId, PlaybookMemo>>;
+  /** app v1.23: each kind's state, worked out by the one that runs it (the screen shows this) */
+  evidence?: EvidenceSummary;
+  /** app v1.23: its best money so far (the drawdown brake counts from it) */
+  peak?: number;
+  /** app v1.23: stopped 8 % below its best — no new trades until Resume */
+  ddStop?: { at: number; peak: number; total: number } | null;
 }
+
+/** Pretend cash of the shadow wallet: never the limit (shadow trades are sized like trial trades). */
+export const SHADOW_CASH = 10_000_000_000;
+/** At most this many shadow trades open at once, and opened a day. */
+export const SHADOW_MAX_OPEN = 8;
+export const SHADOW_MAX_DAY = 30;
+
+export const newShadow = (now: number): ShadowBook => ({ wallet: newWallet(now, SHADOW_CASH), trades: [], day: { date: '', opened: 0 } });
 
 export function newBot(now: number, brain: Brain = newBrain(), startCash = BOT_START): BotState {
   return { v: 1, enabled: true, createdAt: now, wallet: newWallet(now, startCash), brain, trades: [], log: [{ at: now, kind: 'info', text: `Started with ${rupees(startCash)} of pretend money.` }], day: { date: '', opened: 0 }, lastRun: 0, lastDecideAt: 0, note: null, looked: 0, equity: [] };
@@ -259,36 +307,53 @@ export function weekdaysBetween(from: string, to: string): number {
 
 const isOpenInWallet = (w: WalletState, t: BotTrade) => (t.side === 'long' ? w.holdings.some((h) => h.key === t.key) : (w.shorts ?? []).some((s) => s.key === t.key));
 
-/** Trades whose position is gone from the wallet: work out the result and learn from it. */
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/** A trade whose position is gone from its wallet: its result after charges, its charges and its last fill. */
+function closedResult(w: WalletState, t: BotTrade): { pnl: number; charges: number; last: Fill } | null {
+  if (t.status !== 'open' || isOpenInWallet(w, t)) return null;
+  const fills = w.fills.filter((f) => f.key === t.key && f.at >= t.openedAt && f.pnl !== undefined);
+  if (!fills.length) return null;
+  return { pnl: r2(fills.reduce((s, f) => s + (f.pnl ?? 0), 0)), charges: r2(fills.reduce((s, f) => s + (f.charges ?? 0), 0)), last: fills[fills.length - 1]! };
+}
+
+/** Why a trade ended, in plain words. */
+function exitWhyOf(t: BotTrade, last: Fill): string {
+  return (
+    t.closeWhy ??
+    (last.reason === 'stop'
+      ? t.stop === t.entry
+        ? 'came back to the buy price (no loss)'
+        : (t.side === 'long' ? t.stop > t.entry : t.stop < t.entry)
+          ? 'safety net followed the price up — profit kept'
+          : 'safety net hit'
+      : last.reason === 'target'
+        ? 'target reached'
+        : last.reason === 'day-end'
+          ? t.strategy === 'swing'
+            ? 'time limit reached'
+            : 'closed at 3:10 pm'
+          : last.reason === 't1'
+            ? 'target 1'
+            : 'closed')
+  );
+}
+
+/** Trades whose position is gone from the wallet: work out the result, learn from it and keep it as evidence. */
 export function settleClosed(bot: BotState, now: number): BotState {
   let b = bot;
   for (const t of bot.trades) {
-    if (t.status !== 'open' || isOpenInWallet(b.wallet, t)) continue;
-    const fills = b.wallet.fills.filter((f) => f.key === t.key && f.at >= t.openedAt && f.pnl !== undefined);
-    if (!fills.length) continue;
-    const pnl = Math.round(fills.reduce((s, f) => s + (f.pnl ?? 0), 0) * 100) / 100;
-    const last = fills[fills.length - 1]!;
-    const r = t.riskRupees > 0 ? Math.round((pnl / t.riskRupees) * 100) / 100 : 0;
-    const why =
-      t.closeWhy ??
-      (last.reason === 'stop'
-        ? t.stop === t.entry
-          ? 'came back to the buy price (no loss)'
-          : (t.side === 'long' ? t.stop > t.entry : t.stop < t.entry)
-            ? 'safety net followed the price up — profit kept'
-            : 'safety net hit'
-        : last.reason === 'target'
-          ? 'target reached'
-          : last.reason === 'day-end'
-            ? t.strategy === 'swing'
-              ? 'time limit reached'
-              : 'closed at 3:10 pm'
-            : last.reason === 't1'
-              ? 'target 1'
-              : 'closed');
+    const res = closedResult(b.wallet, t);
+    if (!res) continue;
+    const { pnl, charges, last } = res;
+    const r = t.riskRupees > 0 ? r2(pnl / t.riskRupees) : 0;
+    // app v1.23: the result before charges too — the evidence of its kind of trade counts that
+    const grossR = t.riskRupees > 0 ? r2((pnl + charges) / t.riskRupees) : 0;
+    const why = exitWhyOf(t, last);
     const lesson = learnFrom(b.brain, t.x, pnl > 0, r, pnl, t.strategy);
-    const closed: BotTrade = { ...t, status: 'closed', closedAt: last.at, exitPrice: last.price, pnl, r, exitWhy: why, lesson: lesson.text };
-    b = { ...b, brain: lesson.brain, trades: b.trades.map((x) => (x.id === t.id ? closed : x)) };
+    const closed: BotTrade = { ...t, status: 'closed', closedAt: last.at, exitPrice: last.price, pnl, r, grossR, exitWhy: why, lesson: lesson.text };
+    const sample = toSample(closed);
+    b = { ...b, brain: lesson.brain, trades: b.trades.map((x) => (x.id === t.id ? closed : x)), ...(sample ? { samples: addSample(b.samples, playbookOf(closed), sample) } : {}) };
     b = addLog(b, last.at, 'close', `${t.side === 'long' ? 'Sold' : 'Bought back'} ${t.symbol} at ${px(last.price)} — ${why}: ${signedRs(pnl)} (${r >= 0 ? '+' : ''}${r.toFixed(1)} R).`);
     // the day's stop sends one summary instead of an alert per trade
     if (!t.closeWhy || !/daily loss limit|today's profit/.test(t.closeWhy)) void alertClose(closed, last.price).catch(() => undefined);
@@ -297,15 +362,39 @@ export function settleClosed(bot: BotState, now: number): BotState {
   return b;
 }
 
+/** app v1.23: finished shadow trades become evidence of their kind — no learning, no log, no alerts. */
+export function settleShadow(bot: BotState): BotState {
+  const sh = bot.shadow;
+  if (!sh) return bot;
+  let samples = bot.samples;
+  let changed = false;
+  const trades = sh.trades.map((t) => {
+    const res = closedResult(sh.wallet, t);
+    if (!res) return t;
+    changed = true;
+    const closed: BotTrade = { ...t, status: 'closed', closedAt: res.last.at, exitPrice: res.last.price, pnl: res.pnl, r: t.riskRupees > 0 ? r2(res.pnl / t.riskRupees) : 0, grossR: t.riskRupees > 0 ? r2((res.pnl + res.charges) / t.riskRupees) : 0, exitWhy: exitWhyOf(t, res.last) };
+    const sample = toSample(closed);
+    if (sample) samples = addSample(samples, playbookOf(closed), sample);
+    return closed;
+  });
+  return changed ? { ...bot, shadow: { ...sh, trades }, ...(samples ? { samples } : {}) } : bot;
+}
+
+/** A wallet and the trades it holds (the real one or the shadow one). */
+interface TradeBook {
+  wallet: WalletState;
+  trades: BotTrade[];
+}
+
 /**
  * Each open trade at the live price (app v1.13, see bot/protect.ts): the safety net moves to the buy
  * price early and then follows the best price; half is sold at 1× the risk; a same-day trade that
- * goes nowhere is closed. Also tracks best/worst prices for the progress bars.
+ * goes nowhere is closed. Also tracks best/worst prices for the progress bars. `real` = the money's own
+ * trades (alerted); false = shadow trades.
  */
-function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx, riseTags: Map<string, 'strong' | 'unclear' | 'fading'> = new Map()): BotState {
-  const rules = protectRules(bot.rules);
-  let w = bot.wallet;
-  const trades = bot.trades.map((t) => {
+function manageTrades(book: TradeBook, rules: ProtectRules, quotes: Record<string, Quote>, ctx: MarketCtx, riseTags: Map<string, 'strong' | 'unclear' | 'fading'>, real: boolean): TradeBook {
+  let w = book.wallet;
+  const trades = book.trades.map((t) => {
     if (t.status !== 'open') return t;
     const q = quotes[t.key];
     if (!q || !(q.ltp > 0)) return t;
@@ -337,17 +426,21 @@ function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx
       const h = w.holdings.find((x) => x.key === t.key);
       const half = h ? Math.floor(h.qty / 2) : 0;
       if (h && half >= 1) {
-        const r = placeOrder(w, { key: t.key, symbol: t.symbol, side: 'sell', qty: half, type: 'market', source: 'Auto-trader · half at target 1', ...(h.product ? { product: h.product, ...(h.marginPct !== undefined ? { marginPct: h.marginPct } : {}) } : {}) }, wq(q), ctx);
+        const r = placeOrder(w, { key: t.key, symbol: t.symbol, side: 'sell', qty: half, type: 'market', source: real ? 'Auto-trader · half at target 1' : 'Shadow · half at target 1', ...(h.product ? { product: h.product, ...(h.marginPct !== undefined ? { marginPct: h.marginPct } : {}) } : {}) }, wq(q), ctx);
         if (r.ok && r.fill) {
           w = r.wallet;
-          void alertHalf(t, half, r.fill.price).catch(() => undefined);
+          if (real) void alertHalf(t, half, r.fill.price).catch(() => undefined);
           return { ...next, halfDone: true, left: h.qty - half };
         }
       }
     }
     return next;
   });
-  return { ...bot, wallet: w, trades };
+  return { wallet: w, trades };
+}
+
+function manageOpen(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx, riseTags: Map<string, 'strong' | 'unclear' | 'fading'> = new Map()): BotState {
+  return { ...bot, ...manageTrades({ wallet: bot.wallet, trades: bot.trades }, protectRules(bot.rules), quotes, ctx, riseTags, true) };
 }
 
 /** Sells (or buys back) the whole position of a trade at `price`. */
@@ -381,9 +474,9 @@ function guardDay(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx):
 }
 
 /** Same-day trades left open after the close (app was closed at 3:10) and top picks past their time limit. */
-function timeExits(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx): BotState {
-  let w = bot.wallet;
-  for (const t of bot.trades) {
+function timeExitsOf(wallet: WalletState, trades: readonly BotTrade[], quotes: Record<string, Quote>, ctx: MarketCtx): WalletState {
+  let w = wallet;
+  for (const t of trades) {
     if (t.status !== 'open' || t.side !== 'long') continue;
     const q = quotes[t.key];
     const price = q?.ltp ?? t.entry;
@@ -391,18 +484,18 @@ function timeExits(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx)
     const overdueSwing = t.strategy === 'swing' && ctx.open && weekdaysBetween(t.date, ctx.today) >= SWING_MAX_DAYS;
     if (overdueDay || overdueSwing) w = sellFromBackground(w, t.key, price, ctx, 'day-end').wallet;
   }
-  return { ...bot, wallet: w };
+  return w;
 }
 
 /**
  * The app was closed for a while during market hours: replays today's 5-minute candles since the
  * last run through the same rules, worst price first, so missed safety nets count as hit.
  */
-async function catchUp(bot: BotState, ctx: MarketCtx): Promise<BotState> {
-  const open = bot.trades.filter((t) => t.status === 'open');
-  if (!open.length || !bot.lastRun || ctx.now - bot.lastRun < 4 * 60_000 || istDate(bot.lastRun) !== ctx.today) return bot;
-  const sinceT = minutesIST(bot.lastRun);
-  let w = bot.wallet;
+async function catchUpOf(wallet: WalletState, trades: readonly BotTrade[], lastRun: number, ctx: MarketCtx): Promise<WalletState> {
+  const open = trades.filter((t) => t.status === 'open');
+  if (!open.length || !lastRun || ctx.now - lastRun < 4 * 60_000 || istDate(lastRun) !== ctx.today) return wallet;
+  const sinceT = minutesIST(lastRun);
+  let w = wallet;
   for (const t of open) {
     let bars;
     try {
@@ -425,7 +518,7 @@ async function catchUp(bot: BotState, ctx: MarketCtx): Promise<BotState> {
       }
     }
   }
-  return { ...bot, wallet: w };
+  return w;
 }
 
 // ---------------------------------------------------------------- studies (top picks, sell-first chances)
@@ -524,7 +617,7 @@ export function resetBotStudies(): void {
 async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<Idea[]> {
   const today = istDate(now);
   const t = minutesIST(now);
-  const [signals, flow, breadth, shortIdeas, news, breakouts, boTest] = await Promise.all([
+  const [signals, flow, breadth, shortIdeas, news, breakouts, boTest, intra, intraTest] = await Promise.all([
     getSession('daySignals'),
     getSession('flow'),
     getSession('breadth'),
@@ -532,6 +625,8 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     getSession('news'),
     getSession('breakouts'),
     getLocal('breakoutTest'),
+    getSession('intraday'),
+    getLocal('intradayTest'),
   ]);
   const br = breadth && breadth.advanced + breadth.declined > 20 ? (breadth.advanced - breadth.declined) / (breadth.advanced + breadth.declined) : 0;
   const mood = (key: string): number => {
@@ -569,7 +664,7 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     const target = s.target ?? q.ltp + 2 * (q.ltp - s.stop);
     if (q.ltp >= target) continue;
     const prior = s.chance ?? (s.trusted ? 0.5 : 0.45);
-    ideas.push({ key: s.key, symbol: s.symbol, strategy: 'day-buy', side: 'long', price: q.ltp, stop: s.stop, target, ctx: ctxOf(s.key, q, 'day-buy', prior, s.stop, 1), reasons: [`day-trade buy signal at ${s.entry.toFixed(2)}`, s.chance !== undefined ? `self-learning chance ${Math.round(s.chance * 100)}%` : s.trusted ? 'these signals passed the past test' : 'signals not tested yet'] });
+    ideas.push({ key: s.key, symbol: s.symbol, strategy: 'day-buy', playbook: 'day-buy', side: 'long', price: q.ltp, stop: s.stop, target, ctx: ctxOf(s.key, q, 'day-buy', prior, s.stop, 1), reasons: [`day-trade buy signal at ${s.entry.toFixed(2)}`, s.chance !== undefined ? `self-learning chance ${Math.round(s.chance * 100)}%` : s.trusted ? 'these signals passed the past test' : 'signals not tested yet'] });
   }
   // 2. "Rising now" (app v1.14): the live list's "likely to keep rising" stocks, with the quick-trade
   //    plan (+0.6 % / −0.4 %, 20 minutes) and the measured chance from days the model never saw
@@ -580,7 +675,7 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     if (!fresh(q) || q.ltp >= r.plan.target || q.ltp <= r.plan.stop) continue;
     const plan = quickPlanFrom(q.ltp, now);
     const prior = Math.min(0.75, Math.max(0.3, r.measured ?? r.chance ?? 0.5));
-    ideas.push({ key: r.key, symbol: r.symbol, strategy: 'rising', side: 'long', price: q.ltp, stop: plan.stop, target: plan.target, ctx: ctxOf(r.key, q, 'rising', prior, plan.stop, 1), reasons: ['Rising now: likely to keep rising', ...r.reasons.slice(0, 2)] });
+    ideas.push({ key: r.key, symbol: r.symbol, strategy: 'rising', playbook: 'rise-strong', side: 'long', price: q.ltp, stop: plan.stop, target: plan.target, ctx: ctxOf(r.key, q, 'rising', prior, plan.stop, 1), reasons: [RISE_STRONG_REASON, ...r.reasons.slice(0, 2)] });
   }
   // the older list only while the live one has nothing (e.g. no model yet)
   for (const r of liveRise.length ? [] : (flow?.rising ?? [])) {
@@ -592,14 +687,14 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     const target = Math.round((q.ltp + 2 * (q.ltp - stop)) * 20) / 20;
     const prior = Math.min(0.55, 0.44 + 0.03 * r.meter.score);
     const symbol = (await getInstrument(r.key))?.trading_symbol ?? r.key;
-    ideas.push({ key: r.key, symbol, strategy: 'rising', side: 'long', price: q.ltp, stop, target, ctx: ctxOf(r.key, q, 'rising', prior, stop, 1), reasons: [`up ${r.fromOpenPct.toFixed(1)}% since the open`, r.meter.label.toLowerCase(), r.pace ? `${r.pace.toFixed(1)}× the usual trading` : 'busy trading'] });
+    ideas.push({ key: r.key, symbol, strategy: 'rising', playbook: 'rise-flow', side: 'long', price: q.ltp, stop, target, ctx: ctxOf(r.key, q, 'rising', prior, stop, 1), reasons: [`up ${r.fromOpenPct.toFixed(1)}% since the open`, r.meter.label.toLowerCase(), r.pace ? `${r.pace.toFixed(1)}× the usual trading` : 'busy trading'] });
   }
   // 3. top picks (hold a few days) — only near the planned buy price
   for (const p of studies.picks) {
     const q = quotes[p.key];
     if (!fresh(q) || q.ltp <= p.plan.stop || q.ltp >= p.plan.target || q.ltp > p.plan.entry * 1.01) continue;
     const prior = p.safeChance ?? p.safetyScore ?? 0.5;
-    ideas.push({ key: p.key, symbol: p.symbol, strategy: 'swing', side: 'long', price: q.ltp, stop: p.plan.stop, target: p.plan.target, ctx: ctxOf(p.key, q, 'swing', prior, p.plan.stop, 1), reasons: [`top pick: ${p.summary}`, `made money ${p.record.profitable} of ${p.record.samples} times in the past`] });
+    ideas.push({ key: p.key, symbol: p.symbol, strategy: 'swing', playbook: 'swing-pick', side: 'long', price: q.ltp, stop: p.plan.stop, target: p.plan.target, ctx: ctxOf(p.key, q, 'swing', prior, p.plan.stop, 1), reasons: [`top pick: ${p.summary}`, `made money ${p.record.profitable} of ${p.record.samples} times in the past`] });
   }
   // 4. sell first: the "Falling now" scan (5-minute candles), with the measured fall chance when known
   for (const s of shortIdeas && istDate(shortIdeas.at) === today && now - shortIdeas.at < 10 * 60_000 ? shortIdeas.ideas : []) {
@@ -607,7 +702,7 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     if (!fresh(q) || q.ltp >= s.plan.stop || q.ltp <= s.plan.t1) continue;
     const measured = studies.shortChance.get(s.key);
     const prior = measured ?? Math.min(0.55, Math.max(0.35, 0.4 + (s.score - 60) / 200));
-    ideas.push({ key: s.key, symbol: s.symbol, strategy: 'short', side: 'short', price: q.ltp, stop: s.plan.stop, target: s.plan.t2, t1: s.plan.t1, ctx: ctxOf(s.key, q, 'short', prior, s.plan.stop, -1), reasons: [`falling now (score ${s.score})`, ...s.reasons.slice(0, 2).map((x) => x.text), ...(measured !== undefined ? [`similar days fell ${Math.round(measured * 100)}% of the time`] : [])] });
+    ideas.push({ key: s.key, symbol: s.symbol, strategy: 'short', playbook: 'short-scan', side: 'short', price: q.ltp, stop: s.plan.stop, target: s.plan.t2, t1: s.plan.t1, ctx: ctxOf(s.key, q, 'short', prior, s.plan.stop, -1), reasons: [`falling now (score ${s.score})`, ...s.reasons.slice(0, 2).map((x) => x.text), ...(measured !== undefined ? [`similar days fell ${Math.round(measured * 100)}% of the time`] : [])] });
   }
   // 5. the Stocks tab's live "For short selling" list (app v1.9): each stock's own fall chance from its
   //    model, only while it trades below today's opening price; plan from its daily prices
@@ -616,7 +711,7 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     if (!tTop.live || !fresh(q) || ideas.some((i) => i.key === tTop.key && i.side === 'short')) continue;
     if (q.ltp >= tTop.plan.stop || q.ltp <= tTop.plan.t1 || (q.open !== null && q.ltp >= q.open)) continue;
     const prior = Math.min(0.7, Math.max(0.3, tTop.chance));
-    ideas.push({ key: tTop.key, symbol: tTop.symbol, strategy: 'short', side: 'short', price: q.ltp, stop: tTop.plan.stop, target: tTop.plan.t2, t1: tTop.plan.t1, ctx: ctxOf(tTop.key, q, 'short', prior, tTop.plan.stop, -1), reasons: ['in the Stocks tab’s “For short selling” list', `its own chance from a year of prices: ${Math.round(tTop.chance * 100)}%`, ...tTop.reasons.slice(0, 1)] });
+    ideas.push({ key: tTop.key, symbol: tTop.symbol, strategy: 'short', playbook: 'short-model', side: 'short', price: q.ltp, stop: tTop.plan.stop, target: tTop.plan.t2, t1: tTop.plan.t1, ctx: ctxOf(tTop.key, q, 'short', prior, tTop.plan.stop, -1), reasons: ['in the Stocks tab’s “For short selling” list', `its own chance from a year of prices: ${Math.round(tTop.chance * 100)}%`, ...tTop.reasons.slice(0, 1)] });
   }
   // 6. 🚀 breakouts (app v1.9): fresh live breakouts above today's resistance with a volume surge; the
   //    chance starts from the breakout rule's past test and the brain learns from every result.
@@ -630,7 +725,37 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
     const stop = b.plan.stop;
     const target = Math.round((q.ltp + (q.ltp - stop)) * 20) / 20;
     const prior = Math.min(0.62, Math.max(0.35, boPrior + (b.status === 'confirmed' ? 0.03 : 0) + (b.score - 60) / 500));
-    ideas.push({ key: b.key, symbol: b.symbol, strategy: 'breakout', side: 'long', price: q.ltp, stop, target, ctx: ctxOf(b.key, q, 'breakout', prior, stop, 1), reasons: [b.status === 'confirmed' ? `confirmed breakout above ₹${b.level.toFixed(2)}` : `broke above ₹${b.level.toFixed(2)} with a volume surge`, ...b.reasons.slice(1, 3)] });
+    ideas.push({ key: b.key, symbol: b.symbol, strategy: 'breakout', playbook: 'breakout', side: 'long', price: q.ltp, stop, target, ctx: ctxOf(b.key, q, 'breakout', prior, stop, 1), reasons: [b.status === 'confirmed' ? `confirmed breakout above ₹${b.level.toFixed(2)}` : `broke above ₹${b.level.toFixed(2)} with a volume surge`, ...b.reasons.slice(1, 3)] });
+  }
+  // 7. app v1.23: the Intraday scanner's BUY (a 5-minute close above the opening range, with volume, above
+  //    VWAP — app v1.19). It trades with money only once the scanner's own record is proven and its own
+  //    results allow it (bot/evidence.ts); before that it is followed as shadow trades. Never chased: only
+  //    within 0.3 % of the scanner's entry. Its SELL side stays practice only (app v1.20.2).
+  if (intra && intra.date === today && now - intra.at < 60_000) {
+    const itPrior = Math.min(0.6, Math.max(0.35, intraTest?.winRate ?? 0.45));
+    for (const row of intra.rows) {
+      if (row.call !== 'BUY' || row.side === 'sell' || !row.plan) continue;
+      const live = quotes[row.key];
+      const price = fresh(live) ? live.ltp : row.price;
+      const at = fresh(live) ? live.fetchedAt : row.at;
+      if (!(price > 0) || now - at >= 2 * 60_000) continue;
+      if (price > row.plan.entry * 1.003 || price <= row.plan.stop || price >= row.plan.target) continue;
+      const prevClose = fresh(live) ? live.prevClose : row.changePct !== null && row.changePct > -100 ? price / (1 + row.changePct / 100) : null;
+      const q = fresh(live) ? live : ({ ltp: price, prevClose, fetchedAt: at } as Quote);
+      ideas.push({
+        key: row.key,
+        symbol: row.symbol,
+        strategy: 'breakout',
+        playbook: 'intraday-buy',
+        side: 'long',
+        price,
+        stop: row.plan.stop,
+        target: row.plan.target,
+        ctx: ctxOf(row.key, q, 'breakout', itPrior, row.plan.stop, 1),
+        reasons: ['Intraday scanner: BUY', row.why],
+        quote: { ltp: price, prevClose, fetchedAt: at },
+      });
+    }
   }
   return ideas;
 }
@@ -652,6 +777,8 @@ export interface Suggestion {
   chance: number;
   /** expected result in R after charges (live ideas) */
   ev: number | null;
+  /** app v1.23: the state of its kind of trade (watch = not proven yet) */
+  state?: PlaybookState;
   news: 'good' | 'bad' | null;
   reasons: string[];
   /** a same-day trade (sold / bought back by 3:10 pm) */
@@ -679,35 +806,99 @@ export async function suggestIdeas(side: 'buy' | 'sell', now = Date.now()): Prom
   };
   const items: Suggestion[] = [];
   const seen = new Set<string>();
+  const evs = evidenceMap(bot.evidence);
+  const stateOf = (p: PlaybookId): PlaybookState => evs[p]?.state ?? 'watch';
   if (ctx.open) {
     for (const i of await gatherIdeas(now, quotes)) {
       if ((side === 'buy') !== (i.side === 'long')) continue;
       const sc = scoreIdea(bot.brain, i);
-      if (!sc || seen.has(i.key)) continue;
+      const st = stateOf(i.playbook);
+      // app v1.23: a paused or switched-off kind of trade is not suggested
+      if (!sc || seen.has(i.key) || st === 'paused' || st === 'off') continue;
       seen.add(i.key);
-      items.push({ key: i.key, symbol: i.symbol, side, kind: i.strategy, price: i.price, stop: i.stop, target: i.target, ...(i.t1 !== undefined ? { t1: i.t1 } : {}), chance: sc.chance, ev: sc.ev, news: moodOf(i.key), reasons: i.reasons, sameDay: i.strategy !== 'swing', when: 'now' });
+      items.push({ key: i.key, symbol: i.symbol, side, kind: i.strategy, price: i.price, stop: i.stop, target: i.target, ...(i.t1 !== undefined ? { t1: i.t1 } : {}), chance: sc.chance, ev: sc.ev, state: st, news: moodOf(i.key), reasons: i.reasons, sameDay: i.strategy !== 'swing', when: 'now' });
     }
   }
   if (side === 'buy') {
     for (const p of studies.picks) {
-      if (seen.has(p.key)) continue;
+      if (seen.has(p.key) || stateOf('swing-pick') === 'paused' || stateOf('swing-pick') === 'off') continue;
       const q = quotes[p.key];
       const price = q?.ltp ?? p.plan.entry;
       if (price <= p.plan.stop || price >= p.plan.target) continue;
       seen.add(p.key);
-      items.push({ key: p.key, symbol: p.symbol, side, kind: 'swing', price, stop: p.plan.stop, target: p.plan.target, chance: p.safeChance ?? p.safetyScore, ev: null, news: moodOf(p.key), reasons: [`top pick: ${p.summary}`, `made money ${p.record.profitable} of ${p.record.samples} times in the past`], sameDay: false, when: ctx.open ? 'now' : 'next-session' });
+      items.push({ key: p.key, symbol: p.symbol, side, kind: 'swing', price, stop: p.plan.stop, target: p.plan.target, chance: p.safeChance ?? p.safetyScore, ev: null, state: stateOf('swing-pick'), news: moodOf(p.key), reasons: [`top pick: ${p.summary}`, `made money ${p.record.profitable} of ${p.record.samples} times in the past`], sameDay: false, when: ctx.open ? 'now' : 'next-session' });
     }
   } else {
     for (const t of studies.shortTop) {
-      if (seen.has(t.key)) continue;
+      if (seen.has(t.key) || stateOf('short-model') === 'paused' || stateOf('short-model') === 'off') continue;
       seen.add(t.key);
-      items.push({ key: t.key, symbol: t.symbol, side, kind: 'short', price: t.price, stop: t.plan.stop, target: t.plan.t2, t1: t.plan.t1, chance: t.chance, ev: null, news: moodOf(t.key), reasons: [...t.reasons, `its own chance from a year of prices: ${Math.round(t.chance * 100)}%`], sameDay: true, when: ctx.open ? 'now' : 'next-session' });
+      items.push({ key: t.key, symbol: t.symbol, side, kind: 'short', price: t.price, stop: t.plan.stop, target: t.plan.t2, t1: t.plan.t1, chance: t.chance, ev: null, state: stateOf('short-model'), news: moodOf(t.key), reasons: [...t.reasons, `its own chance from a year of prices: ${Math.round(t.chance * 100)}%`], sameDay: true, when: ctx.open ? 'now' : 'next-session' });
     }
   }
   // good news helps a buy and hurts a sell-first (and the other way round) — shown, and used as a tie-break
   const newsScore = (x: Suggestion) => (x.news === null ? 0 : (x.news === 'good') === (side === 'buy') ? 0.03 : -0.03);
-  items.sort((a, b) => (b.ev ?? -1) - (a.ev ?? -1) || b.chance + newsScore(b) - (a.chance + newsScore(a)));
+  // app v1.23: proven kinds first, then trial, then the ones not proven yet
+  const rank = (x: Suggestion) => (x.state === 'proven' ? 2 : x.state === 'trial' ? 1 : 0);
+  items.sort((a, b) => rank(b) - rank(a) || (b.ev ?? -1) - (a.ev ?? -1) || b.chance + newsScore(b) - (a.chance + newsScore(a)));
   return { at: now, marketOpen: ctx.open, items: items.slice(0, 8) };
+}
+
+// ---------------------------------------------------------------- app v1.23: evidence, market gates, brakes
+
+/** The samples of an auto-trader saved before app 1.23: read once from its finished (and shadow) trades. */
+export function samplesFromTrades(bot: BotState): SampleBook {
+  let book: SampleBook = {};
+  const closed = [...bot.trades, ...(bot.shadow?.trades ?? [])].filter((t) => t.status === 'closed').sort((a, b) => (a.closedAt ?? a.openedAt) - (b.closedAt ?? b.openedAt));
+  for (const t of closed) {
+    const s = toSample(t);
+    if (s) book = addSample(book, playbookOf(t), s);
+  }
+  return book;
+}
+
+const INTRADAY_UNPROVEN = 'The Intraday scanner’s own record is not proven yet (20 finished BUY alerts, more wins than losses, money made after charges): followed as shadow trades until it is.';
+
+/** Each kind of trade's state, from its samples, the stored past tests and what is remembered (off, paused). */
+export async function withEvidence(bot: BotState, now: number): Promise<BotState> {
+  const [dayTest, riseModel, shortTest, breakoutTest, intradayTest, intradayRecord] = await Promise.all([getLocal('dayTest'), getLocal('riseModel'), getLocal('shortTest'), getLocal('breakoutTest'), getLocal('intradayTest'), getLocal('intradayRecord')]);
+  const samples = bot.samples ?? samplesFromTrades(bot);
+  const priors = priorsFrom({ dayTest, riseModel, shortTest, breakoutTest, intradayTest }, RISE_PLAN.stop);
+  const evidence = evaluateAll(samples, priors, bot.playbooks, { 'intraday-buy': sideStats(intradayRecord, 'buy').proven ? null : INTRADAY_UNPROVEN }, now);
+  // a paused kind is remembered: it must recover clearly before it trades again
+  const playbooks: Partial<Record<PlaybookId, PlaybookMemo>> = { ...(bot.playbooks ?? {}) };
+  for (const e of evidence.list) {
+    if (e.state === 'off') continue;
+    const { paused: _was, ...rest } = playbooks[e.id] ?? {};
+    const memo: PlaybookMemo = e.state === 'paused' ? { ...rest, paused: true } : rest;
+    if (Object.keys(memo).length) playbooks[e.id] = memo;
+    else delete playbooks[e.id];
+  }
+  return { ...bot, samples, evidence, playbooks };
+}
+
+export const evidenceMap = (s: EvidenceSummary | undefined): Partial<Record<PlaybookId, PlaybookEvidence>> => Object.fromEntries((s?.list ?? []).map((e) => [e.id, e]));
+
+/** Why no new buys / sell-first trades now: the same market gates as the alerts (app v1.16.2 and v1.20). */
+async function marketGatesNow(now: number, today: string, quotes: Record<string, Quote>): Promise<MarketGates> {
+  const it = await getSession('intraday');
+  if (it && it.date === today && now - it.at < 60_000) return { buys: it.gate ?? null, shorts: it.shortGate ?? null };
+  const [scan, rise] = await Promise.all([scanUniverse().catch(() => null), getSession('rise')]);
+  const inputs = marketInputs(quotes, scan?.keys ?? [], now);
+  const weak = rise && rise.date === today && now - rise.at < 60_000 && rise.weak?.weak ? rise.weak.text : null;
+  const g = marketGate(inputs);
+  const r = marketRising(inputs);
+  return { buys: weak ?? (g.weak ? g.text : null), shorts: r.strong ? r.text : null };
+}
+
+/** Kinds of trade with two losing trades today: no more money for them today (shadow trades go on). */
+export function brakedToday(trades: readonly BotTrade[], today: string): Set<PlaybookId> {
+  const losses = new Map<PlaybookId, number>();
+  for (const t of trades) {
+    if (t.status !== 'closed' || t.date !== today || !((t.r ?? 0) < 0)) continue;
+    const p = playbookOf(t);
+    losses.set(p, (losses.get(p) ?? 0) + 1);
+  }
+  return new Set([...losses].filter(([, n]) => n >= 2).map(([p]) => p));
 }
 
 // ---------------------------------------------------------------- the loop
@@ -739,8 +930,13 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
   }
   const ctx = await marketCtx(now);
   const quotes = await getQuotes();
-  const before = JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
+  const wquotes = Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)]));
+  const realPrint = (b: BotState) => JSON.stringify([b.wallet.fills.length, b.trades.map((t) => [t.status, t.stop])]);
+  const shadowPrint = (b: BotState) => JSON.stringify([b.shadow?.wallet.fills.length ?? 0, (b.shadow?.trades ?? []).map((t) => [t.status, t.stop])]);
+  const before = realPrint(bot);
+  const shadowBefore = shadowPrint(bot);
   const closedBefore = bot.trades.filter((t) => t.status === 'closed').length;
+  const shadowClosedBefore = (bot.shadow?.trades ?? []).filter((t) => t.status === 'closed').length;
   const tradesBefore = bot.trades.length;
   // app v1.22: no new trades from old prices (the server's Upstox token stopped, the feed went quiet…)
   const priceAt = newestPriceAt(quotes);
@@ -748,39 +944,76 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
   let decided = false;
 
   if (ctx.open && bot.lastRun && now - bot.lastRun > 4 * 60_000 && istDate(bot.lastRun) === ctx.today) bot = { ...bot, lastGap: { from: bot.lastRun, to: now } };
-  if (ctx.open) bot = await catchUp(bot, ctx);
+  if (ctx.open) bot = { ...bot, wallet: await catchUpOf(bot.wallet, bot.trades, bot.lastRun, ctx) };
   const riseS = await getSession('rise');
+  // the auto-trader's own stocks are tagged in the "held" list; shadow trades use the live list's tags
   const riseTags = new Map<string, 'strong' | 'unclear' | 'fading'>();
-  if (riseS && riseS.date === ctx.today && now - riseS.at < 60_000) for (const h of riseS.held) if (h.source === 'auto') riseTags.set(h.key, h.tag);
+  const rowTags = new Map<string, 'strong' | 'unclear' | 'fading'>();
+  if (riseS && riseS.date === ctx.today && now - riseS.at < 60_000) {
+    for (const h of riseS.held) if (h.source === 'auto') riseTags.set(h.key, h.tag);
+    for (const r of riseS.rows) rowTags.set(r.key, r.tag);
+  }
   bot = manageOpen(bot, quotes, ctx, riseTags);
-  bot = timeExits(bot, quotes, ctx);
-  bot = { ...bot, wallet: processWallet(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx).wallet };
+  bot = { ...bot, wallet: timeExitsOf(bot.wallet, bot.trades, quotes, ctx) };
+  bot = { ...bot, wallet: processWallet(bot.wallet, wquotes, ctx).wallet };
   bot = settleClosed(bot, now);
   bot = guardDay(bot, quotes, ctx);
   bot = settleClosed(bot, now);
 
+  // app v1.23: shadow trades, handled by the same rules (no money, no alerts)
+  if (bot.shadow?.trades.some((t) => t.status === 'open')) {
+    let sb: TradeBook = { wallet: bot.shadow.wallet, trades: bot.shadow.trades };
+    if (ctx.open) sb = { ...sb, wallet: await catchUpOf(sb.wallet, sb.trades, bot.lastRun, ctx) };
+    sb = manageTrades(sb, protectRules(bot.rules), quotes, ctx, rowTags, false);
+    sb = { ...sb, wallet: processWallet(timeExitsOf(sb.wallet, sb.trades, quotes, ctx), wquotes, ctx).wallet };
+    bot = settleShadow({ ...bot, shadow: { ...bot.shadow, ...sb } });
+  }
+
   if (bot.day.date !== ctx.today) bot = { ...bot, day: { date: ctx.today, opened: 0 } };
-  const sum = walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), ctx.today);
+  const sum = walletSummary(bot.wallet, wquotes, ctx.today);
+
+  // app v1.23: the drawdown brake, counted from its best money (Amount, Start again and Resume set a new best)
+  const peak = Math.max(bot.peak ?? sum.total, sum.total);
+  const dd = drawdownOf(sum.total, peak);
+  bot = { ...bot, peak };
+  if (!bot.ddStop && drawdownFactor(dd) === 0) {
+    bot = addLog({ ...bot, ddStop: { at: now, peak, total: Math.round(sum.total) } }, now, 'info', `Stopped: its money is ${DRAWDOWN.stopAtPct}% below its best (${rupees(peak)} → ${rupees(sum.total)}). No new trades until you press Resume; open trades keep their safety nets.`);
+    void alertDrawdown(peak, sum.total).catch(() => undefined);
+  }
+  const ddFactor = bot.ddStop ? 0 : drawdownFactor(dd);
+  const ddText = bot.ddStop ? `Stopped: its money fell ${DRAWDOWN.stopAtPct}% below its best (${rupees(bot.ddStop.peak)} → ${rupees(bot.ddStop.total)}). Look at "Kinds of trade", then press Resume to let it trade again.` : null;
+
+  // app v1.23: each kind of trade's state — at every decision, after a trade closed, and at least every 15 minutes
+  const wantDecide = ctx.open && !stale && (force || now - bot.lastDecideAt >= 60_000);
+  const closedNow = bot.trades.filter((t) => t.status === 'closed').length - closedBefore + (bot.shadow?.trades ?? []).filter((t) => t.status === 'closed').length - shadowClosedBefore;
+  if (wantDecide || closedNow > 0 || !bot.evidence || now - bot.evidence.at >= 15 * 60_000) bot = await withEvidence(bot, now);
 
   if (ctx.open && stale) {
     bot = { ...bot, note: priceAt === null ? 'No prices yet — no new trades until live prices arrive.' : `Prices are not up to date (the newest is from ${new Date(priceAt + 5.5 * 3_600_000).toISOString().slice(11, 16)}) — no new trades until they are.` };
-  } else if (ctx.open && (force || now - bot.lastDecideAt >= 60_000)) {
+  } else if (wantDecide) {
     decided = true;
     await refreshStudies(now, sum.total);
     const ideas = await gatherIdeas(now, quotes);
     const openTrades = bot.trades.filter((t) => t.status === 'open');
     const rules = protectRules(bot.rules);
     const swingValue = openTrades.filter((t) => t.strategy === 'swing').reduce((a, t) => a + t.qty * (quotes[t.key]?.ltp ?? t.entry), 0);
+    const [market, scan] = await Promise.all([marketGatesNow(now, ctx.today, quotes), scanUniverse().catch(() => null)]);
+    const industryOf = (k: string): string | undefined => scan?.industry[k];
+    const industries: Record<string, number> = {};
+    for (const t of openTrades) {
+      const ind = industryOf(t.key);
+      if (ind) industries[ind] = (industries[ind] ?? 0) + 1;
+    }
     const plan = decide(
       bot.brain,
       ideas,
-      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue },
-      `${ctx.today}-${ctx.t}`,
+      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue, openRisk: openRiskOf(openTrades), industries, ddFactor, ddText },
+      { evidence: evidenceMap(bot.evidence), market, braked: brakedToday(bot.trades, ctx.today), industryOf, charges: (product, qty, price) => estimateCharges(product, qty, price) },
     );
     for (const d of plan.decisions) {
       const i = d.idea;
-      const q = wq(quotes[i.key]);
-      const source = `Auto-trader · ${STRATEGY_LABEL[i.strategy]}`;
+      const q = wq(quotes[i.key]) ?? i.quote;
+      const source = `Auto-trader · ${PLAYBOOK_LABEL[i.playbook]}`;
       const r = i.side === 'long'
         ? // same-day buys as Upstox Intraday (cheaper charges), paid in full — no borrowing
           placeOrder(bot.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: d.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source, ...(i.strategy !== 'swing' ? { product: 'intraday' as const, marginPct: 1 } : {}) }, q, ctx)
@@ -795,6 +1028,9 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
         key: i.key,
         symbol: i.symbol,
         strategy: i.strategy,
+        playbook: i.playbook,
+        state: d.state,
+        chargesR: d.chargesR,
         side: i.side,
         qty: d.qty,
         entry,
@@ -808,7 +1044,7 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
         chance: i.chance,
         prior: i.ctx.prior,
         riskRupees: Math.max(1, Math.round(Math.abs(entry - i.stop) * d.qty)),
-        explore: d.explore,
+        explore: false,
         reasons: i.reasons,
         sizeWhy: d.sizeWhy,
         status: 'open',
@@ -817,10 +1053,11 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
         product: i.strategy === 'swing' ? 'delivery' : 'intraday',
       };
       bot = { ...bot, wallet: r.wallet, trades: [...bot.trades, trade].slice(-400), day: { ...bot.day, opened: bot.day.opened + 1 } };
-      bot = addLog(bot, now, 'open', `${i.side === 'long' ? 'Bought' : 'Sold first'} ${d.qty} ${i.symbol} at ${px(entry)} (${rupees(d.qty * entry)}) — ${STRATEGY_LABEL[i.strategy].toLowerCase()}, ${Math.round(i.chance * 100)}% chance. ${d.sizeWhy}`);
+      bot = addLog(bot, now, 'open', `${i.side === 'long' ? 'Bought' : 'Sold first'} ${d.qty} ${i.symbol} at ${px(entry)} (${rupees(d.qty * entry)}) — ${PLAYBOOK_LABEL[i.playbook].toLowerCase()}. ${d.sizeWhy}`);
       log.info(`Auto-trader ${i.side === 'long' ? 'bought' : 'sold first'} ${d.qty} ${i.symbol} @ ${entry}`);
       void alertOpen(trade).catch(() => undefined);
     }
+    bot = openShadowTrades(bot, plan.shadow, quotes, ctx, now);
     bot = { ...bot, lastDecideAt: now, note: plan.note, looked: ideas.length };
   } else if (!ctx.open) {
     bot = { ...bot, note: 'Market closed — it trades by itself from 9:30 am on market days.' };
@@ -830,15 +1067,73 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
   const eq = [...bot.equity];
   if (eq.length && eq[eq.length - 1]!.date === ctx.today) eq[eq.length - 1] = { date: ctx.today, total: Math.round(sum.total) };
   else eq.push({ date: ctx.today, total: Math.round(sum.total) });
-  bot = { ...bot, equity: eq.slice(-250), lastRun: now, wallet: { ...bot.wallet, fills: bot.wallet.fills.slice(-600), orders: bot.wallet.orders.filter((o) => o.status === 'open' || now - o.createdAt < 3 * 86_400_000) } };
+  const keepOrders = (w: WalletState) => w.orders.filter((o) => o.status === 'open' || now - o.createdAt < 3 * 86_400_000);
+  bot = { ...bot, equity: eq.slice(-250), lastRun: now, wallet: { ...bot.wallet, fills: bot.wallet.fills.slice(-600), orders: keepOrders(bot.wallet) } };
+  if (bot.shadow) bot = { ...bot, shadow: { ...bot.shadow, trades: bot.shadow.trades.slice(-400), wallet: { ...bot.shadow.wallet, fills: bot.shadow.wallet.fills.slice(-600), orders: keepOrders(bot.shadow.wallet) } } };
 
-  const changed = before !== JSON.stringify([bot.wallet.fills.length, bot.trades.map((t) => [t.status, t.stop])]);
-  const save = !stored || changed || now - (stored.lastRun ?? 0) >= 30_000 || force;
+  // only the real trades make a new version (rev): a shadow trade never makes a phone's control "outdated"
+  const changed = before !== realPrint(bot);
+  const save = !stored || changed || shadowBefore !== shadowPrint(bot) || now - (stored.lastRun ?? 0) >= 30_000 || force;
   if (save) bot = await saveBot(bot, now, changed, stored);
   const opened = bot.trades.length - tradesBefore;
   const closed = bot.trades.filter((t) => t.status === 'closed').length - closedBefore;
   observer.onRun?.({ at: now, decided, opened, closed: Math.max(0, closed), saved: save, priceAt, stale, note: bot.note, rev: bot.rev ?? 0 });
   return bot;
+}
+
+/** app v1.23: opens the shadow trades of kinds that may not use money yet (no money, no alerts, no log line). */
+function openShadowTrades(bot: BotState, picks: readonly ShadowPick[], quotes: Record<string, Quote>, ctx: MarketCtx, now: number): BotState {
+  if (!picks.length) return bot;
+  let sb = bot.shadow ?? newShadow(now);
+  if (sb.day.date !== ctx.today) sb = { ...sb, day: { date: ctx.today, opened: 0 } };
+  const open = sb.trades.filter((t) => t.status === 'open');
+  const doneToday = new Set(sb.trades.filter((t) => t.date === ctx.today).map((t) => `${t.playbook}|${t.key}`));
+  const realOpen = new Set(bot.trades.filter((t) => t.status === 'open').map((t) => t.key));
+  for (const p of picks) {
+    if (open.length >= SHADOW_MAX_OPEN || sb.day.opened >= SHADOW_MAX_DAY) break;
+    const i = p.idea;
+    // one shadow position per stock (the wallet keeps one position per stock), once per kind and day
+    if (doneToday.has(`${i.playbook}|${i.key}`) || realOpen.has(i.key) || open.some((t) => t.key === i.key)) continue;
+    const q = wq(quotes[i.key]) ?? i.quote;
+    const source = `Shadow · ${PLAYBOOK_LABEL[i.playbook]}`;
+    const r = i.side === 'long'
+      ? placeOrder(sb.wallet, { key: i.key, symbol: i.symbol, side: 'buy', qty: p.qty, type: 'market', stop: i.stop, target: i.target, sellByClose: i.strategy !== 'swing', source, ...(i.strategy !== 'swing' ? { product: 'intraday' as const, marginPct: 1 } : {}) }, q, ctx)
+      : openShort(sb.wallet, { key: i.key, symbol: i.symbol, qty: p.qty, stop: i.stop, t1: i.t1 ?? (i.price + i.target) / 2, t2: i.target, source }, q, ctx);
+    if (!r.ok || !r.fill) continue;
+    const entry = r.fill.price;
+    const trade: BotTrade = {
+      id: `S${newId(now).slice(1)}`,
+      key: i.key,
+      symbol: i.symbol,
+      strategy: i.strategy,
+      playbook: i.playbook,
+      shadow: true,
+      side: i.side,
+      qty: p.qty,
+      entry,
+      stop: i.stop,
+      stop0: i.stop,
+      target: i.target,
+      ...(i.t1 !== undefined ? { t1: i.t1 } : {}),
+      openedAt: now,
+      date: ctx.today,
+      x: i.x,
+      chance: i.chance,
+      prior: i.ctx.prior,
+      riskRupees: Math.max(1, Math.round(Math.abs(entry - i.stop) * p.qty)),
+      explore: false,
+      reasons: i.reasons,
+      sizeWhy: `Shadow trade (no money): ${p.why}`,
+      status: 'open',
+      best: entry,
+      worst: entry,
+      product: i.strategy === 'swing' ? 'delivery' : 'intraday',
+    };
+    sb = { wallet: r.wallet, trades: [...sb.trades, trade], day: { date: ctx.today, opened: sb.day.opened + 1 } };
+    open.push(trade);
+    doneToday.add(`${i.playbook}|${i.key}`);
+  }
+  return { ...bot, shadow: sb };
 }
 
 /** app v1.22: who changed it, when the change came from a phone through the server (shown in its log, alerted) */
@@ -892,7 +1187,11 @@ export function botReset(forget: boolean, startCash = BOT_START, now = Date.now(
   return queue(async () => {
     const old = await beginChange(o);
     const cash = Number.isFinite(startCash) && startCash >= 10_000 ? Math.round(startCash) : BOT_START;
-    const fresh = newBot(now, forget || !old ? newBrain() : old.brain, cash);
+    const base = newBot(now, forget || !old ? newBrain() : old.brain, cash);
+    // app v1.23: each kind of trade's evidence is part of what it learned (kept unless it forgets); your off switches always stay
+    const offs = Object.fromEntries(Object.entries(old?.playbooks ?? {}).filter(([, m]) => m?.off).map(([id]) => [id, { off: true }])) as Partial<Record<PlaybookId, PlaybookMemo>>;
+    const keep = !forget && old ? { samples: old.samples ?? samplesFromTrades(old), playbooks: old.playbooks ?? {} } : { playbooks: offs };
+    const fresh: BotState = { ...base, ...keep };
     const next = await saveBot(addLog(fresh, now, 'info', `${forget ? `Reset: ${rupees(cash)} and a fresh brain` : `Reset to ${rupees(cash)}; kept what it learned from ${old?.brain.n ?? 0} trades`}${fromWhom(by)}.`), now, true, old);
     if (by) void alertControl(`alert:bot-control-${next.rev}`, '🤖 Auto-trader started again', `Started again with ${rupees(cash)} from ${by.name}${forget ? ' and a fresh brain' : '; it kept what it learned'}.`).catch(() => undefined);
   });
@@ -924,7 +1223,7 @@ export function botSetAmount(amount: number, now = Date.now(), o?: BotChangeOpti
       throw new Error(`${rupees(sum.total - sum.free)} is in open trades right now, so the lowest amount it can go to is ${rupees(sum.total - sum.free)}. Try again when trades have closed.`);
     }
     const wallet: WalletState = { ...bot.wallet, cash: Math.round((bot.wallet.cash + delta) * 100) / 100, startCash: Math.round((bot.wallet.startCash + delta) * 100) / 100 };
-    const next = addLog({ ...bot, wallet }, now, 'info', `Amount set to ${rupees(target)}${fromWhom(by)} (${delta >= 0 ? 'added' : 'took out'} ${rupees(Math.abs(delta))}). Open trades and what it learned are kept.`);
+    const next = addLog({ ...bot, wallet, peak: target, ddStop: null }, now, 'info', `Amount set to ${rupees(target)}${fromWhom(by)} (${delta >= 0 ? 'added' : 'took out'} ${rupees(Math.abs(delta))}). Open trades and what it learned are kept.`);
     await saveBot(next, now, true, stored);
     return { total: target, free: Math.round(sum.free + delta) };
   });
@@ -942,6 +1241,36 @@ export function botSetRules(patch: Partial<ProtectRules>, now = Date.now(), o?: 
   });
 }
 
+/** app v1.23: switches one kind of trade off (no trades, not even shadow ones) or on again. */
+export function botSetPlaybook(id: PlaybookId, off: boolean, now = Date.now(), o?: BotChangeOptions): Promise<void> {
+  const by = o?.by;
+  return queue(async () => {
+    const stored = await beginChange(o);
+    const bot = await getBot(now);
+    const memo: PlaybookMemo = { ...(bot.playbooks?.[id] ?? {}) };
+    if (off) memo.off = true;
+    else delete memo.off;
+    const playbooks = { ...(bot.playbooks ?? {}) };
+    if (Object.keys(memo).length) playbooks[id] = memo;
+    else delete playbooks[id];
+    const next = await withEvidence({ ...bot, playbooks }, now);
+    await saveBot(addLog(next, now, 'info', `${PLAYBOOK_LABEL[id]}: ${off ? 'switched off — no trades, not even shadow ones' : 'switched on again — it trades once its results allow'}${fromWhom(by)}.`), now, true, stored);
+  });
+}
+
+/** app v1.23: lets it trade again after the drawdown brake stopped it; its best money counts from now. */
+export function botResume(now = Date.now(), o?: BotChangeOptions): Promise<void> {
+  const by = o?.by;
+  return queue(async () => {
+    const stored = await beginChange(o);
+    const bot = await getBot(now);
+    const quotes = await getQuotes();
+    const total = Math.round(walletSummary(bot.wallet, Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, wq(q)])), istDate(now)).total);
+    await saveBot(addLog({ ...bot, ddStop: null, peak: total }, now, 'info', `Resumed after the drawdown stop${fromWhom(by)}: it trades again, and its best money counts from ${rupees(total)}.`), now, true, stored);
+    if (by) void alertControl(`alert:bot-control-resume-${now}`, '🤖 Auto-trader resumed', `Resumed from ${by.name} after the drawdown stop (pretend money).`).catch(() => undefined);
+  });
+}
+
 // ---------------------------------------------------------------- alerts you can copy (app v1.13)
 
 async function botAlertsOn(): Promise<boolean> {
@@ -952,11 +1281,23 @@ const copyOf = (t: BotTrade) => ({ symbol: t.symbol, side: t.side, qty: t.qty, e
 
 async function alertOpen(t: BotTrade): Promise<void> {
   if (!(await botAlertsOn())) return;
+  const kind = PLAYBOOK_LABEL[playbookOf(t)];
   await notify(`alert:bot-open-${t.id}`, {
     title: `🤖 Auto-trader ${t.side === 'long' ? 'bought' : 'sold first'} ${t.qty} ${t.symbol} at ${px(t.entry)}`,
-    message: `${copyLine(copyOf(t))} ${Math.round(t.chance * 100)}% chance · ${STRATEGY_LABEL[t.strategy].toLowerCase()}.`,
+    message: `${copyLine(copyOf(t))} ${t.state === 'proven' ? 'Proven kind' : 'Trial kind (small size)'} · ${kind.toLowerCase()}.`,
     priority: 2,
-    detail: { symbol: t.symbol, key: t.key, side: t.side === 'long' ? 'buy' : 'sell', source: `Auto-trader · ${STRATEGY_LABEL[t.strategy]}`, entry: t.entry, stop: t.stop, targets: t.t1 !== undefined ? [t.t1, t.target] : [t.target], qty: t.qty, risk: Math.round(Math.abs(t.entry - t.stop) * t.qty), score: Math.round(t.chance * 100), scoreKind: 'chance', reasons: t.reasons },
+    detail: { symbol: t.symbol, key: t.key, side: t.side === 'long' ? 'buy' : 'sell', source: `Auto-trader · ${kind}`, entry: t.entry, stop: t.stop, targets: t.t1 !== undefined ? [t.t1, t.target] : [t.target], qty: t.qty, risk: Math.round(Math.abs(t.entry - t.stop) * t.qty), score: null, reasons: t.reasons },
+  });
+}
+
+/** app v1.23: the drawdown brake stopped it (once). */
+async function alertDrawdown(peak: number, total: number): Promise<void> {
+  if (!(await botAlertsOn())) return;
+  await notify(`alert:bot-drawdown-${Math.round(peak)}`, {
+    title: `🤖 Auto-trader stopped: ${DRAWDOWN.stopAtPct}% below its best`,
+    message: `Its money fell from ${rupees(peak)} to ${rupees(total)}. It opens no new trades until you press Resume on the Auto-trader screen; open trades keep their safety nets. Pretend money only.`,
+    priority: 2,
+    requireInteraction: true,
   });
 }
 

@@ -180,11 +180,16 @@ export function buildRouter(d: ApiDeps): Router {
     return answer({ watchlist: keys, quotes: Object.fromEntries(keys.filter((k) => quotes[k]).map((k) => [k, quotes[k]])), scanUniverse });
   });
 
-  /** Trade plans (entry, stop-loss, target, quantity), day trades and the auto-trader's trades */
+  /** Trade plans (entry, stop-loss, target, quantity), day trades and the auto-trader's trades (app v1.23: and its kinds of trade) */
   r.add('GET', '/v1/plans', async () => {
     const [plans, dayTrades, bot] = await Promise.all([local('plans'), local('dayTrades'), local('bot')]);
-    const b = bot as { enabled?: boolean; trades?: unknown[] } | null;
-    return answer({ plans: plans ?? [], dayTrades: dayTrades ?? [], autoTrader: b ? { enabled: b.enabled ?? false, trades: b.trades ?? [] } : null });
+    // app v1.23: each kind of trade's state (only proven and trial kinds use money), the drawdown stop and the shadow trades
+    const b = bot as { enabled?: boolean; trades?: unknown[]; evidence?: { at: number; list: unknown[] }; ddStop?: unknown; shadow?: { trades?: unknown[] } } | null;
+    return answer({
+      plans: plans ?? [],
+      dayTrades: dayTrades ?? [],
+      autoTrader: b ? { enabled: b.enabled ?? false, trades: b.trades ?? [], playbooks: b.evidence ?? null, drawdownStop: b.ddStop ?? null, shadowTrades: b.shadow?.trades ?? [] } : null,
+    });
   });
 
   /** Self-learning: the models, their unseen-days tests and the past tests of each scanner */

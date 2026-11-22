@@ -1,14 +1,16 @@
 import { useState } from 'preact/hooks';
-import { STRATEGIES, STRATEGY_LABEL, strategyFocus, topLessons } from '../../bot/brain';
-import { BOT_START, MAX_RISK, MIN_RISK, SWING_MAX_DAYS } from '../../bot/policy';
-import { PROTECT_CHOICES, keepLevel, maxOpenFor, protectRules, type ProtectRules } from '../../bot/protect';
+import { STRATEGIES, STRATEGY_LABEL, topLessons } from '../../bot/brain';
+import type { PlaybookEvidence, PlaybookState } from '../../bot/evidence';
+import { PLAYBOOK_LABEL, playbookOf, type PlaybookId } from '../../bot/playbooks';
+import { BOT_START, MAX_CHARGES_R, MAX_OPEN_RISK, MAX_PER_INDUSTRY, MIN_EDGE_R, minPositionFor, RISK_SHARE, SWING_MAX_DAYS } from '../../bot/policy';
+import { DRAWDOWN, PROTECT_CHOICES, keepLevel, maxOpenFor, maxPositionFor, protectRules, type ProtectRules } from '../../bot/protect';
 import { copySteps } from '../../bot/copy';
 import type { BotState, BotTrade } from '../../background/botJobs';
 import { formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
 import { istDate } from '../../lib/time';
 import { callBackground } from '../../shared/messages';
-import { newWallet, walletSummary } from '../../wallet/wallet';
+import { estimateCharges, newWallet, walletSummary } from '../../wallet/wallet';
 import type { Go } from '../App';
 import { useQuotes } from '../data';
 import { useLocal, useMarketState, useNow } from '../hooks';
@@ -164,7 +166,10 @@ export function AutoTraderView() {
           </p>
         )}
         {!link && <GapNote bot={bot} now={now} marketOpen={market.phase === 'open'} />}
+        <DrawdownNote bot={bot} ctl={ctl} />
       </section>
+
+      <KindsCard bot={bot} total={s.total} ctl={ctl} />
 
       <AmountCard bot={bot} total={s.total} free={s.free} ctl={ctl} />
       <ProtectCard bot={bot} todayPnl={s.todayPnl} total={s.total} ctl={ctl} protectTest={link ? ((link.snapshot?.protectTest ?? null) as ReturnType<typeof useLocal<'botProtectTest'>>) : undefined} />
@@ -181,7 +186,7 @@ export function AutoTraderView() {
           <Icon name="brain" size={18} /> What it has learned
         </h2>
         {!brain || brain.n === 0 ? (
-          <p class="small muted">Nothing yet — it learns from every finished trade. It starts out trusting the app's studies (the day-trade model, the top picks' past record, the sell-first test) and changes its mind as its own results come in.</p>
+          <p class="small muted">Nothing yet — it learns from every finished trade. What it learns ranks the ideas of a kind; whether a kind may use money at all comes from its results (Kinds of trade, above).</p>
         ) : (
           <>
             <p class="small" style={{ margin: '0 0 8px' }}>
@@ -204,13 +209,11 @@ export function AutoTraderView() {
         <div class="strat-table small">
           {STRATEGIES.map((k) => {
             const x = brain?.by[k] ?? { n: 0, wins: 0, pnl: 0, r: 0 };
-            const f = strategyFocus(x);
             return (
               <div class="strat-row" data-strategy={k}>
                 <span class="grow">{STRATEGY_LABEL[k]}</span>
                 <span class="muted">{x.n ? `${x.wins}/${x.n} won` : '—'}</span>
                 <span class={tone(x.pnl)}>{x.n ? signed(x.pnl) : ''}</span>
-                <span class={`focus ${f}`}>{f === 'more' ? 'focus more' : f === 'less' ? 'smaller trades' : f === 'paused' ? 'paused' : 'learning'}</span>
               </div>
             );
           })}
@@ -247,13 +250,13 @@ export function AutoTraderView() {
               <div class="row">
                 <b>{t.symbol}</b>
                 <span class={`chip ${t.side === 'long' ? 'day buy' : 'day sell'}`}>{t.side === 'long' ? 'BUY' : 'SELL first'}</span>
-                <span class="tiny muted">{STRATEGY_LABEL[t.strategy]}</span>
+                <span class="tiny muted">{PLAYBOOK_LABEL[playbookOf(t)]}</span>
                 <span class="spacer" />
                 <b class={tone(t.pnl ?? 0)}>{signed(t.pnl ?? 0)}</b>
               </div>
               <div class="tiny muted">
                 {t.qty} × ₹{formatNumberIN(t.entry)} → ₹{formatNumberIN(t.exitPrice ?? t.entry)} · {t.exitWhy} · {(t.r ?? 0) >= 0 ? '+' : ''}
-                {(t.r ?? 0).toFixed(1)} R · {istDate(t.openedAt)} {formatTimeIST(t.openedAt).slice(0, 5)}
+                {(t.r ?? 0).toFixed(1)} R after charges{t.grossR !== undefined ? ` (${t.grossR >= 0 ? '+' : ''}${t.grossR.toFixed(1)} R before)` : ''} · {istDate(t.openedAt)} {formatTimeIST(t.openedAt).slice(0, 5)}
               </div>
               {t.lesson && <div class="tiny lesson-line">🧠 {t.lesson}</div>}
             </div>
@@ -265,20 +268,24 @@ export function AutoTraderView() {
         <details class="small">
           <summary>How it decides</summary>
           <ul>
-            <li>Every minute from 9:30 am it looks at today's day-trade buy signals, "Rising today", the top picks and the "Falling now" sell-first ideas.</li>
-            <li>For each idea it works out a chance of making money (the app's studies, adjusted by what it learned from its own trades) and the expected result after charges. It only takes ideas worth more than their risk.</li>
+            <li>Every minute from 9:30 am it looks at today's day-trade buy signals, Rising now, the top picks, the "Falling now" sell-first ideas, breakouts and the Intraday scanner's BUY.</li>
             <li>
-              Size — no fixed limit: it can put any amount into a trade, up to all its free cash (no borrowing). How much it risks comes from its own confidence (a quarter of the "Kelly" amount): {MIN_RISK * 100}% of its money when unsure, up to {MAX_RISK * 100}% when very sure. When several good ideas appear at once, its free cash is shared among them by how good each one is.
+              Each kind of trade is judged on its own results (app 1.23): its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). Only <b>proven</b> kinds (30 trades, safe estimate +0.10 R or better) and <b>trial</b> kinds (safe estimate 0 R or better) use money; the others are followed as shadow trades — no money, no alerts — until they show an edge. A kind whose newest 20 trades average below −0.05 R is paused until they reach +0.10 R. You can switch any kind off.
             </li>
             <li>
-              With <b>Protect my money</b> on (the default): at most one stock per ₹25,000 (up to 10 at once), each at most a fair share of the money; "hold a few days" picks only up to their share; no buy on stocks with bad news today, nothing against a market clearly going the other way. It keeps the day's profit and stops at the daily loss limit (see above). No new same-day trades after 2:30 pm (closed by 3:10), top picks until 3:15.
+              Size: {RISK_SHARE.proven * 100}% of its money at risk on a proven kind, {RISK_SHARE.trial * 100}% on a trial kind — never more than half the daily loss limit. All open trades together risk at most {MAX_OPEN_RISK * 100}%, at most {MAX_PER_INDUSTRY} open trades per industry. A trade is skipped when Upstox's charges for its size would be more than {MAX_CHARGES_R * 100}% of its risk, or when its kind's safe estimate minus those charges is below +{MIN_EDGE_R} R.
             </li>
+            <li>No new buys while the market is falling, no new sell-first trades while it is rising — the same rules as the alerts.</li>
             <li>
-              Every trade has a safety net (sell if it falls to…) and a target. Same-day trades: the safety net moves to the buy price at 0.75× the risk in profit and then follows the best price; half is sold at 1× the risk; a trade that goes nowhere is closed; everything by 3:10 pm. Top picks: the buy price at 1× the risk, then it follows; sold after {SWING_MAX_DAYS} market days. Same-day buys are booked as Upstox <b>Intraday</b> (lower charges), paid in full — no borrowing.
+              With <b>Protect my money</b> on (the default): at most one stock per ₹25,000 (up to 10 at once), each at most a fair share of the money; "hold a few days" picks only up to their share; no buy on stocks with bad news today, nothing against a market clearly going the other way. It keeps the day's profit and stops at the daily loss limit (see above); two losing trades of one kind stop that kind for the day. No new same-day trades after 2:30 pm (closed by 3:10), top picks until 3:15.
             </li>
-            <li>About 1 decision in 8 is a small test trade on an idea it is unsure about — so it keeps learning.</li>
+            <li>Drawdown brake: {DRAWDOWN.halfAtPct}% below its best money it trades at half size; {DRAWDOWN.stopAtPct}% below, it stops opening trades until you press Resume.</li>
+            <li>
+              Every trade has a safety net (sell if it falls to…) and a target. Same-day trades: the safety net moves to the buy price at 0.75× the risk in profit and then follows the best price; half is sold at 1× the risk; a trade that goes nowhere is closed; everything by 3:10 pm. Top picks: the buy price at 1× the risk, then it follows; sold after {SWING_MAX_DAYS} market days. Same-day buys are booked as Upstox <b>Intraday</b> (lower charges), paid in full — no borrowing. It never adds to a losing trade.
+            </li>
             <li>If the phone stopped the app during market hours, it replays the 5-minute candles it missed when you open it again, so a safety net that was hit counts as hit.</li>
             <li>Moved to your server (app 1.22): the server runs exactly these rules every market minute, also with this app closed; this phone shows the server’s state and sends your changes to it — it never trades a second copy.</li>
+            <li>Not a guarantee: if no kind of trade has proven itself, it does not trade.</li>
           </ul>
         </details>
         <div class="row" style={{ gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
@@ -311,6 +318,94 @@ export function AutoTraderView() {
   );
 }
 
+const STATE_TEXT: Record<PlaybookState, string> = { proven: 'Proven', trial: 'Trial (small size)', watch: 'Not proven yet', paused: 'Paused', off: 'Off' };
+const STATE_CLASS: Record<PlaybookState, string> = { proven: 'more', trial: 'less', watch: '', paused: 'paused', off: '' };
+const rText = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)} R`);
+
+function kindLine(e: PlaybookEvidence): string {
+  if (e.n) return `${e.n} finished${e.shadow ? ` (${e.shadow} shadow)` : ''} · won ${e.wins} · ${rText(e.avgNetR)} a trade after charges · safe estimate ${rText(e.safeR)} before charges`;
+  if (e.prior && e.priorCounted) return `No trades of its own yet · past test: ${e.prior.trades} trades, ${rText(e.prior.avgR)} a trade (${e.prior.label})`;
+  return 'No results yet';
+}
+
+/** app v1.23: each kind of trade with its state — only proven and trial kinds use money. */
+function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; total: number; ctl: BotControls }) {
+  const [busy, setBusy] = useState<PlaybookId | null>(null);
+  const list = bot?.evidence?.list ?? null;
+  const shadowOpen = (bot?.shadow?.trades ?? []).filter((t) => t.status === 'open').length;
+  const quickMin = minPositionFor(0.004, (v) => estimateCharges('intraday', 1, v));
+  const toggle = (id: PlaybookId, off: boolean) => {
+    setBusy(id);
+    void ctl
+      .playbook(id, off)
+      .then(() => toast(`${PLAYBOOK_LABEL[id]}: ${off ? 'switched off' : 'switched on'}${ctl.cloud ? ' — on your server' : ''}`, 'ok'))
+      .catch((e: unknown) => toast(errorMessage(e), 'err'))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <section class="card" data-testid="bot-kinds">
+      <h2>Kinds of trade</h2>
+      <p class="tiny muted">
+        Each kind is judged on its own results — its finished trades and its past test on days it never saw, counted cautiously. Only <b>proven</b> kinds ({RISK_SHARE.proven * 100}% of the money at risk a trade) and <b>trial</b> kinds ({RISK_SHARE.trial * 100}%) use money; the others are followed as shadow trades (no money, no alerts) until they show an edge after charges.
+      </p>
+      {!list ? (
+        <p class="small muted">It rates its kinds of trade at its next run{ctl.cloud ? ' (if this stays empty, your server still runs an older version)' : ''}.</p>
+      ) : (
+        <div class="kinds-table">
+          {list.map((e) => (
+            <div class="kind-row" data-kind={e.id} data-state={e.state} key={e.id}>
+              <div class="row" style={{ gap: '8px' }}>
+                <b class="grow small">{PLAYBOOK_LABEL[e.id]}</b>
+                <span class={`focus ${STATE_CLASS[e.state]}`}>{STATE_TEXT[e.state]}</span>
+              </div>
+              <div class="tiny muted">{kindLine(e)}</div>
+              <div class="tiny">{e.why}</div>
+              <button class="btn small kind-toggle" type="button" data-testid={`kind-toggle-${e.id}`} disabled={!ctl.canControl || busy === e.id} onClick={() => toggle(e.id, e.state !== 'off')}>
+                {e.state === 'off' ? 'Switch on' : 'Switch off'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {shadowOpen > 0 && (
+        <p class="tiny muted" data-testid="bot-shadow">
+          {shadowOpen} shadow trade{shadowOpen === 1 ? '' : 's'} open — followed with no money.
+        </p>
+      )}
+      {maxPositionFor(total) < quickMin && (
+        <p class="tiny bot-gap" data-testid="bot-small-money">
+          With {formatINR(total, 0)} it skips the Rising now quick trades: with their 0.4% safety net, Upstox's charges would be more than a quarter of the risk on any trade below {formatINR(quickMin, 0)}.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** app v1.23: the drawdown brake stopped it — no new trades until Resume. */
+function DrawdownNote({ bot, ctl }: { bot: BotState | null | undefined; ctl: BotControls }) {
+  const [busy, setBusy] = useState(false);
+  const d = bot?.ddStop;
+  if (!d) return null;
+  const resume = () => {
+    setBusy(true);
+    void ctl
+      .resume()
+      .then(() => toast('Resumed — it trades again', 'ok'))
+      .catch((e: unknown) => toast(errorMessage(e), 'err'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div class="small bot-gap" data-testid="bot-drawdown">
+      ⏸ Stopped: its money fell {DRAWDOWN.stopAtPct}% below its best ({formatINR(d.peak, 0)} → {formatINR(d.total, 0)}). It opens no new trades until you press Resume; open trades keep their safety nets. Look at "Kinds of trade" first.
+      <div style={{ marginTop: '8px' }}>
+        <button class="btn small" type="button" data-testid="bot-resume" disabled={!ctl.canControl || busy} onClick={resume}>
+          Resume
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** One open trade with a live progress bar: safety net ← buy price → target. */
 function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: number }) {
   const flash = useFlash(ltp);
@@ -330,6 +425,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
       <div class="row">
         <span class={`chip ${t.side === 'long' ? 'day buy' : 'day sell'}`}>{t.side === 'long' ? '▲ BUY' : '▼ SELL first'}</span>
         <b class="bt-sym">{t.symbol}</b>
+        {t.state === 'trial' && <span class="chip flag">trial size</span>}
         {t.explore && <span class="chip flag">test trade</span>}
         <span class="spacer" />
         <span class={`price ${flash}`}>₹{formatNumberIN(px)}</span>
@@ -355,7 +451,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
         <span>{t.side === 'long' ? `target ₹${formatNumberIN(t.target)}` : `safety ₹${formatNumberIN(t.stop0)}`}</span>
       </div>
       <div class="tiny bt-why">
-        {Math.round(t.chance * 100)}% chance · {STRATEGY_LABEL[t.strategy]} · {t.reasons.slice(0, 2).join(' · ')}
+        {PLAYBOOK_LABEL[playbookOf(t)]}{t.state ? ` · ${t.state === 'proven' ? 'proven kind' : 'trial kind'}` : ''}{t.chargesR !== undefined ? ` · charges ${t.chargesR.toFixed(2)} R` : ''} · {t.reasons.slice(0, 2).join(' · ')}
         {t.stop !== t.stop0 && <span class="ok-text"> · {locked > 0 ? `safety net raised to ₹${formatNumberIN(t.stop)} — at least ${formatINR(locked * qty, 0)} profit kept` : 'safety net moved to the buy price — can no longer lose'}</span>}
       </div>
       <button class="btn small" type="button" data-testid="bot-copy" style={{ marginTop: '6px' }} onClick={() => setCopy(!copy)}>
