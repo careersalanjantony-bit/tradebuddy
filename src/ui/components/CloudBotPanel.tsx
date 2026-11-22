@@ -12,6 +12,7 @@ import { getLocal } from '../../storage/local';
 import { useLocal, useNow } from '../hooks';
 import { Icon } from './Icon';
 import { toast } from './Motion';
+import type { PlaybookId } from '../../bot/playbooks';
 
 /**
  * App v1.22 — the cloud auto-trader on screen. When the auto-trader runs on the user's server, the
@@ -37,6 +38,10 @@ export interface BotControls {
   rules(patch: Partial<ProtectRules>): Promise<void>;
   reset(forget: boolean, startCash: number): Promise<void>;
   protectTest(): Promise<{ ok: boolean; days: number }>;
+  /** app v1.23: switch one kind of trade off / on again */
+  playbook(id: PlaybookId, off: boolean): Promise<void>;
+  /** app v1.23: trade again after the drawdown brake stopped it */
+  resume(): Promise<void>;
 }
 
 const command = async (c: BotCommand): Promise<unknown> => (await callBackground('cloudbot:command', { command: c })).result;
@@ -46,7 +51,7 @@ export function botControls(link: BotCloudLink | null | undefined): BotControls 
     const no = async () => {
       throw new Error('The auto-trader is being moved to your server — wait a moment.');
     };
-    return { cloud: true, canControl: false, why: 'Being moved to your server…', enable: no, amount: no, rules: no, reset: no, protectTest: no };
+    return { cloud: true, canControl: false, why: 'Being moved to your server…', enable: no, amount: no, rules: no, reset: no, protectTest: no, playbook: no, resume: no };
   }
   if (link?.mode === 'cloud') {
     const snap = link.snapshot;
@@ -61,6 +66,8 @@ export function botControls(link: BotCloudLink | null | undefined): BotControls 
       rules: async (rules) => void (await command({ type: 'rules', rules })),
       reset: async (forget, startCash) => void (await command({ type: 'reset', forget, startCash })),
       protectTest: async () => (await command({ type: 'protect-test' })) as { ok: boolean; days: number },
+      playbook: async (playbook, off) => void (await command({ type: 'playbook', playbook, off })),
+      resume: async () => void (await command({ type: 'resume' })),
     };
   }
   return {
@@ -72,6 +79,8 @@ export function botControls(link: BotCloudLink | null | undefined): BotControls 
     rules: async (rules) => void (await callBackground('bot:rules', { rules })),
     reset: async (forget, startCash) => void (await callBackground('bot:reset', { forget, startCash })),
     protectTest: () => callBackground('bot:test'),
+    playbook: async (playbook, off) => void (await callBackground('bot:playbook', { playbook, off })),
+    resume: async () => void (await callBackground('bot:resume')),
   };
 }
 

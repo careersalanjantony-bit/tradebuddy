@@ -40,6 +40,36 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.23.0 (auto-trader: evidence first)
+
+The auto-trader (pretend money) now trades only what has shown an edge after charges — the design, the exact
+numbers and why: [docs/AUTO_TRADER_PLAN.md](docs/AUTO_TRADER_PLAN.md). No rule can promise a profit; if no kind
+of trade has proven itself, it does not trade.
+
+- **Each kind of trade is judged on its own** (`src/bot/playbooks.ts`, `src/bot/evidence.ts`): day-trade buy
+  signals, Rising now, the older risers list, top picks, Falling now, the "For short selling" list,
+  breakouts and the Intraday scanner's BUY. Its finished trades (before charges, the newest 60) and its past
+  test on days it never saw (counted as at most 30 trades, minus 0.05 R) give a cautious **safe estimate**.
+  **Proven** (30 trades, +0.10 R or better) and **trial** (0 R or better, with 20 trades or a counted test)
+  kinds use money; the others are followed as **shadow trades** in a separate pretend wallet — no money, no
+  alerts — until they show an edge. A kind whose newest 20 trades average below −0.05 R is **paused** until
+  they reach +0.10 R. The Intraday BUY also waits until the scanner's own record is proven (app 1.20.2).
+- **Size and limits** (`src/bot/policy.ts`): 0.5 % of the money at risk on a proven kind, 0.25 % on a trial
+  kind, never more than half the daily loss limit; all open trades together at most 2 %; at most 2 open
+  trades per industry. Replaces the "no limits" sizing of 1.8 (a quarter of Kelly from a guessed chance)
+  and the 1-in-8 test trades.
+- **Real charges:** Upstox's charges for the trade's own size; a trade whose charges are more than a quarter
+  of its risk is skipped, and its kind's safe estimate minus the charges must still be +0.05 R. With a 0.4 %
+  safety net (the Rising now quick trade) that needs a ₹72,900 trade — about ₹4.9 lakh of money.
+- **Market gates:** no new buys while the market is falling, no new sell-first trades while it is rising —
+  the alerts' own rules (`marketGate`, `marketRising`). Two losing trades of one kind stop it for the day.
+- **Drawdown brake:** half size 4 % below its best money, no new trades 8 % below until **Resume**.
+- **Auto-trader screen:** a **Kinds of trade** card (state, results before and after charges, why, a switch to
+  turn a kind off), the drawdown stop with Resume, "trial size" on open trades. On the server (1.22) the
+  same: two new controls (`playbook`, `resume`) from the controlling phone; `/v1/plans` lists the kinds.
+- Nothing is lost on the update: its money, trades and learning stay; its past finished trades become the
+  first evidence of their kinds.
+
 ## New in 1.22.0 (cloud auto-trader)
 
 - **The auto-trader can run on your server**, also with the app closed or the phone off. Auto-trader →

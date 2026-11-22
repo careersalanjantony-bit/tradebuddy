@@ -395,3 +395,8 @@
 /* review fix (1.20.2): the Intraday alerts' own record, and SELL marked practice-only until proven */
 .intra-record { margin: 4px 0 8px; }
 .chip.intra-practice { font-size: 10.5px; padding: 1px 7px; color: var(--warn-ink); border-color: currentColor; }
+
+/* app v1.23: the auto-trader's kinds of trade (the state chips reuse .focus) */
+.kinds-table { margin-top: var(--space-2); border-top: 1px solid var(--border); }
+.kind-row { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.kind-row .kind-toggle { justify-self: start; margin-top: 2px; }

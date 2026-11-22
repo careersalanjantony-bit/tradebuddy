@@ -5,6 +5,7 @@ import { botDigest, botView, canonicalJson, classifyCutover, parseCommand, summa
 import { BotConflictError, BotElsewhereError, botReset, botSetAmount, botSetEnabled, botSetRules, newBot, runBot, setBotGate, setBotObserver, type BotRunInfo, type BotState, type BotTrade } from '../src/background/botJobs';
 import { istEpoch } from '../src/lib/time';
 import { DEFAULT_SETTINGS } from '../src/storage/defaults';
+import { provenRecord } from './botHelpers';
 
 /** App v1.22 — the cloud auto-trader's shared rules: the comparison, the checks, and the one-writer gate. */
 
@@ -62,6 +63,11 @@ describe('what the server accepts from a phone', () => {
     expect(() => parseCommand({ type: 'rules', rules: { giveBack: 0.9 } })).toThrow(/Unknown protection/);
     expect(() => parseCommand({ type: 'order', side: 'buy' })).toThrow(/Unknown control/); // nothing like an order exists
     expect(() => parseCommand({ type: 'reset', forget: 'yes', startCash: 100_000 })).toThrow();
+    // app v1.23: switch a kind of trade off / on, resume after the drawdown stop
+    expect(parseCommand({ type: 'playbook', playbook: 'rise-flow', off: true })).toEqual({ type: 'playbook', playbook: 'rise-flow', off: true });
+    expect(parseCommand({ type: 'resume', extra: 1 })).toEqual({ type: 'resume' });
+    expect(() => parseCommand({ type: 'playbook', playbook: 'options', off: true })).toThrow(/Unknown kind of trade/);
+    expect(() => parseCommand({ type: 'playbook', playbook: 'day-buy', off: 'yes' })).toThrow(/true or false/);
   });
   it('the screen copy keeps every open trade, the latest finished ones, today’s fills and the latest log', () => {
     const bot = newBot(1, newBrain(), 100_000);
@@ -77,6 +83,28 @@ describe('what the server accepts from a phone', () => {
   });
 });
 
+describe('app v1.23: shadow trades and evidence in the shared state', () => {
+  const shadowOf = (trades: BotTrade[]) => ({ wallet: newBot(1).wallet, trades, day: { date: '2026-11-23', opened: trades.length } });
+  it('the state check accepts shadow trades and evidence, and refuses broken ones', () => {
+    const bot = { ...newBot(1, newBrain(), 100_000), shadow: shadowOf([trade('S1', 'open', { shadow: true })]), samples: { 'day-buy': [{ at: 1, grossR: 1, netR: 0.9 }] } };
+    expect(validateBotState(JSON.parse(JSON.stringify(bot)))).toBeTruthy();
+    expect(() => validateBotState({ ...bot, shadow: { ...bot.shadow, wallet: { v: 2 } } })).toThrow(/shadow wallet/);
+    expect(() => validateBotState({ ...bot, shadow: { ...bot.shadow, trades: [trade('X', 'open'), trade('X', 'closed')] } })).toThrow(/same id \(shadow trades\)/);
+    expect(() => validateBotState({ ...bot, samples: { options: [] } })).toThrow(/Unknown kind of trade/);
+    expect(() => validateBotState({ ...bot, samples: { 'day-buy': [{ at: 1, grossR: 'big', netR: 1 }] } })).toThrow(/evidence of day-buy/);
+    expect(() => validateBotState({ ...bot, samples: { 'day-buy': Array.from({ length: 61 }, () => ({ at: 1, grossR: 1, netR: 1 })) } })).toThrow(/too many/);
+  });
+  it('the screen copy keeps open shadow trades and the latest 30 finished, without their fills', () => {
+    const sh = shadowOf([trade('SO', 'open', { shadow: true }), ...Array.from({ length: 50 }, (_, i) => trade(`SC${i}`, 'closed', { shadow: true }))]);
+    const fills = Array.from({ length: 40 }, (_, i) => ({ key: K, symbol: 'X', side: 'sell', qty: 1, price: 1, at: i, date: '2026-11-23', reason: 'manual' }));
+    const v = botView({ ...newBot(1), shadow: { ...sh, wallet: { ...sh.wallet, fills: fills as never } } }, '2026-11-23');
+    expect(v.shadow!.trades.filter((t) => t.status === 'open').map((t) => t.id)).toEqual(['SO']);
+    expect(v.shadow!.trades.filter((t) => t.status === 'closed')).toHaveLength(30);
+    expect(v.shadow!.wallet.fills).toEqual([]);
+    expect(botView(newBot(1), '2026-11-23').shadow).toBeUndefined();
+  });
+});
+
 describe('one writer: the gate, the versions, the old prices', () => {
   let chrome: ReturnType<typeof installChromeMock>;
   const quote = (ltp: number, fetchedAt = NOW) => ({ [K]: { key: K, ltp, open: 100, high: 101, low: 99, volume: 1000, prevClose: 100, fetchedAt } });
@@ -85,7 +113,7 @@ describe('one writer: the gate, the versions, the old prices', () => {
     setBotGate(null);
     setBotObserver(null);
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
-    await chrome.storage.local.set({ settings: structuredClone(DEFAULT_SETTINGS), marketCalendar: null, watchlist: [], scanLists: null, auth: { status: 'logged_out' }, bot: { ...newBot(NOW - 3_600_000, newBrain(), 100_000), lastRun: NOW - 60_000, rev: 5 } });
+    await chrome.storage.local.set({ settings: structuredClone(DEFAULT_SETTINGS), marketCalendar: null, watchlist: [], scanLists: null, auth: { status: 'logged_out' }, bot: { ...newBot(NOW - 3_600_000, newBrain(), 100_000), samples: provenRecord('day-buy'), lastRun: NOW - 60_000, rev: 5 } });
     await chrome.storage.session.set({ quotes: quote(100) });
   });
   const bot = async () => (await chrome.storage.local.get('bot')).bot as BotState;

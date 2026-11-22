@@ -25,6 +25,8 @@ export async function trackedKeys(): Promise<string[]> {
   // the auto-trader's open trades (app v1.6)
   const bot = await getLocal('bot');
   for (const t of bot?.trades ?? []) if (t.status === 'open') keys.add(t.key);
+  // its open shadow trades (app v1.23: followed with no money, they need live prices too)
+  for (const t of bot?.shadow?.trades ?? []) if (t.status === 'open') keys.add(t.key);
   for (const k of watchlist ?? []) keys.add(k);
   for (const k of universe) keys.add(k);
   return [...keys];

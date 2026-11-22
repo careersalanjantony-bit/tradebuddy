@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { learnFrom, newBrain } from '../../src/bot/brain';
 import { botDigest, summarizeBot, validateBotState } from '../../src/bot/cloud';
 import { newBot, runBot, type BotState, type BotTrade } from '../../src/background/botJobs';
+import { provenRecord } from '../../tests/botHelpers';
 import { istEpoch } from '../../src/lib/time';
 import { placeOrder } from '../../src/wallet/wallet';
 import { startServer, type RunningServer } from '../src/engine';
@@ -120,7 +121,8 @@ function phoneBot(): BotState {
   if (!r.ok || !r.fill) throw new Error('no fill');
   const open: BotTrade = { id: 'P-OPEN', key: CCC, symbol: 'CCC', strategy: 'swing', side: 'long', qty: 10, entry: r.fill.price, stop: 900, stop0: 900, target: 1_100, openedAt: t0, date: '2026-11-20', x: [], chance: 0.6, prior: 0.6, riskRupees: 1_000, explore: false, reasons: ['top pick'], sizeWhy: '', status: 'open', best: r.fill.price, worst: r.fill.price, product: 'delivery' };
   const done: BotTrade = { ...open, id: 'P-DONE', key: AAA, symbol: 'AAA', strategy: 'day-buy', status: 'closed', closedAt: t0 - 3_600_000, exitPrice: 1_012, pnl: 1_200, r: 1.4, exitWhy: 'target reached', lesson: 'Learned: …', product: 'intraday' };
-  return { ...bot, wallet: r.wallet, trades: [done, open], log: [...bot.log, { at: t0, kind: 'open', text: 'Bought 10 CCC at ₹1,000.00' }], lastRun: t0 + 60_000, lastDecideAt: t0, rev: 7, updatedAt: t0 + 60_000 };
+  // app v1.23: its day-trade buy signals have a proven record (30 finished trades), so it may trade them
+  return { ...bot, wallet: r.wallet, trades: [done, open], samples: provenRecord('day-buy'), log: [...bot.log, { at: t0, kind: 'open', text: 'Bought 10 CCC at ₹1,000.00' }], lastRun: t0 + 60_000, lastDecideAt: t0, rev: 7, updatedAt: t0 + 60_000 };
 }
 
 let A: { id: string; cred: string }; // the owner's phone (moves it, controls it)
@@ -352,6 +354,24 @@ describe('the cloud auto-trader: one auto-trader, one writer', () => {
     const audit = (await call(A.cred, 'GET', '/v1/bot/audit')).body.audit as Array<{ action: string; ok: boolean; device_id: string }>;
     expect(audit.filter((x) => x.action === 'command:enable' && x.ok)).toHaveLength(2);
     expect(audit.some((x) => x.device_id === B.id && x.ok)).toBe(false);
+  });
+
+  it('app v1.23: switching a kind of trade off and Resume come from the controlling phone only', async () => {
+    expect(await call(B.cred, 'POST', '/v1/bot/commands', { requestId: 'cmd-b-kind-0001', command: { type: 'playbook', playbook: 'rise-flow', off: true } })).toMatchObject({ status: 403, body: { error: 'not_controller' } });
+    const off = await call(A.cred, 'POST', '/v1/bot/commands', { requestId: 'cmd-a-kind-0001', command: { type: 'playbook', playbook: 'rise-flow', off: true } });
+    expect(off).toMatchObject({ status: 200, body: { ok: true, type: 'playbook' } });
+    let bot = (await local('bot')) as BotState;
+    expect(bot.playbooks?.['rise-flow']).toEqual({ off: true });
+    expect(bot.evidence?.list.find((e) => e.id === 'rise-flow')?.state).toBe('off');
+    expect(bot.log.at(-1)!.text).toMatch(/Rising today \(older list\): switched off .*\(from Alan phone\)/);
+    expect((await call(A.cred, 'POST', '/v1/bot/commands', { requestId: 'cmd-a-kind-0002', command: { type: 'playbook', playbook: 'rise-flow', off: false } })).status).toBe(200);
+    expect(((await local('bot')) as BotState).playbooks?.['rise-flow']).toBeUndefined();
+    const resume = await call(A.cred, 'POST', '/v1/bot/commands', { requestId: 'cmd-a-resume-01', command: { type: 'resume' } });
+    expect(resume).toMatchObject({ status: 200, body: { ok: true, type: 'resume' } });
+    bot = (await local('bot')) as BotState;
+    expect(bot.ddStop).toBeNull();
+    expect(bot.log.at(-1)!.text).toMatch(/^Resumed after the drawdown stop \(from Alan phone\)/);
+    expect((await call(A.cred, 'POST', '/v1/bot/commands', { requestId: 'cmd-a-kind-0003', command: { type: 'playbook', playbook: 'futures', off: true } }))).toMatchObject({ status: 400 });
   });
 
   it('starting again needs the version you looked at; an outdated one is refused, the right one backs up first', async () => {

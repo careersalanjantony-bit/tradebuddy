@@ -1,3 +1,5 @@
+import { NIFTY_KEY } from '../data/indices';
+import type { Quote } from '../data/quotesParse';
 import { intradayCharges } from '../daytrade/rules';
 import type { Bars } from '../daytrade/types';
 import type { RiseCtx, Running } from '../rising/momentum';
@@ -338,6 +340,37 @@ export function marketGate(x: { niftyDayPct: number | null; niftyFromOpenPct: nu
   if (x.niftyFromOpenPct !== null && x.niftyFromOpenPct <= -0.3) return { weak: true, text: `NIFTY 50 ${f(x.niftyFromOpenPct)} since the open` };
   if (x.listFromOpenPct !== null && x.listFromOpenPct <= -0.3) return { weak: true, text: `the scanned stocks ${f(x.listFromOpenPct)} since the open on average` };
   return { weak: false, text: '' };
+}
+
+/** The market gate's inputs. */
+export interface MarketInputs {
+  niftyDayPct: number | null;
+  niftyFromOpenPct: number | null;
+  listFromOpenPct: number | null;
+}
+
+/**
+ * App v1.23 — the market gate's inputs from the live prices: NIFTY 50 against yesterday's close and today's
+ * open, and the average move since the open of `keys` (at least 20 with a price under a minute old).
+ * Shared by Rising now and the auto-trader, so both judge the market the same way.
+ */
+export function marketInputs(quotes: Record<string, Quote | undefined>, keys: Iterable<string>, now: number): MarketInputs {
+  const fresh = (q: Quote | undefined): q is Quote => !!q && q.ltp > 0 && now - q.fetchedAt < 60_000;
+  let sum = 0;
+  let cnt = 0;
+  for (const k of keys) {
+    const q = quotes[k];
+    if (fresh(q) && q.open && q.open > 0) {
+      sum += (q.ltp / q.open - 1) * 100;
+      cnt++;
+    }
+  }
+  const nifty = quotes[NIFTY_KEY];
+  return {
+    niftyDayPct: fresh(nifty) && nifty.prevClose ? (nifty.ltp / nifty.prevClose - 1) * 100 : null,
+    niftyFromOpenPct: fresh(nifty) && nifty.open ? (nifty.ltp / nifty.open - 1) * 100 : null,
+    listFromOpenPct: cnt >= 20 ? sum / cnt : null,
+  };
 }
 
 /** One suggestion and where its price was 15 and 30 minutes later (the app's own record). */

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installChromeMock } from './chromeMock';
 import { newBrain, type IdeaContext } from '../src/bot/brain';
 import { BOT_START, decide, type Book, type Idea } from '../src/bot/policy';
+import { decideCtx } from './botHelpers';
 import { DEFAULT_PROTECT, checkDay, keepLevel, manageTrade, maxOpenFor, maxPositionFor, protectRules, skipIdea, type TradeView } from '../src/bot/protect';
 import { runProtectTest, type ProtectTestDay } from '../src/bot/protectTest';
 import { copySteps } from '../src/bot/copy';
@@ -84,35 +85,35 @@ describe('each trade: safety net follows the price, half at 1× the risk, quick 
 
 describe('new trades with the protection', () => {
   const ctx = (o: Partial<IdeaContext>): IdeaContext => ({ strategy: 'day-buy', prior: 0.6, movePct: 0, pressure: 0, breadth: 0, t: 630, news: 0, vwapPct: 0, riskPct: 1, ...o });
-  const idea = (key: string, over: Partial<Idea> = {}): Idea => ({ key, symbol: key, strategy: 'day-buy', side: 'long', price: 1000, stop: 990, target: 1030, ctx: ctx({}), reasons: ['t'], ...over });
+  const idea = (key: string, over: Partial<Idea> = {}): Idea => ({ key, symbol: key, strategy: 'day-buy', playbook: 'day-buy', side: 'long', price: 1000, stop: 990, target: 1030, ctx: ctx({}), reasons: ['t'], ...over });
   const book = (over: Partial<Book> = {}): Book => ({ equity: 100_000, free: 100_000, openKeys: [], openCount: 0, newToday: 0, todayPnl: 0, t: 630, rules: R, halted: null, swingValue: 0, ...over });
   it('one stock per ₹25,000 (1–10), each at most a fair share of the money', () => {
     expect([maxOpenFor(10_000), maxOpenFor(100_000), maxOpenFor(5_000_000)]).toEqual([1, 4, 10]);
     expect(maxPositionFor(100_000)).toBe(35_000);
     expect(maxPositionFor(5_000_000)).toBe(750_000);
     const ideas = ['A', 'B', 'C', 'D', 'E', 'F'].map((k) => idea(k));
-    const plan = decide(newBrain(), ideas, book(), 'no-explore-seed-1');
+    const plan = decide(newBrain(), ideas, book(), decideCtx());
     expect(plan.decisions.length).toBeLessThanOrEqual(4);
     for (const d of plan.decisions) expect(d.qty * d.idea.price).toBeLessThanOrEqual(35_000);
-    expect(decide(newBrain(), ideas, book({ openCount: 4, openKeys: ['X1', 'X2', 'X3', 'X4'] }), 's').note).toMatch(/Holding 4 trades — the most for ₹1,00,000/);
+    expect(decide(newBrain(), ideas, book({ openCount: 4, openKeys: ['X1', 'X2', 'X3', 'X4'] }), decideCtx()).note).toMatch(/Holding 4 trades — the most for ₹1,00,000/);
   });
   it('stopped for the day = nothing new', () => {
-    expect(decide(newBrain(), [idea('A')], book({ halted: 'lock' }), 's').note).toMatch(/kept today's profit/);
-    expect(decide(newBrain(), [idea('A')], book({ halted: 'loss' }), 's').decisions).toHaveLength(0);
+    expect(decide(newBrain(), [idea('A')], book({ halted: 'lock' }), decideCtx()).note).toMatch(/kept today's profit/);
+    expect(decide(newBrain(), [idea('A')], book({ halted: 'loss' }), decideCtx()).decisions).toHaveLength(0);
   });
   it('few-days picks only up to their share (30 %)', () => {
-    const sw = idea('S', { strategy: 'swing', stop: 920, target: 1150, ctx: ctx({ strategy: 'swing', prior: 0.7 }) });
-    const d = decide(newBrain(), [sw], book(), 'no-explore-seed-1').decisions[0]!;
+    const sw = idea('S', { strategy: 'swing', playbook: 'swing-pick', stop: 920, target: 1150, ctx: ctx({ strategy: 'swing', prior: 0.7 }) });
+    const d = decide(newBrain(), [sw], book(), decideCtx()).decisions[0]!;
     expect(d.qty * 1000).toBeLessThanOrEqual(30_000);
-    expect(decide(newBrain(), [sw], book({ swingValue: 30_000 }), 'no-explore-seed-1').decisions).toHaveLength(0);
+    expect(decide(newBrain(), [sw], book({ swingValue: 30_000 }), decideCtx()).decisions).toHaveLength(0);
   });
   it('skips bad news and trades against the whole market', () => {
     expect(skipIdea({ news: -1, breadth: 0 }, R)).toMatch(/news/);
     expect(skipIdea({ news: 0, breadth: -0.5 }, R)).toMatch(/market/);
     expect(skipIdea({ news: -1, breadth: -1 }, { ...R, on: false })).toBeNull();
-    const plan = decide(newBrain(), [idea('A', { ctx: ctx({ news: -1 }) }), idea('B', { ctx: ctx({ breadth: -0.6 }) })], book(), 's');
+    const plan = decide(newBrain(), [idea('A', { ctx: ctx({ news: -1 }) }), idea('B', { ctx: ctx({ breadth: -0.6 }) })], book(), decideCtx());
     expect(plan.decisions).toHaveLength(0);
-    expect(plan.note).toMatch(/Skipped 2 ideas/);
+    expect(plan.note).toMatch(/skipped 2 ideas \(news against it, or the whole market going the other way\)/);
   });
 });
 

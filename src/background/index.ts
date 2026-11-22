@@ -48,7 +48,7 @@ import { scanShorts } from './shortJobs';
 import { scanBreakouts, testBreakouts } from './breakoutJobs';
 import { testBreakoutsIfDue } from './breakoutJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
-import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas } from './botJobs';
+import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas, botResume, botSetPlaybook } from './botJobs';
 import { botBeforeUnpair, cancelMove, cloudBotCommand, cloudBotForceLocal, cloudBotJoin, cloudBotLeave, cloudBotMove, cloudBotPreview, cloudBotRelease, installPhoneBotGate, refreshCloudBot, sendMove, startCloudBotChecks } from './cloudBotJobs';
 import { testProtect } from './botTest';
 import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
@@ -391,6 +391,8 @@ const handlers: Handlers = {
     void testProtect().catch(() => undefined);
     return r;
   },
+  'bot:playbook': async ({ playbook, off }) => (await botSetPlaybook(playbook, off), { ok: true }),
+  'bot:resume': async () => (await botResume(), { ok: true }),
   'cloudbot:refresh': async () => refreshCloudBot(),
   'cloudbot:preview': async () => cloudBotPreview(),
   'cloudbot:move': async ({ choice, preview, fresh }) => cloudBotMove(choice, preview, fresh),

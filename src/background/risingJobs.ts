@@ -17,8 +17,7 @@ import { getLocal, getSettings, setLocal } from '../storage/local';
 import { getSession, setSession } from '../storage/session';
 import { claimAlert } from './ideaGate';
 import { catalystFor, catalystLookup, type NseFiles } from './earlyJobs';
-import { lookAt, marketGate, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage, type SuggestionCheck } from '../early/early';
-import { NIFTY_KEY } from '../data/indices';
+import { lookAt, marketGate, marketInputs, scoreEarly, setupCheck, sizeTrade, stepEarly, type EarlyPlan, type EarlyState, type Size, type Stage, type SuggestionCheck } from '../early/early';
 import { DRIVE, drivePlan, readDrive, scoreDrive, type DriveState } from '../early/preopen';
 import type { Catalyst } from '../early/catalyst';
 import { prevDays } from './mlJobs';
@@ -317,25 +316,13 @@ export async function scanRising(now = Date.now()): Promise<number> {
     const keys = [...new Set([...scan.keys, ...held.map((h) => h.key)])];
     for (const k of keys) if (!state.tracks.has(k)) state.tracks.set(k, { bars: empty(), cur: null, load: 'no', retryAt: 0, prev: null, since: null, sincePrice: null, early: null });
     loadMissing(keys, now);
-    // the whole market: average move since the open of every scanned stock with a live price
-    let sum = 0;
-    let cnt = 0;
     const fresh = (q: Quote | undefined): q is Quote => !!q && q.ltp > 0 && now - q.fetchedAt < 60_000;
-    for (const k of scan.keys) {
-      const q = quotes[k];
-      if (fresh(q) && q.open && q.open > 0) {
-        sum += (q.ltp / q.open - 1) * 100;
-        cnt++;
-      }
-    }
-    const market = cnt >= 20 ? sum / cnt : null;
+    // the whole market: average move since the open of every scanned stock with a live price, and NIFTY
+    // (app v1.23: the same helper the auto-trader uses)
+    const marketIn = marketInputs(quotes, scan.keys, now);
+    const market = marketIn.listFromOpenPct;
     // app v1.16.2: no buy suggestions against a falling market
-    const nifty = quotes[NIFTY_KEY];
-    const gate = marketGate({
-      niftyDayPct: fresh(nifty) && nifty.prevClose ? (nifty.ltp / nifty.prevClose - 1) * 100 : null,
-      niftyFromOpenPct: fresh(nifty) && nifty.open ? (nifty.ltp / nifty.open - 1) * 100 : null,
-      listFromOpenPct: market,
-    });
+    const gate = marketGate(marketIn);
     // app v1.15: each sector's average move since the open (3+ stocks with a live price)
     const secSum = new Map<string, [number, number]>();
     for (const k of scan.keys) {

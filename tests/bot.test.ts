@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { calibrate, chanceFor, emaSeries, historyPairs, indicatorsOf, rsiSeries, shortSellList, shortSetupAt } from '../src/advisor/shortSell';
 import { features, learnFrom, newBrain, predict, strategyFocus, topLessons, type IdeaContext } from '../src/bot/brain';
-import { BOT_START, decide, hash01, MAX_RISK, MIN_RISK, riskFraction, scoreIdea, trailStop, type Book, type Idea } from '../src/bot/policy';
+import { BOT_START, decide, MAX_CHARGES_R, MAX_OPEN_RISK, MIN_POSITION, minPositionFor, RISK_SHARE, riskShareFor, scoreIdea, trailStop, type Book, type Idea } from '../src/bot/policy';
+import { drawdownFactor, drawdownOf, protectRules } from '../src/bot/protect';
+import { estimateCharges } from '../src/wallet/wallet';
+import { allIn, decideCtx, ev } from './botHelpers';
 import { newBot, settleClosed, weekdaysBetween, type BotTrade } from '../src/background/botJobs';
 import { placeOrder, processWallet, type MarketCtx } from '../src/wallet/wallet';
 import type { Candle } from '../src/indicators/types';
@@ -43,66 +46,121 @@ describe('auto-trader brain', () => {
   });
 });
 
-describe('auto-trader decisions and size (no limits, app v1.8)', () => {
-  const book = (over: Partial<Book> = {}): Book => ({ equity: BOT_START, free: BOT_START, openKeys: [], openCount: 0, newToday: 0, todayPnl: 0, t: 630, ...over });
-  const idea = (key: string, prior: number, over: Partial<Idea> = {}): Idea => ({ key, symbol: key, strategy: 'day-buy', side: 'long', price: 1000, stop: 990, target: 1020, ctx: ctx({ strategy: 'day-buy', prior, riskPct: 1 }), reasons: ['test'], ...over });
+describe('auto-trader decisions and size (evidence first, app v1.23)', () => {
+  const R = protectRules(undefined);
+  const book = (over: Partial<Book> = {}): Book => ({ equity: BOT_START, free: BOT_START, openKeys: [], openCount: 0, newToday: 0, todayPnl: 0, t: 630, rules: R, halted: null, swingValue: 0, openRisk: 0, ...over });
+  const idea = (key: string, over: Partial<Idea> = {}): Idea => ({ key, symbol: key, strategy: 'day-buy', playbook: 'day-buy', side: 'long', price: 1000, stop: 900, target: 1200, ctx: ctx({ strategy: 'day-buy', prior: 0.5, riskPct: 10 }), reasons: ['test'], ...over });
+  // the Rising now quick trade: +0.6 % / −0.4 %
+  const quick = (key: string, over: Partial<Idea> = {}) => idea(key, { strategy: 'rising', playbook: 'rise-strong', stop: 996, target: 1006, ctx: ctx({ strategy: 'rising', riskPct: 0.4 }), ...over });
 
-  it('risks a quarter of Kelly, between 0.25 % and 3 % of its money', () => {
-    expect(riskFraction(0.4, 1)).toBe(MIN_RISK);
-    expect(riskFraction(0.55, 2)).toBeCloseTo(0.03, 5); // quarter Kelly would be 8 %: capped at 3 %
-    expect(riskFraction(0.45, 1.5)).toBeCloseTo((0.45 - 0.55 / 1.5) * 0.25, 5); // ≈ 2.1 %
+  it('risks 0.5 % of its money on a proven kind, 0.25 % on a trial kind, never more than half the daily loss limit', () => {
+    const proven = decide(newBrain(), [idea('A')], book(), decideCtx()).decisions[0]!;
+    expect(proven.state).toBe('proven');
+    expect(proven.riskRupees).toBe(25_000); // 0.5 % of ₹50 lakh: 250 shares, ₹100 to the safety net
+    expect(proven.sizeWhy).toMatch(/^Proven kind: ₹25,000 at risk \(0\.5% of its money\)/);
+    const trial = decide(newBrain(), [idea('A')], book(), decideCtx({ evidence: allIn('trial') })).decisions[0]!;
+    expect(trial.riskRupees).toBe(12_500);
+    expect(trial.sizeWhy).toMatch(/Trial kind \(small size\)/);
+    const tight = decide(newBrain(), [idea('A')], book({ rules: { ...R, dayLossPct: 0.5 } }), decideCtx()).decisions[0]!;
+    expect(tight.riskRupees).toBe(12_500); // half of a 0.5 % day limit
+    expect(riskShareFor('proven', { ...R, on: false })).toBe(RISK_SHARE.proven);
   });
 
-  it('takes good ideas, best first, shares its free cash by how good each is, never more than it has', () => {
-    const wide = (k: string, p: number) => idea(k, p, { stop: 970, target: 1060 });
-    const plan = decide(newBrain(), [wide('A', 0.55), wide('B', 0.68), wide('C', 0.3)], book(), 'no-explore-seed-1');
-    const keys = plan.decisions.map((d) => d.idea.key);
-    expect(keys[0]).toBe('B');
-    expect(keys).toContain('A');
-    const total = plan.decisions.reduce((s, d) => s + d.qty * d.idea.price, 0);
-    expect(total).toBeLessThanOrEqual(BOT_START);
-    expect(total).toBeGreaterThan(BOT_START * 0.5); // it really uses its money
-    const a = plan.decisions.find((d) => d.idea.key === 'A')!;
-    const b = plan.decisions.find((d) => d.idea.key === 'B')!;
-    expect(a.qty).toBeLessThan(b.qty);
-    for (const d of plan.decisions) expect(d.riskRupees).toBeLessThanOrEqual(BOT_START * MAX_RISK + 1000);
+  it('all open trades together risk at most 2 % of the money', () => {
+    const d = decide(newBrain(), [idea('A')], book({ openRisk: BOT_START * 0.019 }), decideCtx()).decisions[0]!;
+    expect(d.riskRupees).toBeLessThanOrEqual(BOT_START * 0.001);
+    const full = decide(newBrain(), [idea('A')], book({ openRisk: BOT_START * MAX_OPEN_RISK }), decideCtx());
+    expect(full.decisions).toHaveLength(0);
+    expect(full.note).toMatch(/already risk 2% of the money/);
+    // several ideas at once share the 2 %
+    const many = decide(newBrain(), ['A', 'B', 'C', 'D', 'E', 'F'].map((k) => idea(k)), book(), decideCtx());
+    expect(many.decisions.reduce((s, x) => s + x.riskRupees, 0)).toBeLessThanOrEqual(BOT_START * MAX_OPEN_RISK);
   });
 
-  it('any amount: one strong idea may use (almost) all of its free cash', () => {
-    const plan = decide(newBrain(), [idea('A', 0.7)], book(), 'no-explore-seed-1');
-    const d = plan.decisions[0]!;
-    expect(d.qty * 1000).toBeGreaterThan(BOT_START * 0.9);
-    expect(d.qty * 1000 * 1.002).toBeLessThanOrEqual(BOT_START);
-    expect(d.sizeWhy).toMatch(/of its money/);
+  it('counts the real Upstox charges for its size: a small quick trade is skipped, the same trade with more money is taken', () => {
+    const small = decide(newBrain(), [quick('Q')], book({ equity: 25_000, free: 25_000 }), decideCtx());
+    expect(small.decisions).toHaveLength(0);
+    expect(small.note).toMatch(/charges would be more than a quarter of the risk/);
+    const big = decide(newBrain(), [quick('Q')], book(), decideCtx()).decisions[0]!;
+    expect(big.chargesR).toBeGreaterThan(0.08);
+    expect(big.chargesR).toBeLessThanOrEqual(MAX_CHARGES_R);
+    expect(big.edgeR).toBeCloseTo(0.3 - big.chargesR, 3);
+    // the smallest positions that keep the charges within a quarter of the risk (the plan's table)
+    const value = (v: number) => estimateCharges('intraday', 1, v);
+    expect(minPositionFor(0.004, value)).toBeGreaterThan(72_000);
+    expect(minPositionFor(0.004, value)).toBeLessThanOrEqual(73_000);
+    expect(minPositionFor(0.01, value)).toBeLessThanOrEqual(22_100);
+    expect(minPositionFor(0.02, value)).toBe(MIN_POSITION);
   });
 
-  it('no limit on open trades, trades a day or a losing day', () => {
-    const plan = decide(newBrain(), [idea('A', 0.7)], book({ openCount: 40, newToday: 60, todayPnl: -BOT_START * 0.1, free: 2_000_000 }), 'x');
+  it('takes a trade only when its kind’s safe estimate minus its charges is at least +0.05 R', () => {
+    const weak = decide(newBrain(), [quick('Q')], book(), decideCtx({ evidence: allIn('proven', 0.12) }));
+    expect(weak.decisions).toHaveLength(0);
+    expect(weak.note).toMatch(/worth less than \+0\.05 R after charges/);
+    expect(decide(newBrain(), [quick('Q')], book(), decideCtx({ evidence: allIn('proven', 0.2) })).decisions).toHaveLength(1);
+  });
+
+  it('no new buys while the market is falling, no new sell-first while it is rising', () => {
+    const short = idea('S', { side: 'short', strategy: 'short', playbook: 'short-scan', price: 1000, stop: 1100, target: 800, t1: 900, ctx: ctx({ strategy: 'short', riskPct: 10 }) });
+    const falling = decide(newBrain(), [idea('A'), short], book(), decideCtx({ market: { buys: 'NIFTY 50 −0.62% today', shorts: null } }));
+    expect(falling.decisions.map((d) => d.idea.key)).toEqual(['S']);
+    const onlyBuy = decide(newBrain(), [idea('A')], book(), decideCtx({ market: { buys: 'NIFTY 50 −0.62% today', shorts: null } }));
+    expect(onlyBuy.note).toMatch(/the market is falling \(NIFTY 50 −0\.62% today\)/);
+    const rising = decide(newBrain(), [idea('A'), short], book(), decideCtx({ market: { buys: null, shorts: 'NIFTY 50 +0.55% today' } }));
+    expect(rising.decisions.map((d) => d.idea.key)).toEqual(['A']);
+  });
+
+  it('only trial and proven kinds get money; the others are followed as shadow trades, off ones not at all', () => {
+    const evidence = { ...allIn('proven'), 'day-buy': ev('day-buy', 'watch', -0.1), 'rise-strong': ev('rise-strong', 'paused', -0.3), breakout: ev('breakout', 'off') };
+    const plan = decide(newBrain(), [idea('A'), quick('B'), idea('C', { strategy: 'breakout', playbook: 'breakout' })], book(), decideCtx({ evidence }));
+    expect(plan.decisions).toHaveLength(0);
+    expect(plan.shadow.map((x) => x.idea.key).sort()).toEqual(['A', 'B']);
+    const a = plan.shadow.find((x) => x.idea.key === 'A')!;
+    expect(a.riskRupees).toBe(12_500); // sized as a trial, so its charges are realistic
+    expect(a.why).toBe('watch (test)');
+    expect(plan.note).toMatch(/2 ideas of kinds not proven yet \(followed as shadow trades, no money\)/);
+    // two losing trades today: that kind is followed without money for the rest of the day
+    const braked = decide(newBrain(), [idea('A')], book(), decideCtx({ braked: new Set(['day-buy']) }));
+    expect(braked.decisions).toHaveLength(0);
+    expect(braked.shadow[0]!.why).toBe('two losing trades today');
+  });
+
+  it('one idea per stock: the kind with the better state wins', () => {
+    const evidence = { ...allIn('proven'), 'rise-flow': ev('rise-flow', 'watch', -0.2) };
+    const plan = decide(newBrain(), [idea('A', { strategy: 'rising', playbook: 'rise-flow' }), idea('A')], book(), decideCtx({ evidence }));
     expect(plan.decisions).toHaveLength(1);
+    expect(plan.decisions[0]!.idea.playbook).toBe('day-buy');
+    expect(plan.shadow).toHaveLength(0);
   });
 
-  it('keeps the time rules, one trade per stock, and waits when all money is in trades', () => {
-    expect(decide(newBrain(), [idea('A', 0.7)], book({ t: 9 * 60 + 20 }), 'x').decisions).toHaveLength(0);
-    expect(decide(newBrain(), [idea('A', 0.7)], book({ t: 14 * 60 + 45 }), 'x').decisions).toHaveLength(0);
-    expect(decide(newBrain(), [idea('A', 0.7, { strategy: 'swing', ctx: ctx({ strategy: 'swing', prior: 0.7 }) })], book({ t: 14 * 60 + 45 }), 'x').decisions).toHaveLength(1);
-    expect(decide(newBrain(), [idea('A', 0.7)], book({ openKeys: ['A'], openCount: 1 }), 'x').decisions).toHaveLength(0);
-    const broke = decide(newBrain(), [idea('A', 0.7)], book({ free: 1000 }), 'x');
+  it('at most 2 open trades in one industry', () => {
+    const industryOf = (k: string) => (k === 'Z' ? 'Pharma' : 'Banks');
+    const plan = decide(newBrain(), ['A', 'B', 'C', 'Z'].map((k) => idea(k)), book({ industries: { Banks: 1 } }), decideCtx({ industryOf }));
+    expect(plan.decisions.map((d) => d.idea.key).sort()).toEqual(['A', 'Z']);
+  });
+
+  it('the drawdown brake: half size from 4 % below its best, no new trades from 8 %', () => {
+    expect([drawdownFactor(drawdownOf(97, 100)), drawdownFactor(drawdownOf(96, 100)), drawdownFactor(drawdownOf(92, 100)), drawdownFactor(drawdownOf(120, 100))]).toEqual([1, 0.5, 0, 1]);
+    expect(decide(newBrain(), [idea('A')], book({ ddFactor: 0.5 }), decideCtx()).decisions[0]!.riskRupees).toBe(12_500);
+    const stopped = decide(newBrain(), [idea('A')], book({ ddFactor: 0, ddText: 'Stopped at −8%' }), decideCtx({ evidence: { ...allIn('proven'), 'rise-strong': ev('rise-strong', 'watch') } }));
+    expect(stopped.decisions).toHaveLength(0);
+    expect(stopped.note).toBe('Stopped at −8%');
+  });
+
+  it('no limit on trades a day, but it keeps the time rules, one trade per stock, and waits when all money is in trades', () => {
+    expect(decide(newBrain(), [idea('A')], book({ newToday: 60 }), decideCtx()).decisions).toHaveLength(1);
+    expect(decide(newBrain(), [idea('A')], book({ t: 9 * 60 + 20 }), decideCtx()).decisions).toHaveLength(0);
+    expect(decide(newBrain(), [idea('A')], book({ t: 14 * 60 + 45 }), decideCtx()).note).toMatch(/No new same-day trades after 2:30 pm/);
+    expect(decide(newBrain(), [idea('A', { strategy: 'swing', playbook: 'swing-pick', ctx: ctx({ strategy: 'swing', riskPct: 10 }) })], book({ t: 14 * 60 + 45 }), decideCtx()).decisions).toHaveLength(1);
+    expect(decide(newBrain(), [idea('A')], book({ openKeys: ['A'], openCount: 1 }), decideCtx()).decisions).toHaveLength(0);
+    const broke = decide(newBrain(), [idea('A')], book({ free: 1000 }), decideCtx());
     expect(broke.decisions).toHaveLength(0);
     expect(broke.note).toMatch(/All its money is in open trades/);
   });
 
-  it('counts charges: a tiny target is not worth it', () => {
-    const s = scoreIdea(newBrain(), idea('A', 0.6, { stop: 999, target: 1000.8 }))!;
+  it('the brain still scores ideas (to rank them and for your own suggestions)', () => {
+    const s = scoreIdea(newBrain(), idea('A', { stop: 999, target: 1000.8, ctx: ctx({ strategy: 'day-buy', prior: 0.6, riskPct: 0.1 }) }))!;
     expect(s.ev).toBeLessThan(0.05);
-  });
-
-  it('when nothing is good it makes a small test trade to keep learning', () => {
-    const seeds = Array.from({ length: 400 }, (_, i) => `s${i}`).filter((s) => hash01(s) < 0.125);
-    expect(seeds.length).toBeGreaterThan(20);
-    const plan = decide(newBrain(), [idea('A', 0.3)], book(), seeds[0]!);
-    expect(plan.decisions).toHaveLength(1);
-    expect(plan.decisions[0]!.explore).toBe(true);
-    expect(plan.decisions[0]!.riskRupees).toBeLessThanOrEqual(BOT_START * 0.002 + 10);
   });
 
   it('moves the safety net to the buy price once 1 R up', () => {
