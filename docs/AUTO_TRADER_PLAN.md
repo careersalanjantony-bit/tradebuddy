@@ -1,13 +1,48 @@
 # Auto-trader v2 ("evidence first") — implementation plan
 
-**Status: plan only, nothing is built yet.** Written 20 Nov 2026 against `main` (`ad54d2c`, app 1.20.2).
-The auto-trader's files are identical on the PR #4 branch (`feature/firebase-push-m4`), so this work does
-not clash with Milestone 4. The phone and the server run the same auto-trader code (the server through
-`dataJobs.afterQuotes`), so every change below applies to both.
+**Status: built in app 1.23.0** (branch `claude/adoring-bell-4804qr`, a pull request to `main`). Written
+20 Nov 2026 against app 1.20.2; built on 22 Nov 2026 on top of `main` with Milestone 4 (cloud alerts) and the
+cloud auto-trader (app 1.22.0). The section "As built" below lists where the build differs from this plan
+and why. The phone and the server run the same auto-trader code (the server through `dataJobs.afterQuotes`),
+so every rule below applies to both — wherever the auto-trader runs (one writer, app 1.22).
 
 **What does not change:** pretend money only. Nothing here ever sends an order or a GTT to Upstox.
 No rule here can guarantee a profit. The rules only stop the auto-trader from spending money on logic
 that has not shown an edge after charges, and keep each loss small when it is wrong.
+
+---
+
+## As built (22 Nov 2026) — where the build differs from the plan, and why
+
+1. **Version 1.23.0**, not 1.22.0: 1.22.0 was published on 21 Nov (the cloud auto-trader). PR #4 is merged,
+   so the release condition of section 13 is met. One pull request carries all phases as separate commits
+   (one release, as `CLAUDE.md` describes), instead of one pull request per phase.
+2. **Cloud auto-trader (app 1.22):** the rules run wherever the auto-trader lives. The two new controls —
+   switch a kind off / on (`playbook`) and **Resume** after the drawdown stop (`resume`) — go through the
+   cloud controls (`src/bot/cloud.ts` `parseCommand`, the server's `server/src/bot/cloudBot.ts`, the phone's
+   `botControls`); only the controlling phone may send them. The server's state check validates shadow trades
+   and the evidence; the copy a phone fetches every few seconds (`botView`) keeps open shadow trades and the
+   latest 30 finished, without their fills. Shadow trades never make a new version (`rev`), so they never make
+   a phone's control "outdated".
+3. **Evidence is stored per kind** (`BotState.samples`, the newest 60 each), not re-read from the trade list:
+   trimming the trade list cannot lose it, and **Start again (keep learning)** keeps it (Forget everything
+   clears it; your off switches always stay). An auto-trader saved before 1.23 gets its first samples from
+   its finished trades (`samplesFromTrades`).
+4. **Each kind's state is worked out by the side that runs it** and stored (`BotState.evidence`): at every
+   decision, after a trade closes, and at least every 15 minutes. The screen and `/v1/plans` show it.
+5. **Shadow Rising-now trades** take their tag from the live Rising now list (its rows), not from the "held"
+   list: so they never appear under "Your stocks now" and never get a "slowing" alert. (Section 8 planned a
+   `'shadow'` held source in `risingJobs.ts`; not needed.)
+6. **Intraday BUY:** the scanner's own record is used only as the "proven" gate (a cap on the state); the
+   evidence comes from the auto-trader's own shadow and real trades, so a signal is never counted twice.
+7. **Market gate inputs:** the shared helper `marketInputs` is used by Rising now and the auto-trader. The
+   Intraday scan keeps its own code; its saved gate (`intraday.gate` / `intraday.shortGate`) is read first.
+8. **Free cash:** the allowed ideas are sized best first, by what each is worth after its own charges,
+   instead of sharing the free cash by EV.
+9. **The brain** only ranks ideas now; its per-strategy "focus" labels (more / smaller / paused) no longer
+   decide anything and are gone from the screen. Its "What it has learned" record stays.
+10. **Not built (optional phase 5):** the replay of the old against the new portfolio rules on the trades the
+    past tests list.
 
 ---
 
@@ -300,7 +335,7 @@ Older builds still read the stored state, so a rollback is safe.
 | `src/daytrade/backtest.ts` | `stop` on the check trades |
 | `src/ui/components/AutoTrader.tsx` | "Kinds of trade" table, Off switch per kind, drawdown brake + Resume, the charges line, the sizing words |
 | `server/src/http/routes.ts` | `/v1/plans` → `autoTrader.playbooks` |
-| `README.md`, `release-notes/1.22.0.txt`, `package.json` | app 1.22.0 (versionCode 12200, from the version) |
+| `README.md`, `release-notes/1.23.0.txt`, `package.json` | app 1.23.0 (versionCode 12300, from the version) |
 
 Changes in `src/background/botJobs.ts`:
 - a playbook on each idea, and the Intraday source;
@@ -355,8 +390,8 @@ Written first. Where they apply, they fail on today's code.
    amount, after charges. The screen states what cannot be replayed: news, the order book, live Rising
    tags and top picks.
 
-**Release:** 1.22.0 after phases 1–3, built from `main` **after PR #4 is merged**. A phone on RC2
-(1.21.0) that updated to a 1.22.0 without Milestone 4 would lose cloud alerts.
+**Release:** 1.23.0 (as built: phases 1–4 in one pull request; PR #4 was merged on 21 Nov, so a phone on
+RC2 keeps its cloud alerts).
 
 ## 14. Done when
 
@@ -382,5 +417,5 @@ Written first. Where they apply, they fail on today's code.
 - **D2** Risk 0.25% (Trial) / 0.5% (Proven) per trade, 2% total open risk: **yes** / other numbers.
 - **D3** Shadow trades: **yes** / no (Watch kinds then simply wait).
 - **D4** Intraday BUY joins after its own record is proven: **yes** / never / now.
-- **D5** Release 1.22.0 after PR #4 is merged: **yes**.
+- **D5** Release after PR #4 is merged: **yes** — merged on 21 Nov; the release is 1.23.0.
 - **D6** This replaces the v1.8 "no limits" instruction (header of `src/bot/policy.ts`): **yes**.

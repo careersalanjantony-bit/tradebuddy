@@ -1,0 +1,9 @@
+Auto-trader: each kind of trade is now judged on its own results - its finished trades and its past test on days it never saw, counted cautiously. Only proven and trial kinds use pretend money; the others are followed as shadow trades (no money, no alerts) until they show an edge.
+Auto-trader: Upstox's real charges for each trade's size are counted. A trade whose charges would be more than a quarter of its risk is skipped - with a small amount, the Rising now quick trades are skipped for this reason.
+Auto-trader: a fixed small risk - 0.5% of its money on a proven kind, 0.25% on a trial kind, at most 2% for all open trades together, at most 2 open trades in one industry. The old "Kelly" sizing and the test trades are gone.
+Auto-trader: no new buys while the market is falling and no new sell-first trades while it is rising (the same rules as the alerts). Two losing trades of one kind stop that kind for the day.
+Auto-trader: drawdown brake - half size when its money is 4% below its best, and no new trades at 8% below until you press Resume.
+New "Kinds of trade" card on the Auto-trader screen: each kind's state, its results before and after charges, why, and a switch to turn a kind off.
+The Intraday scanner's BUY is a new kind of trade for the auto-trader - followed as shadow trades until the scanner's own record is proven.
+It works the same when the auto-trader runs on your server. Your auto-trader's money, trades and learning are kept.
+Not a guarantee - you place every order yourself.
