@@ -1,4 +1,5 @@
 import { recordAlert, type AlertDetail } from '../alerts/history';
+import { cloudCovers } from './cloudMode';
 import { createLogger } from '../lib/log';
 import { appOnScreen } from '../platform/appState';
 import { getSettings } from '../storage/local';
@@ -34,6 +35,8 @@ export async function notify(id: NotificationId, opts: NotifyOptions): Promise<v
       log.info(`Notification not shown again (already shown in the last 24 hours): ${opts.title}`, { id });
       return;
     }
+    // milestone 4: the server pushes this market signal to this phone — show it in the app only
+    const cloud = await cloudCovers(id).catch(() => false);
     await chrome.notifications.create(id, {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
@@ -41,6 +44,7 @@ export async function notify(id: NotificationId, opts: NotifyOptions): Promise<v
       message: opts.message,
       requireInteraction: opts.requireInteraction ?? false,
       priority: opts.priority ?? 1,
+      ...(cloud ? ({ inAppOnly: true } as object) : {}),
     });
     log.info(`Notification shown: ${opts.title}`, { id });
     // app v1.9: the app is on screen and shows the alert itself — play the chosen tone here

@@ -10,7 +10,8 @@ tests/fixtures/private/
 smoke-output/
 *.log
 .DS_Store
-release/
+# the built APK (scripts/build-apk.mjs → release/TradeBuddy-x.y.z.apk); not scripts/release or tests/release
+/release/
 # signing keys live only in the private tradebuddy-keys repository
 android/signing/
 *.p12
@@ -20,3 +21,9 @@ lineage.bin
 # TradeBuddy server: local database and environment file (secrets)
 server-data/
 server/.env
+# milestone 4: Firebase files never go into this repository
+google-services.json
+GoogleService-Info.plist
+*firebase-adminsdk*.json
+*service-account*.json
+firebase-service-account*.json

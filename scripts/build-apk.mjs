@@ -18,7 +18,7 @@
  * needs JDK 21: JAVA_HOME when it is 21+, otherwise the JDK that comes with Android Studio.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,11 @@ const npx = win ? 'npx.cmd' : 'npx';
 const gradlew = join(root, 'android', win ? 'gradlew.bat' : 'gradlew');
 
 console.log(`── building TradeBuddy ${version} (Android SDK ${sdk}, build-tools ${toolsVersion}, Java ${jdkHome ?? 'from PATH'})`);
+// milestone 4: Firebase (cloud alerts) needs android/app/google-services.json. It is never committed to
+// this repository; keep it in the private tradebuddy-keys repository and it is copied in here.
+const servicesJson = join(root, 'android', 'app', 'google-services.json');
+if (!existsSync(servicesJson) && existsSync(join(keys, 'google-services.json'))) copyFileSync(join(keys, 'google-services.json'), servicesJson);
+console.log(existsSync(servicesJson) ? '── Firebase: on (google-services.json found) — cloud alerts can work' : '── Firebase: off (no google-services.json) — the app works, cloud alerts cannot be paired');
 run(npm, ['run', 'build']);
 run(npx, ['cap', 'sync', 'android']);
 run(gradlew, ['--no-daemon', '-q', 'assembleRelease'], { cwd: join(root, 'android'), env: { ...process.env, ...javaEnv, ANDROID_HOME: sdk } });

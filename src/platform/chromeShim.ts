@@ -234,9 +234,22 @@ export const ALERT_EVENT = 'tb-alert';
 export function setNotificationBackend(b: NotificationBackend): void {
   notificationBackend = b;
 }
+/** milestone 4: a tap that came before the screens were ready (the tap started the app) waits here */
+let pendingClick: string | null = null;
 export function notificationClicked(id: string): void {
   shownNotifications.delete(id);
-  for (const l of onNotificationClicked.listeners) l(id);
+  const ls = onNotificationClicked.listeners;
+  if (!ls.length) {
+    pendingClick = id;
+    return;
+  }
+  for (const l of ls) l(id);
+}
+/** The tap that started the app, once (the screens ask for it when they are ready). */
+export function takePendingNotificationClick(): string | null {
+  const id = pendingClick;
+  pendingClick = null;
+  return id;
 }
 
 // ---------- identity (Upstox login window)
@@ -320,11 +333,13 @@ export function installChromeShim(version: string): void {
       onAlarm,
     },
     notifications: {
-      create: async (id: string, o: { title: string; message: string; requireInteraction?: boolean; priority?: number }) => {
+      create: async (id: string, o: { title: string; message: string; requireInteraction?: boolean; priority?: number; inAppOnly?: boolean }) => {
         shownNotifications.set(id, { title: o.title, message: o.message });
         // app v1.9: on screen → the app shows the alert itself (a banner at the top, with the chosen tone)
         const onScreen = appOnScreen();
         if (onScreen) window.dispatchEvent(new CustomEvent(ALERT_EVENT, { detail: { id, title: o.title, message: o.message, at: Date.now() } }));
+        // milestone 4: the server pushes this alert (cloud alerts on) — no second copy from the phone
+        if (o.inAppOnly) return id;
         await notificationBackend.show(id, o.title, o.message, { ...(o.requireInteraction ? { requireInteraction: true } : {}), ...(o.priority !== undefined ? { priority: o.priority } : {}), onScreen });
         return id;
       },

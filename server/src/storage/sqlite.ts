@@ -9,7 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
  * Every schema change is a new entry at the END of MIGRATIONS. Never edit a released entry.
  */
 
-const MIGRATIONS: string[] = [
+/** Exported for the migration tests only (they build an older database from the first entries). */
+export const MIGRATIONS: readonly string[] = [
   // 1: key-value areas (chrome.storage.local / session replacement) and a small event journal
   `CREATE TABLE kv (
      area TEXT NOT NULL,
@@ -48,6 +49,86 @@ const MIGRATIONS: string[] = [
      host TEXT NOT NULL,
      started_at INTEGER NOT NULL,
      heartbeat_at INTEGER NOT NULL
+   );`,
+  // 3 (milestone 4): paired phones, one-time pairing codes, and the push outbox
+  `CREATE TABLE devices (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     platform TEXT NOT NULL,
+     app_version TEXT,
+     secret_hash TEXT NOT NULL,
+     fcm_token TEXT,
+     fcm_token_at INTEGER,
+     token_state TEXT NOT NULL DEFAULT 'none',
+     categories TEXT NOT NULL,
+     quiet_json TEXT,
+     channel_id TEXT,
+     created_at INTEGER NOT NULL,
+     last_seen_at INTEGER,
+     last_push_at INTEGER,
+     revoked_at INTEGER
+   );
+   CREATE TABLE pairing_codes (
+     code_hash TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL,
+     used_at INTEGER,
+     device_id TEXT
+   );
+   CREATE TABLE push_outbox (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     alert_id TEXT NOT NULL,
+     device_id TEXT NOT NULL,
+     payload TEXT NOT NULL,
+     status TEXT NOT NULL,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     next_at INTEGER NOT NULL,
+     last_error TEXT,
+     created_at INTEGER NOT NULL,
+     sent_at INTEGER,
+     message_id TEXT,
+     UNIQUE (alert_id, device_id)
+   );
+   CREATE INDEX push_outbox_due ON push_outbox (status, next_at);`,
+  // 4 (app 1.22, cloud auto-trader): who runs the auto-trader (standby until the owner moves it here),
+  // every change made to it (who, what, the request id that makes a repeated request harmless) and the
+  // backups taken before every move, start-again or restore. Nothing existing is changed: the server's
+  // own copy in kv ('local', 'bot') stays exactly as it is and simply stops trading until the move.
+  `CREATE TABLE bot_authority (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     server_id TEXT NOT NULL,
+     mode TEXT NOT NULL CHECK (mode IN ('standby', 'cloud')),
+     epoch INTEGER NOT NULL,
+     controller_id TEXT,
+     activated_at INTEGER,
+     changed_at INTEGER NOT NULL
+   );
+   INSERT INTO bot_authority (id, server_id, mode, epoch, controller_id, activated_at, changed_at)
+     VALUES (1, lower(hex(randomblob(16))), 'standby', 0, NULL, NULL, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+   CREATE TABLE bot_audit (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     device_id TEXT,
+     action TEXT NOT NULL,
+     request_id TEXT,
+     epoch INTEGER NOT NULL,
+     rev_before INTEGER,
+     rev_after INTEGER,
+     ok INTEGER NOT NULL,
+     detail TEXT,
+     result TEXT
+   );
+   CREATE UNIQUE INDEX bot_audit_request ON bot_audit (device_id, request_id) WHERE request_id IS NOT NULL AND ok = 1;
+   CREATE INDEX bot_audit_at ON bot_audit (at);
+   CREATE TABLE bot_backups (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     reason TEXT NOT NULL,
+     source TEXT NOT NULL CHECK (source IN ('server', 'phone')),
+     device_id TEXT,
+     rev INTEGER,
+     digest TEXT,
+     state TEXT
    );`,
 ];
 
@@ -98,8 +179,15 @@ export function openStore(dataDir: string, file = 'tradebuddy.db'): Store {
   const path = file === ':memory:' ? ':memory:' : join(dataDir, file);
   if (file !== ':memory:') mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
-  const schemaVersion = migrate(db);
+  let schemaVersion: number;
+  try {
+    db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    schemaVersion = migrate(db);
+  } catch (err) {
+    // review fix: a refused or failed migration (rolled back) must not leave the file open
+    db.close();
+    throw err;
+  }
   const insertEvent = db.prepare('INSERT INTO server_events (ts, kind, data) VALUES (?, ?, ?)');
   const trimEvents = db.prepare('DELETE FROM server_events WHERE id <= (SELECT MAX(id) FROM server_events) - ?');
   let closed = false;

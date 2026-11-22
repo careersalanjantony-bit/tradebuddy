@@ -12,6 +12,7 @@ import { loginWithUpstox } from '../login';
 import { RiskSettings } from './RiskSettings';
 import { AmountCard } from './AmountCard';
 import { AlertSettings } from '../components/AlertSettings';
+import { CloudAlerts } from '../components/CloudAlerts';
 
 const DEV_APPS_URL = 'https://account.upstox.com/developer/apps';
 
@@ -28,6 +29,7 @@ export function SettingsScreen() {
     <>
       <AmountCard risk={settings.risk} newPickAlerts={settings.scanner.newPickAlerts} rankBy={settings.scanner.rankBy} />
       <AlertSettings settings={settings} />
+      <CloudAlerts />
       {simple ? (
         <details class="card">
           <summary>

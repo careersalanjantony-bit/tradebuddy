@@ -49,6 +49,7 @@ import { scanBreakouts, testBreakouts } from './breakoutJobs';
 import { testBreakoutsIfDue } from './breakoutJobs';
 import { checkForUpdate, startUpdateChecks } from './updateJobs';
 import { botReset, botSetAmount, botSetEnabled, botSetRules, runBot, suggestIdeas } from './botJobs';
+import { botBeforeUnpair, cancelMove, cloudBotCommand, cloudBotForceLocal, cloudBotJoin, cloudBotLeave, cloudBotMove, cloudBotPreview, cloudBotRelease, installPhoneBotGate, refreshCloudBot, sendMove, startCloudBotChecks } from './cloudBotJobs';
 import { testProtect } from './botTest';
 import { scanRising, trainRising, trainRisingIfDue } from './risingJobs';
 import { earlyTick, refreshNseFiles, refreshPremarket, sweepCatalysts, testEarly } from './earlyJobs';
@@ -59,6 +60,8 @@ import { startNewsChecks } from './newsJobs';
 
 initLogging('background');
 const log = createLogger('bg');
+// app v1.22: before anything can run the auto-trader — when it runs on the server, never here too
+installPhoneBotGate();
 const startedAt = Date.now();
 let startupError: string | undefined;
 let isReady = false;
@@ -119,6 +122,8 @@ ready.then(() => {
 ready.then(() => startNewsChecks()).catch(() => undefined);
 // In-app updates: look for a newer TradeBuddy on start and every 6 hours.
 ready.then(() => startUpdateChecks()).catch(() => undefined);
+// app v1.22: the server's auto-trader (only when it was moved there): what changed, every minute
+ready.then(() => startCloudBotChecks()).catch(() => undefined);
 // Per-stock short-selling chance: train once a day (a little after start, then hourly checks).
 ready
   .then(() => {
@@ -386,6 +391,17 @@ const handlers: Handlers = {
     void testProtect().catch(() => undefined);
     return r;
   },
+  'cloudbot:refresh': async () => refreshCloudBot(),
+  'cloudbot:preview': async () => cloudBotPreview(),
+  'cloudbot:move': async ({ choice, preview, fresh }) => cloudBotMove(choice, preview, fresh),
+  'cloudbot:retry': async () => sendMove(),
+  'cloudbot:cancel': async () => ({ result: await cancelMove() }),
+  'cloudbot:join': async () => cloudBotJoin(),
+  'cloudbot:command': async ({ command }) => ({ result: await cloudBotCommand(command) }),
+  'cloudbot:release': async () => (await cloudBotRelease(), { ok: true }),
+  'cloudbot:leave': async () => (await cloudBotLeave(), { ok: true }),
+  'cloudbot:force-local': async () => (await cloudBotForceLocal(), { ok: true }),
+  'cloudbot:before-unpair': async ({ force }) => (await botBeforeUnpair(force), { ok: true }),
   'bot:test': async () => {
     const r = await testProtect(Date.now(), true);
     return { ok: !!r, days: r?.days ?? 0 };

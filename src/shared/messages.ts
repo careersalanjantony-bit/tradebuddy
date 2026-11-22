@@ -100,6 +100,18 @@ export interface ApiMap {
   'bot:rules': { req: { rules: Partial<import('../bot/protect').ProtectRules> }; res: import('../bot/protect').ProtectRules };
   /** app v1.13: run the protection's past test now */
   'bot:test': { req: undefined; res: { ok: boolean; days: number } };
+  /** app v1.22: the cloud auto-trader (runs on the user's server; this phone shows it and sends controls) */
+  'cloudbot:refresh': { req: undefined; res: import('../background/cloudBotJobs').BotCloudLink | null };
+  'cloudbot:preview': { req: undefined; res: import('../background/cloudBotJobs').CloudBotPreview };
+  'cloudbot:move': { req: { choice: import('../bot/cloud').CutoverChoice; preview: import('../background/cloudBotJobs').CloudBotPreview; fresh?: import('../background/cloudBotJobs').FreshStart }; res: import('../background/cloudBotJobs').BotCloudLink };
+  'cloudbot:retry': { req: undefined; res: import('../background/cloudBotJobs').BotCloudLink };
+  'cloudbot:cancel': { req: undefined; res: { result: 'moved' | 'cancelled' } };
+  'cloudbot:join': { req: undefined; res: import('../background/cloudBotJobs').BotCloudLink };
+  'cloudbot:command': { req: { command: import('../bot/cloud').BotCommand }; res: { result: unknown } };
+  'cloudbot:release': { req: undefined; res: { ok: boolean } };
+  'cloudbot:leave': { req: undefined; res: { ok: boolean } };
+  'cloudbot:force-local': { req: undefined; res: { ok: boolean } };
+  'cloudbot:before-unpair': { req: { force?: boolean }; res: { ok: boolean } };
   'wallet:update': { req: { key: string; patch: Partial<Pick<import('../wallet/wallet').Holding, 'stop' | 'target' | 'sellByClose'>>; product?: import('../wallet/wallet').Product }; res: { done: true } };
   'wallet:reset': { req: { startCash?: number }; res: { done: true } };
   'practice:check': { req: undefined; res: { filled: number; skipped: number; closed: number } };

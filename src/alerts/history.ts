@@ -69,7 +69,9 @@ export function normalizeHistory(h: Partial<AlertHistory> | null | undefined): A
 /** Adds a notification; null when the same id was already shown in the last 24 hours. Pure. */
 export function addRecord(h: AlertHistory, rec: AlertRecord): AlertHistory | null {
   const last = h.seen[rec.id];
-  if (last !== undefined && rec.at >= last && rec.at - last < REPEAT_MS) return null;
+  // milestone 4: either way round — a pushed alert carries the server's time, which can be a little
+  // earlier than when this phone found the same alert itself
+  if (last !== undefined && Math.abs(rec.at - last) < REPEAT_MS) return null;
   return {
     ...h,
     items: [rec, ...h.items.filter((x) => x.id !== rec.id)].slice(0, HISTORY_MAX),

@@ -28,6 +28,17 @@ import { installKeyRange, SqliteIdb } from './storage/idb';
 import { ChangeHub, SqliteKV } from './storage/kv';
 import { openStore, type Store } from './storage/sqlite';
 import { Ticker } from './util/ticker';
+import type { AlertDetail } from '../../src/alerts/history';
+import { registerSecrets } from '../../src/lib/redact';
+import { errorMessage } from '../../src/lib/serialize';
+import { addDeviceRoutes } from './http/deviceRoutes';
+import { DeviceStore } from './push/devices';
+import { FcmClient } from './push/fcm';
+import { AccessTokenSource, loadServiceAccount } from './push/google';
+import { PushService, serverPushAlert } from './push/outbox';
+import { setBotGate, setBotObserver } from '../../src/background/botJobs';
+import { CloudBot } from './bot/cloudBot';
+import { addBotRoutes } from './http/botRoutes';
 
 /**
  * Starts everything, in this order: logging → database → chrome.storage replacement → the app's own
@@ -44,6 +55,10 @@ export interface EngineOptions {
   now?: () => number;
   /** tests only: false = create the background tasks but do not start them (the test drives them) */
   startTasks?: boolean;
+  /** tests only: a stand-in for Firebase */
+  fcm?: Pick<FcmClient, 'send' | 'projectId'>;
+  /** tests only: what the cloud auto-trader believes about the jobs and the Upstox token (the test drives the runs itself) */
+  bot?: { jobs?: boolean; hasToken?: boolean; analytics?: () => Promise<string> };
 }
 
 export interface RunningServer {
@@ -57,6 +72,11 @@ export interface RunningServer {
   readonly scheduler: AlarmScheduler;
   /** milestone 3: the app's intelligence (null when TB_JOBS=off) */
   readonly intelligence: Intelligence | null;
+  /** milestone 4: paired phones and the push outbox */
+  readonly devices: DeviceStore;
+  readonly push: PushService;
+  /** app 1.22: the cloud auto-trader (standby until the owner moves it here) */
+  readonly bot: CloudBot;
   ready(): boolean;
   close(reason: string): Promise<void>;
 }
@@ -85,6 +105,36 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   const hub = new ChangeHub();
   const local = new SqliteKV(store.db, 'local', { hub, overlay: secretsOverlay(config) });
   const session = new SqliteKV(store.db, 'session', { hub, writeBehindMs: 2_000 });
+
+  // milestone 4: paired phones and push notifications (the Firebase key comes from the server's own file)
+  const devices = new DeviceStore(store.db, now);
+  let fcm: Pick<FcmClient, 'send' | 'projectId'> | null = opts.fcm ?? null;
+  if (!fcm && config.firebaseServiceAccountFile) {
+    try {
+      const sa = loadServiceAccount(config.firebaseServiceAccountFile);
+      registerSecrets([sa.privateKey]);
+      fcm = new FcmClient(sa, new AccessTokenSource(sa));
+      log.info(`Push notifications on (Firebase project ${sa.projectId})`);
+    } catch (err) {
+      log.error('Push notifications off: the Firebase key file could not be used', { reason: errorMessage(err) });
+    }
+  } else if (!fcm) {
+    log.info('Push notifications off: FIREBASE_SERVICE_ACCOUNT_FILE is not set');
+  }
+  const push = new PushService(store.db, devices, fcm, now);
+  /** every new alert → the push outbox (one row per phone that wants it); never blocks the scan */
+  const queuePush = async (id: string, o: { title?: string; message?: string }): Promise<void> => {
+    try {
+      // review fix: not the phone-only messages (login reminder, evening summary…)
+      const a = serverPushAlert(id, o.title ?? id, o.message ?? '');
+      if (!a) return;
+      const hist = (await local.get('alertHistory')).alertHistory as { items?: Array<{ id: string; detail?: AlertDetail }> } | undefined;
+      const detail = hist?.items?.find((x) => x.id === id)?.detail;
+      push.enqueue({ ...a, at: now(), ...(detail ? { detail } : {}) });
+    } catch (err) {
+      log.warn('Could not queue a push', { id, error: errorMessage(err) });
+    }
+  };
   const uninstallChrome = installChrome({
     local,
     session,
@@ -94,6 +144,7 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     notify: (id, o) => {
       log.info(`Alert: ${o.title ?? id}`, { id, message: o.message });
       store.event('alert', { id, title: o.title ?? null });
+      void queuePush(id, o);
     },
   });
 
@@ -107,9 +158,32 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
   let poller: QuotePoller | null = null;
   let isReady = false;
   const hasToken = !!config.upstoxAnalyticsToken;
+  const analyticsStatus = async () => (hasToken ? ((await getAuth()).analytics?.status ?? 'unchecked') : 'missing');
+
+  // app 1.22: the cloud auto-trader. The app's own runBot() (in the price jobs) runs here only after the
+  // owner moved the auto-trader to this server; until then the server is on standby and changes nothing.
+  const bot = new CloudBot({
+    db: store.db,
+    local,
+    devices,
+    now,
+    jobs: opts.bot?.jobs ?? config.jobs,
+    hasToken: opts.bot?.hasToken ?? hasToken,
+    analytics: opts.bot?.analytics ?? analyticsStatus,
+    market: async (t) => {
+      const m = marketState(t, await getCalendar());
+      return { phase: m.phase, label: m.label };
+    },
+    quotes: getQuotes,
+    feedConnected: () => feed?.health().connected ?? null,
+  });
+  setBotGate({ check: () => bot.gate() });
+  setBotObserver(bot.observer);
 
   let intelligence: Intelligence | null = null;
   const undo = () => {
+    setBotGate(null);
+    setBotObserver(null);
     uninstallChrome();
     g.WebSocket = previousWebSocket;
     __setDbProvider(null);
@@ -178,6 +252,18 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       // the five NSE index lists the app studies (weekly from NSE, bundled copy as fallback)
       tasks.push(new Ticker('index-lists', 6 * 3_600_000, async () => `${Object.keys((await ensureScanLists(false, now())).lists).length} lists`, 10_000));
     }
+    if (fcm) {
+      // milestone 4: the push outbox — sends what is due every 2 s; old finished rows go after a week
+      tasks.push(
+        new Ticker('push', 2_000, async () => {
+          const r = await push.processDue();
+          return r.sent + r.retried + r.failed + r.skipped ? `${r.sent} sent, ${r.retried} to retry, ${r.failed} failed, ${r.skipped} skipped` : 'idle';
+        }, 2_000),
+      );
+      tasks.push(new Ticker('push-prune', 6 * 3_600_000, async () => `${push.prune()} old rows removed`, 60_000));
+    }
+    // app 1.22: the cloud auto-trader's watchdog — a problem in market hours (old prices, no runs) is pushed once
+    tasks.push(new Ticker('auto-trader', 30_000, () => bot.watch(), 30_000));
 
     const router = buildRouter({
       version: config.version,
@@ -203,9 +289,19 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
       readLocal: async (k) => (await local.get(k))[k],
       readSession: async (k) => (await session.get(k))[k],
       jobs: () => (config.jobs ? { scheduled: scheduler.getAll(), running: scheduler.runningNames(), fired: scheduler.fired, skipped: scheduler.skipped } : null),
+      autoTrader: async () => ({ authority: bot.authority(), ...(await bot.telemetry()) }),
       now,
     });
-    http = createHttpServer({ host: config.host, port: config.port, apiToken: config.apiToken, router });
+    addBotRoutes(router, bot);
+    addDeviceRoutes(router, {
+      devices,
+      push,
+      projectId: fcm?.projectId ?? null,
+      now,
+      // the server makes signals when its jobs run and its Upstox token has not been rejected
+      signals: async () => config.jobs && hasToken && (await getAuth()).analytics?.status !== 'invalid',
+    });
+    http = createHttpServer({ host: config.host, port: config.port, apiToken: config.apiToken, router, deviceAuth: (c) => devices.authenticate(c) });
     port = await http.listen();
     if (config.jobs) {
       // milestone 3: the app's own jobs and timers (loaded only when on)
@@ -241,6 +337,9 @@ export async function startServer(config: ServerConfig, opts: EngineOptions = {}
     tasks,
     scheduler,
     intelligence,
+    devices,
+    push,
+    bot,
     ready: () => isReady,
     close(reason: string) {
       closing ??= (async () => {

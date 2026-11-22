@@ -25,9 +25,15 @@ async function boot(): Promise<void> {
   await initNative(() => {
     // back in front: catch up on prices, alerts and signals at once
     void chrome.runtime.sendMessage({ __swing: true, type: 'quotes:auto', payload: undefined });
+    // app v1.22: the server's auto-trader, if it runs there (what changed while the app was closed)
+    void chrome.runtime.sendMessage({ __swing: true, type: 'cloudbot:refresh', payload: undefined });
     catchUp();
   });
   catchUp();
+  // milestone 4: cloud alerts, only if this phone was paired with a server (otherwise nothing happens)
+  void import('./platform/push')
+    .then((m) => m.initCloudPush())
+    .catch(() => undefined);
   setInterval(() => void syncBackgroundChecker().catch(() => undefined), 2 * 60_000);
   let walletTimer: ReturnType<typeof setTimeout> | null = null;
   chrome.storage.onChanged.addListener((changes, area) => {

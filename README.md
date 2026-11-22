@@ -40,6 +40,36 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.22.0 (cloud auto-trader)
+
+- **The auto-trader can run on your server**, also with the app closed or the phone off. Auto-trader →
+  *Let it trade with the app closed* → **Compare and move to my server…** shows your phone's auto-trader
+  next to the server's and moves ONE of them — never a mix — with backups on both sides. Afterwards every
+  paired phone shows the server's trades, money (worked out with the server's prices), learning and log;
+  the phone that moved it sends your controls to the server; other phones only look. **Run it on this
+  phone again** brings it back. Design, security and the step-by-step cutover:
+  [docs/CLOUD_AUTOTRADER.md](docs/CLOUD_AUTOTRADER.md).
+- **One auto-trader, one writer:** while it runs on the server the phone never runs a copy of its own (on
+  price updates, resume, retries or offline); until you move it, the server's own copy stays frozen.
+- **No new trades from old prices** (older than 2 minutes), on the phone and on the server; the server
+  pushes one alert when its auto-trader stops trading for that reason, and one when it recovers.
+- Server: database schema 4 (who runs the auto-trader, its audit and backups; nothing existing changes).
+  Pretend money only — nothing is ever sent to Upstox.
+
+## New in 1.21.0 (Milestone 4 release candidate 2, tag `m4-fcm-rc2`)
+
+- **Cloud alerts (optional):** Settings → Cloud alerts pairs the phone with your own TradeBuddy server;
+  its alerts then arrive as Firebase push notifications, also with the app closed. The phone keeps
+  alerting by itself whenever the server does not confirm it is making signals.
+- **Fixed: pairing stayed on "Pairing…" on a real phone (release candidate 1).** The app handed a
+  native plugin back from an `async` function; a Capacitor plugin answers *every* property, also
+  `then`, so JavaScript took it for a promise that never finishes — the phone never saved the
+  pairing although the server had accepted it. Plugins are now wrapped in plain objects, every native
+  call has a time limit, the Keystore falls back to the app's storage if it does not answer, and if the
+  phone cannot save a pairing the server registration is removed again and the screen says so.
+  Tests run the real Capacitor bridge code (`tests/cloudPairingCapacitor.test.ts`).
+- Nothing else changes; saved data is kept (no storage change).
+
 ## New in 1.20.2
 
 - **Fixes from the server branch reach the phone app.** Alan's merged PR #2 (paced, remembered and
@@ -61,8 +91,12 @@ comes with Android Studio). On Windows build in a short folder path outside OneD
 - `main` is the one shared branch. Start every change on a new branch from the latest `main`, open a
   pull request into `main`, and merge it there. `app-v1` and `server-backend` are kept equal to `main`
   for older links and setups; do not commit to them directly.
-- Releases (`npm run apk`, then `npm run release`) are built only from an up-to-date `main`. The
-  signing keys and `google-services.json` stay in the private `tradebuddy-keys` repository.
+- **Releases are automatic** once switched on ([docs/RELEASE_PIPELINE.md](docs/RELEASE_PIPELINE.md)):
+  a merged pull request that raises the version (with `release-notes/x.y.z.txt`) is tagged `vx.y.z` by CI,
+  and the private `tradebuddy-keys` pipeline validates it, builds the signed APK, deploys the server and
+  publishes the update for **Update now**. Until it is switched on (and as a fallback): `npm run apk`, then
+  `npm run release`, from an up-to-date `main`. The signing keys and `google-services.json` stay in the
+  private `tradebuddy-keys` repository; rules for Claude Code are in [CLAUDE.md](CLAUDE.md).
 - Never commit secrets: `.gitignore` blocks key files, `.env` files and Firebase service-account files.
 
 ## New in 1.20.1

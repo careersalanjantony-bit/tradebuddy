@@ -7,6 +7,10 @@ declare const __APP_VERSION__: string;
 /** The app version this server was built from (package.json, set at build time). */
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0-dev';
 
+declare const __APP_COMMIT__: string;
+/** The git commit this server was built from (set at build time; 'dev' when run from source). */
+export const APP_COMMIT: string = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev';
+
 /**
  * Server settings. Everything comes from environment variables (on EC2: the systemd EnvironmentFile,
  * /etc/tradebuddy/server.env, readable by root and the service only). Secrets are never read from or
@@ -28,6 +32,8 @@ export interface ServerConfig {
   backgroundTasks: boolean;
   /** milestone 3: run the app's own jobs (scans, signals, alerts, learning) on the server */
   jobs: boolean;
+  /** milestone 4: the Firebase service-account key file (outside the repository); null = no push */
+  firebaseServiceAccountFile: string | null;
   historicalRequestsPerMinute: number;
   shutdownTimeoutMs: number;
   version: string;
@@ -97,6 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     logLevel,
     apiToken,
     upstoxAnalyticsToken: read(env, 'UPSTOX_ANALYTICS_TOKEN'),
+    firebaseServiceAccountFile: read(env, 'FIREBASE_SERVICE_ACCOUNT_FILE') ?? read(env, 'GOOGLE_APPLICATION_CREDENTIALS'),
     liveFeed,
     backgroundTasks,
     jobs,
