@@ -680,9 +680,9 @@ const kindsReady = await until(async () => {
 const freshBot = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
 const kindsText = ((await page.textContent('[data-testid="bot-kinds"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
-  'a fresh auto-trader has proven no kind of trade: no money used, all 8 kinds listed as "Not proven yet", its ideas followed as shadow trades',
-  kindsReady && (freshBot?.trades ?? []).length === 0 && (freshBot?.evidence?.list ?? []).length === 8 && (freshBot?.evidence?.list ?? []).every((e) => e.state === 'watch') && kindsText.includes('Not proven yet') && kindsText.includes('Day-trade buy signals'),
-  `${(freshBot?.shadow?.trades ?? []).length} shadow trades · ${kindsText.slice(0, 140)}`,
+  'a fresh auto-trader has proven no kind of trade: all 8 kinds rated, none "Proven"; a kind is "Trial" only from its own past test, the others are "Not proven yet" and use no money (their ideas are followed as shadow trades)',
+  kindsReady && (freshBot?.evidence?.list ?? []).length === 8 && (freshBot?.evidence?.list ?? []).every((e) => e.state === 'watch' || (e.state === 'trial' && e.priorCounted)) && (freshBot?.trades ?? []).every((t) => t.state === 'trial') && kindsText.includes('Not proven yet') && kindsText.includes('Day-trade buy signals'),
+  `${(freshBot?.shadow?.trades ?? []).length} shadow, ${(freshBot?.trades ?? []).length} real trades · ${(freshBot?.evidence?.list ?? []).map((e) => `${e.id} ${e.state}`).join(', ')}`,
 );
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot-kinds.png') });
 // as if it had traded for weeks: 30 finished trades of +1 R for every kind (the checks below then see it trade)
@@ -715,10 +715,13 @@ const copyBtn = await page.$('[data-testid="bot-copy"]');
 if (copyBtn) await copyBtn.click();
 const copyText = ((await page.textContent('[data-testid="bot-copy-steps"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check('each open auto-trade has "Copy in Upstox" with the exact order steps (you place it yourself)', !!copyBtn && /Upstox → .+ → (Buy|Sell) → (Intraday|Delivery) → \d+ shares → Limit ₹/.test(copyText) && copyText.includes('Stop-loss') && copyText.includes('never sends orders'), copyText.slice(0, 200));
-// make one trade finish: the falling stock drops to its 2nd target, or the others jump up
+// make one trade finish: the falling stock drops to its 2nd target, or the others jump up (the breakout demo
+// stock has its own price, mock.breakPrice: it jumps over its target too when the auto-trader holds it)
 const botShort = openBot.find((t) => t.side === 'short' && t.symbol === FALL);
+const botBreak = openBot.find((t) => t.side === 'long' && t.symbol === BREAK_SYM);
 if (botShort) mock.fallPrice = botShort.target - 1;
 else mock.move = 0.08;
+if (botBreak) mock.breakPrice = Math.round((botBreak.target + 1) * 20) / 20;
 const learned = await until(async () => {
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'quotes:refresh', payload: undefined }));
   return page.evaluate(async () => {
@@ -726,6 +729,7 @@ const learned = await until(async () => {
     return (b?.trades ?? []).some((t) => t.status === 'closed') && b.brain.n >= 1;
   });
 }, 25000);
+mock.breakPrice = 200.3;
 const botAfter = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
 const firstClosed = (botAfter?.trades ?? []).find((t) => t.status === 'closed');
 check('a finished trade is settled after charges and the brain learns from it (win/loss, R, a lesson)', learned && firstClosed && typeof firstClosed.pnl === 'number' && typeof firstClosed.r === 'number' && botAfter.log.some((l) => l.kind === 'learn'), firstClosed ? `${firstClosed.symbol} ${firstClosed.exitWhy} ${firstClosed.pnl} (${firstClosed.r} R) — ${firstClosed.lesson}` : 'none');
