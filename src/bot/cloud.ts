@@ -304,7 +304,7 @@ export type BotCommand =
   /** app v1.23: trade again after the drawdown brake stopped it */
   | { type: 'resume' };
 
-const RULE_KEYS = ['on', 'lockStartPct', 'dayLossPct', 'swingSharePct', 'quickExitMin'] as const;
+const RULE_KEYS = ['on', 'lockStartPct', 'dayLossPct', 'swingSharePct', 'quickExitMin', 'proveFirst'] as const;
 
 /** Checks a control sent by a phone (throws an Error with a plain message). */
 export function parseCommand(x: unknown): BotCommand {
@@ -327,6 +327,11 @@ export function parseCommand(x: unknown): BotCommand {
       if (r.on !== undefined) {
         if (typeof r.on !== 'boolean') throw new Error('on must be true or false.');
         out.on = r.on;
+      }
+      // app v1.24: prove each kind of trade first with shadow trades (true) or buy small while it learns (false)
+      if (r.proveFirst !== undefined) {
+        if (typeof r.proveFirst !== 'boolean') throw new Error('proveFirst must be true or false.');
+        out.proveFirst = r.proveFirst;
       }
       for (const k of ['lockStartPct', 'dayLossPct', 'swingSharePct', 'quickExitMin'] as const) {
         if (r[k] === undefined) continue;

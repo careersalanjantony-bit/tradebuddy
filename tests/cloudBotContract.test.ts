@@ -66,6 +66,9 @@ describe('what the server accepts from a phone', () => {
     // app v1.23: switch a kind of trade off / on, resume after the drawdown stop
     expect(parseCommand({ type: 'playbook', playbook: 'rise-flow', off: true })).toEqual({ type: 'playbook', playbook: 'rise-flow', off: true });
     expect(parseCommand({ type: 'resume', extra: 1 })).toEqual({ type: 'resume' });
+    // app v1.24: prove each kind first (shadow trades) or buy small while it learns
+    expect(parseCommand({ type: 'rules', rules: { proveFirst: true } })).toEqual({ type: 'rules', rules: { proveFirst: true } });
+    expect(() => parseCommand({ type: 'rules', rules: { proveFirst: 'yes' } })).toThrow(/proveFirst must be true or false/);
     expect(() => parseCommand({ type: 'playbook', playbook: 'options', off: true })).toThrow(/Unknown kind of trade/);
     expect(() => parseCommand({ type: 'playbook', playbook: 'day-buy', off: 'yes' })).toThrow(/true or false/);
   });

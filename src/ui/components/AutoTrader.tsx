@@ -270,7 +270,7 @@ export function AutoTraderView() {
           <ul>
             <li>Every minute from 9:30 am it looks at today's day-trade buy signals, Rising now, the top picks, the "Falling now" sell-first ideas, breakouts and the Intraday scanner's BUY.</li>
             <li>
-              Each kind of trade is judged on its own results (app 1.23): its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). Only <b>proven</b> kinds (30 trades, safe estimate +0.10 R or better) and <b>trial</b> kinds (safe estimate 0 R or better) use money; the others are followed as shadow trades — no money, no alerts — until they show an edge. A kind whose newest 20 trades average below −0.05 R is paused until they reach +0.10 R. You can switch any kind off.
+              Each kind of trade is judged on its own results (app 1.23): its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). <b>Proven</b> kinds (30 trades, safe estimate +0.10 R or better) trade at the normal size, <b>trial</b> kinds (safe estimate 0 R or better) at the small size. Kinds not proven yet also buy at the small size while they learn (app 1.24, the default) — or, with <b>Prove each kind first</b> on, they are only followed as shadow trades (no money, no alerts) until they show an edge. A kind whose newest 20 trades average below −0.05 R is marked paused until they reach +0.10 R — with Prove each kind first on it then uses no money; with it off it keeps buying small, and you can switch it off. You can switch any kind off.
             </li>
             <li>
               Size: {RISK_SHARE.proven * 100}% of its money at risk on a proven kind, {RISK_SHARE.trial * 100}% on a trial kind — never more than half the daily loss limit. All open trades together risk at most {MAX_OPEN_RISK * 100}%, at most {MAX_PER_INDUSTRY} open trades per industry. A trade is skipped when Upstox's charges for its size would be more than {MAX_CHARGES_R * 100}% of its risk, or when its kind's safe estimate minus those charges is below +{MIN_EDGE_R} R.
@@ -319,6 +319,14 @@ export function AutoTraderView() {
 }
 
 const STATE_TEXT: Record<PlaybookState, string> = { proven: 'Proven', trial: 'Trial (small size)', watch: 'Not proven yet', paused: 'Paused', off: 'Off' };
+/** app v1.24: with "Prove each kind first" off, kinds not proven yet buy small while they learn */
+const stateText = (s: PlaybookState, proveFirst: boolean) => (proveFirst ? STATE_TEXT[s] : s === 'watch' ? 'Learning (small size)' : s === 'paused' ? 'Losing lately (small size)' : STATE_TEXT[s]);
+const kindWhy = (e: PlaybookEvidence, proveFirst: boolean) =>
+  proveFirst || (e.state !== 'watch' && e.state !== 'paused')
+    ? e.why
+    : e.state === 'paused'
+      ? `Its newest 20 trades lost on average (${e.last20R === null ? '—' : `${e.last20R >= 0 ? '+' : '−'}${Math.abs(e.last20R).toFixed(2)} R`} before charges) — it still buys with the small size while it learns. Switch it off to stop it.`
+      : `Not proven yet — it buys with the small size (${RISK_SHARE.trial * 100}% of the money at risk) while its results come in. Turn on "Prove each kind first" to follow it without money instead.`;
 const STATE_CLASS: Record<PlaybookState, string> = { proven: 'more', trial: 'less', watch: '', paused: 'paused', off: '' };
 const rText = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)} R`);
 
@@ -331,9 +339,13 @@ function kindLine(e: PlaybookEvidence): string {
 /** app v1.23: each kind of trade with its state — only proven and trial kinds use money. */
 function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; total: number; ctl: BotControls }) {
   const [busy, setBusy] = useState<PlaybookId | null>(null);
+  const [busyMode, setBusyMode] = useState(false);
   const list = bot?.evidence?.list ?? null;
+  const proveFirst = !!protectRules(bot?.rules).proveFirst;
   const shadowOpen = (bot?.shadow?.trades ?? []).filter((t) => t.status === 'open').length;
-  const quickMin = minPositionFor(0.004, (v) => estimateCharges('intraday', 1, v));
+  // app v1.24: with this much money, the largest trade it makes, and the closest safety net its charges allow
+  const cap = maxPositionFor(total);
+  const minStop = cap > 0 ? estimateCharges('intraday', 1, cap) / (MAX_CHARGES_R * cap) : 0;
   const toggle = (id: PlaybookId, off: boolean) => {
     setBusy(id);
     void ctl
@@ -342,12 +354,30 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
       .catch((e: unknown) => toast(errorMessage(e), 'err'))
       .finally(() => setBusy(null));
   };
+  const setMode = (on: boolean) => {
+    setBusyMode(true);
+    void ctl
+      .rules({ proveFirst: on })
+      .then(() => toast(on ? 'Kinds not proven yet: shadow trades first (no money)' : 'Kinds not proven yet: buy small while they learn', 'ok'))
+      .catch((e: unknown) => toast(errorMessage(e), 'err'))
+      .finally(() => setBusyMode(false));
+  };
   return (
     <section class="card" data-testid="bot-kinds">
       <h2>Kinds of trade</h2>
       <p class="tiny muted">
-        Each kind is judged on its own results — its finished trades and its past test on days it never saw, counted cautiously. Only <b>proven</b> kinds ({RISK_SHARE.proven * 100}% of the money at risk a trade) and <b>trial</b> kinds ({RISK_SHARE.trial * 100}%) use money; the others are followed as shadow trades (no money, no alerts) until they show an edge after charges.
+        Each kind is judged on its own results — its finished trades and its past test on days it never saw, counted cautiously. <b>Proven</b> kinds risk {RISK_SHARE.proven * 100}% of the money a trade, <b>trial</b> kinds {RISK_SHARE.trial * 100}%.{' '}
+        {proveFirst ? 'The others are followed as shadow trades (no money, no alerts) until they show an edge after charges.' : `The others buy with the small size too (${RISK_SHARE.trial * 100}%) while they learn — their results decide whether they move up.`}
       </p>
+      <label class="row switch-row">
+        <span class="grow">
+          <b>Prove each kind first</b>
+          <span class="tiny muted" style={{ display: 'block' }}>
+            On: a kind not proven yet is only followed as shadow trades, no money. Off: it buys with the small size while it learns.
+          </span>
+        </span>
+        <input type="checkbox" role="switch" class="switch" data-testid="bot-prove-first" checked={proveFirst} disabled={!ctl.canControl || busyMode} onChange={(ev) => setMode((ev.currentTarget as HTMLInputElement).checked)} />
+      </label>
       {!list ? (
         <p class="small muted">It rates its kinds of trade at its next run{ctl.cloud ? ' (if this stays empty, your server still runs an older version)' : ''}.</p>
       ) : (
@@ -356,10 +386,10 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
             <div class="kind-row" data-kind={e.id} data-state={e.state} key={e.id}>
               <div class="row" style={{ gap: '8px' }}>
                 <b class="grow small">{PLAYBOOK_LABEL[e.id]}</b>
-                <span class={`focus ${STATE_CLASS[e.state]}`}>{STATE_TEXT[e.state]}</span>
+                <span class={`focus ${STATE_CLASS[e.state]}`}>{stateText(e.state, proveFirst)}</span>
               </div>
               <div class="tiny muted">{kindLine(e)}</div>
-              <div class="tiny">{e.why}</div>
+              <div class="tiny">{kindWhy(e, proveFirst)}</div>
               <button class="btn small kind-toggle" type="button" data-testid={`kind-toggle-${e.id}`} disabled={!ctl.canControl || busy === e.id} onClick={() => toggle(e.id, e.state !== 'off')}>
                 {e.state === 'off' ? 'Switch on' : 'Switch off'}
               </button>
@@ -372,9 +402,9 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
           {shadowOpen} shadow trade{shadowOpen === 1 ? '' : 's'} open — followed with no money.
         </p>
       )}
-      {maxPositionFor(total) < quickMin && (
+      {minStop > 0.004 && (
         <p class="tiny bot-gap" data-testid="bot-small-money">
-          With {formatINR(total, 0)} it skips the Rising now quick trades: with their 0.4% safety net, Upstox's charges would be more than a quarter of the risk on any trade below {formatINR(quickMin, 0)}.
+          With {formatINR(total, 0)} each trade is at most {formatINR(cap, 0)}. At that size Upstox's charges allow only trades whose safety net is at least {(minStop * 100).toFixed(1)}% below the price — most quick intraday trades are skipped, so it trades rarely. A bigger amount lets it take more trades.
         </p>
       )}
     </section>
@@ -426,6 +456,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
         <span class={`chip ${t.side === 'long' ? 'day buy' : 'day sell'}`}>{t.side === 'long' ? '▲ BUY' : '▼ SELL first'}</span>
         <b class="bt-sym">{t.symbol}</b>
         {t.state === 'trial' && <span class="chip flag">trial size</span>}
+        {t.state === 'learning' && <span class="chip flag">learning · small size</span>}
         {t.explore && <span class="chip flag">test trade</span>}
         <span class="spacer" />
         <span class={`price ${flash}`}>₹{formatNumberIN(px)}</span>
@@ -451,7 +482,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
         <span>{t.side === 'long' ? `target ₹${formatNumberIN(t.target)}` : `safety ₹${formatNumberIN(t.stop0)}`}</span>
       </div>
       <div class="tiny bt-why">
-        {PLAYBOOK_LABEL[playbookOf(t)]}{t.state ? ` · ${t.state === 'proven' ? 'proven kind' : 'trial kind'}` : ''}{t.chargesR !== undefined ? ` · charges ${t.chargesR.toFixed(2)} R` : ''} · {t.reasons.slice(0, 2).join(' · ')}
+        {PLAYBOOK_LABEL[playbookOf(t)]}{t.state ? ` · ${t.state === 'proven' ? 'proven kind' : t.state === 'trial' ? 'trial kind' : 'kind not proven yet'}` : ''}{t.chargesR !== undefined ? ` · charges ${t.chargesR.toFixed(2)} R` : ''} · {t.reasons.slice(0, 2).join(' · ')}
         {t.stop !== t.stop0 && <span class="ok-text"> · {locked > 0 ? `safety net raised to ₹${formatNumberIN(t.stop)} — at least ${formatINR(locked * qty, 0)} profit kept` : 'safety net moved to the buy price — can no longer lose'}</span>}
       </div>
       <button class="btn small" type="button" data-testid="bot-copy" style={{ marginTop: '6px' }} onClick={() => setCopy(!copy)}>

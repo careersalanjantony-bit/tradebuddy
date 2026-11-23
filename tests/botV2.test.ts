@@ -39,9 +39,9 @@ beforeEach(async () => {
   await chrome.storage.session.set({ quotes: quote(K, 100), daySignals: daySignal });
 });
 
-describe('a kind of trade that has not proven itself: shadow trades only', () => {
+describe('a kind of trade that has not proven itself, with "Prove each kind first" on: shadow trades only', () => {
   it('no money, no alert, no new version — and its result becomes evidence', async () => {
-    await seed();
+    await seed({ rules: { proveFirst: true } });
     const b = (await runBot(NOW, true))!;
     expect(b.trades).toHaveLength(0);
     expect(b.shadow?.trades).toHaveLength(1);
@@ -79,6 +79,29 @@ describe('a kind of trade that has not proven itself: shadow trades only', () =>
     expect(b.shadow?.trades ?? []).toHaveLength(0);
     await botSetPlaybook('day-buy', false, NOW + 1_000);
     expect((await bot()).playbooks?.['day-buy']).toBeUndefined();
+  });
+});
+
+describe('buy now (the default, app 1.24): a kind not proven yet buys with the small size while it learns', () => {
+  it('a fresh auto-trader buys — no shadow trade — alerts it, and the result becomes evidence', async () => {
+    await seed();
+    const b = (await runBot(NOW, true))!;
+    expect(b.trades).toHaveLength(1);
+    const t = b.trades[0]!;
+    expect(t).toMatchObject({ key: K, playbook: 'day-buy', state: 'learning' });
+    expect(t.riskRupees).toBeLessThanOrEqual(1_000_000 * 0.0025 + 50);
+    expect(t.sizeWhy).toMatch(/^Learning \(kind not proven yet, small size\)/);
+    expect(b.shadow?.trades ?? []).toHaveLength(0);
+    expect(b.rev).toBe(6);
+    await settled();
+    expect(alertIds()).toContain(`alert:bot-open-${t.id}`);
+    const msg = (chrome.notifications.create.mock.calls as Array<[string, { message?: string }]>).find((c) => c[0] === `alert:bot-open-${t.id}`)?.[1]?.message ?? '';
+    expect(msg).toMatch(/Learning: kind not proven yet \(small size\)/);
+    await chrome.storage.session.set({ quotes: quote(K, 102.1, { fetchedAt: NOW + 60_000 }) });
+    const c = (await runBot(NOW + 60_000, true))!;
+    expect(c.trades[0]!.status).toBe('closed');
+    expect(c.samples?.['day-buy']).toHaveLength(1);
+    expect(c.samples?.['day-buy']?.[0]?.shadow).toBeUndefined();
   });
 });
 
@@ -191,8 +214,8 @@ describe('the Intraday scanner’s BUY as a new source', () => {
   });
   const proven: RecordDay[] = [{ date: '2026-11-20', items: Array.from({ length: 22 }, (_, i) => ({ key: `K${i}`, symbol: `S${i}`, side: 'buy' as const, at: i, entry: 100, exit: 101, outcome: 'target' as const, t1Hit: false, qty: 10, pnl: 9 })) }];
 
-  it('shadow only until the scanner’s own record is proven, whatever its other results', async () => {
-    await seed({ samples: provenRecord('intraday-buy') });
+  it('proving first: shadow only until the scanner’s own record is proven, whatever its other results', async () => {
+    await seed({ samples: provenRecord('intraday-buy'), rules: { proveFirst: true } });
     await chrome.storage.session.set({ daySignals: null, intraday: intraday() });
     const b = (await runBot(NOW, true))!;
     expect(b.trades).toHaveLength(0);

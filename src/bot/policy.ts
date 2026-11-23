@@ -138,7 +138,8 @@ export interface Decision {
   qty: number;
   /** ₹ it can lose at the safety net */
   riskRupees: number;
-  state: 'trial' | 'proven';
+  /** app v1.24: 'learning' = a kind not proven yet that buys with the small trial size ("Prove each kind first" off) */
+  state: 'trial' | 'proven' | 'learning';
   /** this trade's charges in R */
   chargesR: number;
   /** what it is worth after its charges: the playbook's safe estimate minus chargesR (R) */
@@ -166,6 +167,7 @@ const pctText = (x: number) => `${Math.round(x * 10000) / 100}%`;
 const formatRs = (x: number) => `₹${Math.round(x).toLocaleString('en-IN')}`;
 const rText = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)} R`;
 const RANK: Record<PlaybookState, number> = { proven: 4, trial: 3, watch: 2, paused: 1, off: 0 };
+const STATE_RANK: Record<Decision['state'], number> = { proven: 2, trial: 1, learning: 0 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The state a playbook trades with now (braked for today = no money today). */
@@ -229,8 +231,11 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
   }
   const scored = [...best.values()];
 
-  // 3. playbooks that may not trade (watch, paused, two losses today): followed as shadow trades, sized as a trial
-  const allowed: Array<{ s: Scored; e: PlaybookEvidence; state: 'trial' | 'proven' }> = [];
+  // 3. kinds not proven yet (watch, paused): with "Prove each kind first" off (the default, app v1.24) they buy
+  //    with the small trial size while they learn; with it on they are followed as shadow trades (no money).
+  //    Two losing trades today: no money for that kind today (a shadow trade only when proving first).
+  const proveFirst = !!book.rules?.proveFirst;
+  const allowed: Array<{ s: Scored; e: PlaybookEvidence | undefined; state: 'trial' | 'proven' | 'learning' }> = [];
   const shadow: ShadowPick[] = [];
   for (const s of scored) {
     const e = c.evidence[s.playbook];
@@ -241,6 +246,10 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
       continue;
     }
     if (state === 'off') continue;
+    if (!proveFirst) {
+      if (!braked) allowed.push({ s, e, state: 'learning' });
+      continue;
+    }
     const perShare = Math.abs(s.price - s.stop);
     const cap = protect ? maxPositionFor(book.equity) : Infinity;
     const qty = Math.max(1, Math.min(Math.floor((book.equity * RISK_SHARE.trial) / perShare), Math.floor(cap / s.price)));
@@ -269,7 +278,7 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
   const sizeOf = (x: (typeof allowed)[number], room: { free: number; openRisk: number; swingRoom: number }) => {
     const { s, state } = x;
     const perShare = Math.abs(s.price - s.stop);
-    const share = riskShareFor(state, protect ?? undefined) * dd;
+    const share = riskShareFor(state === 'learning' ? 'trial' : state, protect ?? undefined) * dd;
     let qty = Math.floor((book.equity * share) / perShare);
     const fillPrice = s.price * 1.002; // the fill can be a little worse than the live price
     const cash = Math.min(room.free * 0.995, perTrade, s.strategy === 'swing' ? room.swingRoom : Infinity);
@@ -281,13 +290,13 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
     if (qty < 1 || qty * s.price < MIN_POSITION) return { qty: 0, why: byHeat ? ('heat' as const) : ('small' as const), share, perShare, chargesR: 0, edgeR: 0 };
     const chargesR = c.charges(s.strategy === 'swing' ? 'delivery' : 'intraday', qty, s.price) / (qty * perShare);
     if (chargesR > MAX_CHARGES_R) return { qty: 0, why: 'charges' as const, share, perShare, chargesR, edgeR: 0 };
-    const edgeR = x.e.safeR! - chargesR;
+    const edgeR = state === 'learning' ? s.chance * s.rewardR - (1 - s.chance) - chargesR : x.e!.safeR! - chargesR;
     if (edgeR < MIN_EDGE_R) return { qty: 0, why: 'edge' as const, share, perShare, chargesR, edgeR };
     return { qty, why: null, share, perShare, chargesR, edgeR };
   };
   const ranked = allowed
     .map((x) => ({ x, first: sizeOf(x, { free, openRisk, swingRoom }) }))
-    .sort((a, b) => b.first.edgeR - a.first.edgeR || b.x.s.chance - a.x.s.chance);
+    .sort((a, b) => STATE_RANK[b.x.state] - STATE_RANK[a.x.state] || b.first.edgeR - a.first.edgeR || b.x.s.chance - a.x.s.chance);
 
   const decisions: Decision[] = [];
   for (const { x } of ranked) {
@@ -316,7 +325,7 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
       state: x.state,
       chargesR: Math.round(z.chargesR * 1000) / 1000,
       edgeR: Math.round(z.edgeR * 1000) / 1000,
-      sizeWhy: `${x.state === 'proven' ? 'Proven kind' : 'Trial kind (small size)'}: ${formatRs(riskRupees)} at risk (${pctText(riskRupees / book.equity)} of its money${dd < 1 ? ', halved by the drawdown brake' : ''}), charges ${z.chargesR.toFixed(2)} R, worth ${rText(z.edgeR)} after charges.`,
+      sizeWhy: `${x.state === 'proven' ? 'Proven kind' : x.state === 'trial' ? 'Trial kind (small size)' : 'Learning (kind not proven yet, small size)'}: ${formatRs(riskRupees)} at risk (${pctText(riskRupees / book.equity)} of its money${dd < 1 ? ', halved by the drawdown brake' : ''}), charges ${z.chargesR.toFixed(2)} R, ${x.state === 'learning' ? 'the brain’s estimate' : 'worth'} ${rText(z.edgeR)} after charges.`,
     });
   }
 

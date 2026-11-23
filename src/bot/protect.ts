@@ -27,9 +27,15 @@ export interface ProtectRules {
   swingSharePct: number;
   /** a same-day trade that has not moved after this many minutes is closed */
   quickExitMin: number;
+  /**
+   * app v1.24: a kind of trade not proven yet is only followed as shadow trades (no money) until it proves
+   * itself (true), or it buys with the small trial size while it learns (false, the default). Independent of
+   * `on`: it applies with the protection off too.
+   */
+  proveFirst?: boolean;
 }
 
-export const DEFAULT_PROTECT: ProtectRules = { on: true, lockStartPct: 0.4, giveBack: 0.5, dayLossPct: 1, swingSharePct: 30, quickExitMin: 45 };
+export const DEFAULT_PROTECT: ProtectRules = { on: true, lockStartPct: 0.4, giveBack: 0.5, dayLossPct: 1, swingSharePct: 30, quickExitMin: 45, proveFirst: false };
 
 /** The choices offered on screen. */
 export const PROTECT_CHOICES = {

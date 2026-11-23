@@ -87,8 +87,8 @@ export interface BotTrade {
   product?: 'intraday' | 'delivery';
   /** app v1.23: the kind of trade it was judged as (older trades: read with bot/playbooks.playbookOf) */
   playbook?: PlaybookId;
-  /** app v1.23: the kind's state when it was opened (trial = small size) */
-  state?: PlaybookState;
+  /** app v1.23: the kind's state when it was opened (trial = small size; app v1.24: learning = not proven yet, small size) */
+  state?: PlaybookState | 'learning';
   /** app v1.23: its charges in R when it was opened */
   chargesR?: number;
   /** app v1.23: the result in R before charges (the evidence counts this, bot/evidence.ts) */
@@ -1236,7 +1236,7 @@ export function botSetRules(patch: Partial<ProtectRules>, now = Date.now(), o?: 
     const stored = await beginChange(o);
     const bot = await getBot(now);
     const rules = protectRules({ ...protectRules(bot.rules), ...patch });
-    await saveBot(addLog({ ...bot, rules }, now, 'info', `${rules.on ? `Protection: keep the profit from +${rules.lockStartPct}%, daily loss limit −${rules.dayLossPct}%, few-days picks at most ${rules.swingSharePct}%, quick exit ${rules.quickExitMin ? `after ${rules.quickExitMin} min` : 'off'}` : 'Protection switched off (as before 1.13: no day limits)'}${fromWhom(by)}.`), now, true, stored);
+    await saveBot(addLog({ ...bot, rules }, now, 'info', `${rules.on ? `Protection: keep the profit from +${rules.lockStartPct}%, daily loss limit −${rules.dayLossPct}%, few-days picks at most ${rules.swingSharePct}%, quick exit ${rules.quickExitMin ? `after ${rules.quickExitMin} min` : 'off'}` : 'Protection switched off (as before 1.13: no day limits)'}; kinds not proven yet: ${rules.proveFirst ? 'shadow trades first (no money)' : 'buy small while they learn'}${fromWhom(by)}.`), now, true, stored);
     return rules;
   });
 }
@@ -1284,7 +1284,7 @@ async function alertOpen(t: BotTrade): Promise<void> {
   const kind = PLAYBOOK_LABEL[playbookOf(t)];
   await notify(`alert:bot-open-${t.id}`, {
     title: `🤖 Auto-trader ${t.side === 'long' ? 'bought' : 'sold first'} ${t.qty} ${t.symbol} at ${px(t.entry)}`,
-    message: `${copyLine(copyOf(t))} ${t.state === 'proven' ? 'Proven kind' : 'Trial kind (small size)'} · ${kind.toLowerCase()}.`,
+    message: `${copyLine(copyOf(t))} ${t.state === 'proven' ? 'Proven kind' : t.state === 'trial' ? 'Trial kind (small size)' : 'Learning: kind not proven yet (small size)'} · ${kind.toLowerCase()}.`,
     priority: 2,
     detail: { symbol: t.symbol, key: t.key, side: t.side === 'long' ? 'buy' : 'sell', source: `Auto-trader · ${kind}`, entry: t.entry, stop: t.stop, targets: t.t1 !== undefined ? [t.t1, t.target] : [t.target], qty: t.qty, risk: Math.round(Math.abs(t.entry - t.stop) * t.qty), score: null, reasons: t.reasons },
   });

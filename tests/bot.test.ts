@@ -110,9 +110,10 @@ describe('auto-trader decisions and size (evidence first, app v1.23)', () => {
     expect(rising.decisions.map((d) => d.idea.key)).toEqual(['A']);
   });
 
-  it('only trial and proven kinds get money; the others are followed as shadow trades, off ones not at all', () => {
+  it('prove each kind first (switch on): only trial and proven kinds get money; the others are followed as shadow trades, off ones not at all', () => {
     const evidence = { ...allIn('proven'), 'day-buy': ev('day-buy', 'watch', -0.1), 'rise-strong': ev('rise-strong', 'paused', -0.3), breakout: ev('breakout', 'off') };
-    const plan = decide(newBrain(), [idea('A'), quick('B'), idea('C', { strategy: 'breakout', playbook: 'breakout' })], book(), decideCtx({ evidence }));
+    const prove = { ...R, proveFirst: true };
+    const plan = decide(newBrain(), [idea('A'), quick('B'), idea('C', { strategy: 'breakout', playbook: 'breakout' })], book({ rules: prove }), decideCtx({ evidence }));
     expect(plan.decisions).toHaveLength(0);
     expect(plan.shadow.map((x) => x.idea.key).sort()).toEqual(['A', 'B']);
     const a = plan.shadow.find((x) => x.idea.key === 'A')!;
@@ -120,9 +121,29 @@ describe('auto-trader decisions and size (evidence first, app v1.23)', () => {
     expect(a.why).toBe('watch (test)');
     expect(plan.note).toMatch(/2 ideas of kinds not proven yet \(followed as shadow trades, no money\)/);
     // two losing trades today: that kind is followed without money for the rest of the day
-    const braked = decide(newBrain(), [idea('A')], book(), decideCtx({ braked: new Set(['day-buy']) }));
+    const braked = decide(newBrain(), [idea('A')], book({ rules: prove }), decideCtx({ braked: new Set(['day-buy']) }));
     expect(braked.decisions).toHaveLength(0);
     expect(braked.shadow[0]!.why).toBe('two losing trades today');
+  });
+
+  it('buy now (the default, app 1.24): kinds not proven yet buy with the small size while they learn — proven ones first, no shadow trades', () => {
+    const evidence = { ...allIn('proven'), 'day-buy': ev('day-buy', 'watch', -0.1), 'rise-strong': ev('rise-strong', 'paused', -0.3), breakout: ev('breakout', 'off') };
+    const swing = idea('D', { strategy: 'swing', playbook: 'swing-pick', ctx: ctx({ strategy: 'swing', riskPct: 10 }) });
+    const plan = decide(newBrain(), [idea('A'), quick('B'), idea('C', { strategy: 'breakout', playbook: 'breakout' }), swing], book(), decideCtx({ evidence }));
+    expect(plan.shadow).toEqual([]);
+    expect(plan.decisions.map((d) => d.idea.key)).toEqual(['D', 'A', 'B']); // proven first; the switched-off breakout not at all
+    expect(plan.decisions.map((d) => d.state)).toEqual(['proven', 'learning', 'learning']);
+    const a = plan.decisions[1]!;
+    expect(a.riskRupees).toBe(12_500); // the trial size: 0.25 % of ₹50 lakh
+    expect(a.sizeWhy).toMatch(/^Learning \(kind not proven yet, small size\): ₹12,500 at risk/);
+    expect(a.edgeR).toBeGreaterThan(0.05); // the brain's own estimate after this trade's real charges
+    // two losing trades of that kind today: no money for it today, and no shadow trade either
+    const braked = decide(newBrain(), [idea('A')], book(), decideCtx({ evidence, braked: new Set(['day-buy']) }));
+    expect(braked.decisions).toHaveLength(0);
+    expect(braked.shadow).toEqual([]);
+    // not worth it by the brain's estimate after charges: not taken
+    const poor = idea('P', { stop: 990, target: 1005, ctx: ctx({ strategy: 'day-buy', prior: 0.2, riskPct: 1 }) });
+    expect(decide(newBrain(), [poor], book(), decideCtx({ evidence })).note).toMatch(/worth less than \+0\.05 R after charges/);
   });
 
   it('one idea per stock: the kind with the better state wins', () => {
