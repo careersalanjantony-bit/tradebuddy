@@ -856,12 +856,16 @@ console.log('── Sell-first analysis + remembered filters and scroll');
 // the short filter is still chosen from the section above; open the falling stock's sell-first view
 await page.evaluate((k) => (location.hash = `/stock/${encodeURIComponent(`${k}~short`)}`), fallKey());
 await page.waitForSelector('[data-testid="short-analysis"]', { timeout: 10000 }).catch(() => {});
-const saReady = await until(async () => ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').includes('Live plan'), 15000);
+// the plan needs the stock's price history, loaded through the rate-limited history queue: on a slow
+// machine that can take longer than the page itself (the time it took is printed with the check)
+const saStart = Date.now();
+const saReady = await until(async () => ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').includes('Live plan'), 60000);
+const saSecs = ((Date.now() - saStart) / 1000).toFixed(1);
 const saText = ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
   'a short-selling stock opens its full sell-first analysis: entry, stop-loss, two targets, quantity, risk : reward, RSI, VWAP, volume, trend, news',
   saReady && ['Sell first at', 'Stop-loss', 'Target 1', 'Target 2', 'Quantity', 'Risk : reward', 'RSI 14', 'VWAP', 'Volume', 'Trend', 'News'].every((t) => saText.includes(t)) && /1 : \d/.test(saText),
-  saText.slice(0, 220),
+  `ready after ${saSecs} s · ${saText.slice(0, 220)}`,
 );
 check('the stock page has a Buy view / Sell-first view switch, opened on Sell-first', (await page.getAttribute('[data-testid="stock-view"] [data-view="short"]', 'aria-selected')) === 'true');
 await revealAll();
