@@ -2,7 +2,8 @@ import { useState } from 'preact/hooks';
 import { STRATEGIES, STRATEGY_LABEL, topLessons } from '../../bot/brain';
 import type { PlaybookEvidence, PlaybookState } from '../../bot/evidence';
 import { PLAYBOOK_LABEL, playbookOf, type PlaybookId } from '../../bot/playbooks';
-import { BOT_START, MAX_CHARGES_R, MAX_OPEN_RISK, MAX_PER_INDUSTRY, MIN_EDGE_R, minPositionFor, RISK_SHARE, SWING_MAX_DAYS } from '../../bot/policy';
+import { AGAINST_MARKET_SIZE, BOT_START, MAX_CHARGES_R, MAX_LEARNING_OPEN, MAX_OPEN_RISK, MAX_PER_INDUSTRY, MIN_EDGE_R, minPositionFor, RISK_SHARE, SWING_MAX_DAYS } from '../../bot/policy';
+import { EVIDENCE } from '../../bot/evidence';
 import { DRAWDOWN, PROTECT_CHOICES, keepLevel, maxOpenFor, maxPositionFor, protectRules, type ProtectRules } from '../../bot/protect';
 import { copySteps } from '../../bot/copy';
 import type { BotState, BotTrade } from '../../background/botJobs';
@@ -270,12 +271,12 @@ export function AutoTraderView() {
           <ul>
             <li>Every minute from 9:30 am it looks at today's day-trade buy signals, Rising now, the top picks, the "Falling now" sell-first ideas, breakouts and the Intraday scanner's BUY.</li>
             <li>
-              Each kind of trade is judged on its own results (app 1.23): its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). Only <b>proven</b> kinds (30 trades, safe estimate +0.10 R or better) and <b>trial</b> kinds (safe estimate 0 R or better) use money; the others are followed as shadow trades — no money, no alerts — until they show an edge. A kind whose newest 20 trades average below −0.05 R is paused until they reach +0.10 R. You can switch any kind off.
+              Each kind of trade is judged on its own results: its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). <b>Proven</b> kinds ({EVIDENCE.provenMinN} trades, safe estimate +{EVIDENCE.provenMinSafeR.toFixed(2)} R or better) and <b>trial</b> kinds ({EVIDENCE.trialMinN} trades, safe estimate 0 R or better) use their normal sizes; kinds <b>not proven yet</b> trade at a small learning size (at most {MAX_LEARNING_OPEN} such trades at once) so they build a record. A kind whose newest 20 trades average below −0.05 R is paused — followed as shadow trades, no money — until they reach +0.10 R. You can switch any kind off.
             </li>
             <li>
-              Size: {RISK_SHARE.proven * 100}% of its money at risk on a proven kind, {RISK_SHARE.trial * 100}% on a trial kind — never more than half the daily loss limit. All open trades together risk at most {MAX_OPEN_RISK * 100}%, at most {MAX_PER_INDUSTRY} open trades per industry. A trade is skipped when Upstox's charges for its size would be more than {MAX_CHARGES_R * 100}% of its risk, or when its kind's safe estimate minus those charges is below +{MIN_EDGE_R} R.
+              Size: {RISK_SHARE.proven * 100}% of its money at risk on a proven kind, {RISK_SHARE.trial * 100}% on a trial kind, {RISK_SHARE.learning * 100}% on a kind not proven yet — never more than half the daily loss limit. All open trades together risk at most {MAX_OPEN_RISK * 100}%, at most {MAX_PER_INDUSTRY} open trades per industry. A trade is skipped when Upstox's charges for its size would be more than {MAX_CHARGES_R * 100}% of its risk, or (trial and proven kinds) when its kind's safe estimate minus those charges is below {MIN_EDGE_R} R.
             </li>
-            <li>No new buys while the market is falling, no new sell-first trades while it is rising — the same rules as the alerts.</li>
+            <li>With the market's direction: no new buys while the market is falling, no new sell-first trades while it is rising — the same rules as the alerts. Only trial and proven kinds may go against it, at {AGAINST_MARKET_SIZE * 100}% of their size.</li>
             <li>
               With <b>Protect my money</b> on (the default): at most one stock per ₹25,000 (up to 10 at once), each at most a fair share of the money; "hold a few days" picks only up to their share; no buy on stocks with bad news today, nothing against a market clearly going the other way. It keeps the day's profit and stops at the daily loss limit (see above); two losing trades of one kind stop that kind for the day. No new same-day trades after 2:30 pm (closed by 3:10), top picks until 3:15.
             </li>
@@ -318,7 +319,7 @@ export function AutoTraderView() {
   );
 }
 
-const STATE_TEXT: Record<PlaybookState, string> = { proven: 'Proven', trial: 'Trial (small size)', watch: 'Not proven yet', paused: 'Paused', off: 'Off' };
+const STATE_TEXT: Record<PlaybookState, string> = { proven: 'Proven', trial: 'Trial (small size)', watch: 'Not proven yet · learning size', paused: 'Paused', off: 'Off' };
 const STATE_CLASS: Record<PlaybookState, string> = { proven: 'more', trial: 'less', watch: '', paused: 'paused', off: '' };
 const rText = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)} R`);
 
@@ -328,7 +329,7 @@ function kindLine(e: PlaybookEvidence): string {
   return 'No results yet';
 }
 
-/** app v1.23: each kind of trade with its state — only proven and trial kinds use money. */
+/** app v1.23: each kind of trade with its state (app v1.24: kinds not proven yet trade at a learning size). */
 function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; total: number; ctl: BotControls }) {
   const [busy, setBusy] = useState<PlaybookId | null>(null);
   const list = bot?.evidence?.list ?? null;
@@ -346,7 +347,7 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
     <section class="card" data-testid="bot-kinds">
       <h2>Kinds of trade</h2>
       <p class="tiny muted">
-        Each kind is judged on its own results — its finished trades and its past test on days it never saw, counted cautiously. Only <b>proven</b> kinds ({RISK_SHARE.proven * 100}% of the money at risk a trade) and <b>trial</b> kinds ({RISK_SHARE.trial * 100}%) use money; the others are followed as shadow trades (no money, no alerts) until they show an edge after charges.
+        Each kind is judged on its own results — its finished trades and its past test on days it never saw, counted cautiously. <b>Proven</b> kinds risk {RISK_SHARE.proven * 100}% of the money a trade, <b>trial</b> kinds {RISK_SHARE.trial * 100}%, kinds <b>not proven yet</b> {RISK_SHARE.learning * 100}% (learning size, at most {MAX_LEARNING_OPEN} at once). Paused kinds are followed as shadow trades (no money, no alerts) until they recover.
       </p>
       {!list ? (
         <p class="small muted">It rates its kinds of trade at its next run{ctl.cloud ? ' (if this stays empty, your server still runs an older version)' : ''}.</p>
@@ -374,7 +375,7 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
       )}
       {maxPositionFor(total) < quickMin && (
         <p class="tiny bot-gap" data-testid="bot-small-money">
-          With {formatINR(total, 0)} it skips the Rising now quick trades: with their 0.4% safety net, Upstox's charges would be more than a quarter of the risk on any trade below {formatINR(quickMin, 0)}.
+          With {formatINR(total, 0)} it skips the Rising now quick trades: with their 0.4% safety net, Upstox's charges would be more than {MAX_CHARGES_R * 100}% of the risk on any trade below {formatINR(quickMin, 0)}.
         </p>
       )}
     </section>
@@ -426,6 +427,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
         <span class={`chip ${t.side === 'long' ? 'day buy' : 'day sell'}`}>{t.side === 'long' ? '▲ BUY' : '▼ SELL first'}</span>
         <b class="bt-sym">{t.symbol}</b>
         {t.state === 'trial' && <span class="chip flag">trial size</span>}
+        {t.state === 'watch' && <span class="chip flag">learning size</span>}
         {t.explore && <span class="chip flag">test trade</span>}
         <span class="spacer" />
         <span class={`price ${flash}`}>₹{formatNumberIN(px)}</span>
@@ -451,7 +453,7 @@ function OpenTrade({ t, ltp, now }: { t: BotTrade; ltp: number | null; now: numb
         <span>{t.side === 'long' ? `target ₹${formatNumberIN(t.target)}` : `safety ₹${formatNumberIN(t.stop0)}`}</span>
       </div>
       <div class="tiny bt-why">
-        {PLAYBOOK_LABEL[playbookOf(t)]}{t.state ? ` · ${t.state === 'proven' ? 'proven kind' : 'trial kind'}` : ''}{t.chargesR !== undefined ? ` · charges ${t.chargesR.toFixed(2)} R` : ''} · {t.reasons.slice(0, 2).join(' · ')}
+        {PLAYBOOK_LABEL[playbookOf(t)]}{t.state ? ` · ${t.state === 'proven' ? 'proven kind' : t.state === 'trial' ? 'trial kind' : 'not proven yet (learning size)'}` : ''}{t.chargesR !== undefined ? ` · charges ${t.chargesR.toFixed(2)} R` : ''} · {t.reasons.slice(0, 2).join(' · ')}
         {t.stop !== t.stop0 && <span class="ok-text"> · {locked > 0 ? `safety net raised to ₹${formatNumberIN(t.stop)} — at least ${formatINR(locked * qty, 0)} profit kept` : 'safety net moved to the buy price — can no longer lose'}</span>}
       </div>
       <button class="btn small" type="button" data-testid="bot-copy" style={{ marginTop: '6px' }} onClick={() => setCopy(!copy)}>

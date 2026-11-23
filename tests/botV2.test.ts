@@ -11,6 +11,8 @@ import { provenRecord } from './botHelpers';
  * App v1.23 — the auto-trader's loop with evidence first: shadow trades for kinds not proven yet, money
  * for proven ones (their result before charges becomes evidence), the market gate, the drawdown brake,
  * switching a kind off, and the Intraday scanner's BUY as a new source.
+ * App v1.24 — looser rules: kinds not proven yet trade at a small learning size (with the market only);
+ * paused kinds stay shadow trades; proven kinds may go against the market at half size.
  */
 
 const NOW = istEpoch('2026-11-23', '10:30');
@@ -39,10 +41,38 @@ beforeEach(async () => {
   await chrome.storage.session.set({ quotes: quote(K, 100), daySignals: daySignal });
 });
 
-describe('a kind of trade that has not proven itself: shadow trades only', () => {
-  it('no money, no alert, no new version — and its result becomes evidence', async () => {
+/** a kind of trade whose newest 20 trades lost: paused */
+const losingRecord = (id: 'day-buy' = 'day-buy') => ({ [id]: Array.from({ length: 20 }, (_, i) => ({ at: i, grossR: -0.5, netR: -0.6 })) });
+
+describe('a kind of trade that has not proven itself: the learning size (app v1.24)', () => {
+  it('opens with a little money, alerts, a new version — and its result becomes evidence', async () => {
     await seed();
     const b = (await runBot(NOW, true))!;
+    expect(b.trades).toHaveLength(1);
+    const t = b.trades[0]!;
+    expect(t).toMatchObject({ key: K, playbook: 'day-buy', state: 'watch', status: 'open' });
+    expect(t.riskRupees).toBeLessThanOrEqual(1_000_000 * 0.002 + 50); // the learning size: 0.2 % at risk
+    expect(t.chargesR!).toBeLessThanOrEqual(0.5);
+    expect(t.sizeWhy).toMatch(/^Not proven yet \(learning size\)/);
+    expect(b.shadow?.trades ?? []).toHaveLength(0);
+    expect(b.rev).toBe(6);
+    expect(b.evidence?.list.find((e) => e.id === 'day-buy')?.state).toBe('watch');
+    await settled();
+    expect(alertIds()).toContain(`alert:bot-open-${t.id}`);
+    // the target is reached: it closes and counts as evidence (not a shadow one)
+    await chrome.storage.session.set({ quotes: quote(K, 102.1, { fetchedAt: NOW + 60_000 }) });
+    const c = (await runBot(NOW + 60_000, true))!;
+    expect(c.trades[0]!.status).toBe('closed');
+    expect(c.samples?.['day-buy']).toHaveLength(1);
+    expect(c.samples?.['day-buy']?.[0]?.shadow).toBeUndefined();
+  });
+});
+
+describe('a paused kind of trade (its newest 20 lost): shadow trades only', () => {
+  it('no money, no alert, no new version — and its result becomes evidence', async () => {
+    await seed({ samples: losingRecord() });
+    const b = (await runBot(NOW, true))!;
+    expect(b.evidence?.list.find((e) => e.id === 'day-buy')?.state).toBe('paused');
     expect(b.trades).toHaveLength(0);
     expect(b.shadow?.trades).toHaveLength(1);
     const sh = b.shadow!.trades[0]!;
@@ -50,8 +80,7 @@ describe('a kind of trade that has not proven itself: shadow trades only', () =>
     expect(sh.sizeWhy).toMatch(/^Shadow trade \(no money\)/);
     expect(b.wallet.cash).toBe(1_000_000); // the real money is untouched
     expect(b.rev).toBe(5); // a shadow trade never makes a phone's control "outdated"
-    expect(b.note).toMatch(/not proven yet \(followed as shadow trades, no money\)/);
-    expect(b.evidence?.list.find((e) => e.id === 'day-buy')?.state).toBe('watch');
+    expect(b.note).toMatch(/1 idea of paused kinds or kinds with two losses today \(followed as shadow trades, no money\)/);
     await settled();
     expect(alertIds().filter((id) => id.startsWith('alert:bot-'))).toEqual([]);
 
@@ -61,10 +90,10 @@ describe('a kind of trade that has not proven itself: shadow trades only', () =>
     const done = c.shadow!.trades[0]!;
     expect(done.status).toBe('closed');
     expect(done.grossR!).toBeGreaterThan(done.r!);
-    expect(c.samples?.['day-buy']).toHaveLength(1);
-    expect(c.samples?.['day-buy']?.[0]).toMatchObject({ shadow: true });
+    expect(c.samples?.['day-buy']).toHaveLength(21);
+    expect(c.samples?.['day-buy']?.at(-1)).toMatchObject({ shadow: true });
     const e = c.evidence!.list.find((x) => x.id === 'day-buy')!;
-    expect(e).toMatchObject({ n: 1, shadow: 1 });
+    expect(e).toMatchObject({ n: 21, shadow: 1, state: 'paused' });
     await settled();
     expect(alertIds().filter((id) => id.startsWith('alert:bot-'))).toEqual([]);
     expect(c.wallet.cash).toBe(1_000_000);
@@ -103,13 +132,22 @@ describe('a proven kind of trade: money, sized by its state, its result counted 
     expect(c.samples?.['day-buy']).toHaveLength(31);
   });
 
-  it('no new buys while the market falls (the same gate as the alerts) — not even shadow ones', async () => {
+  it('a falling market (the alerts’ gate): a proven kind still buys, at half size (app v1.24)', async () => {
     await seed({ samples: provenRecord('day-buy') });
+    await chrome.storage.session.set({ quotes: { ...quote(K, 100), ...quote(NIFTY, 99.3, { open: 99.5 }) } });
+    const b = (await runBot(NOW, true))!;
+    expect(b.trades).toHaveLength(1);
+    expect(b.trades[0]!.riskRupees).toBeLessThanOrEqual(1_000_000 * 0.0025 + 50); // half of 0.5 %
+    expect(b.trades[0]!.sizeWhy).toMatch(/halved: against the market’s direction/);
+  });
+
+  it('a falling market: a kind not proven yet does not buy — not even shadow trades', async () => {
+    await seed();
     await chrome.storage.session.set({ quotes: { ...quote(K, 100), ...quote(NIFTY, 99.3, { open: 99.5 }) } });
     const b = (await runBot(NOW, true))!;
     expect(b.trades).toHaveLength(0);
     expect(b.shadow?.trades ?? []).toHaveLength(0);
-    expect(b.note).toMatch(/the market is falling \(NIFTY 50 −0\.70% today\)/);
+    expect(b.note).toMatch(/not proven yet not taken: the market is falling \(NIFTY 50 −0\.70% today\)/);
   });
 });
 
@@ -191,13 +229,15 @@ describe('the Intraday scanner’s BUY as a new source', () => {
   });
   const proven: RecordDay[] = [{ date: '2026-11-20', items: Array.from({ length: 22 }, (_, i) => ({ key: `K${i}`, symbol: `S${i}`, side: 'buy' as const, at: i, entry: 100, exit: 101, outcome: 'target' as const, t1Hit: false, qty: 10, pnl: 9 })) }];
 
-  it('shadow only until the scanner’s own record is proven, whatever its other results', async () => {
+  it('the learning size only until the scanner’s own record is proven, whatever its other results (app v1.24)', async () => {
     await seed({ samples: provenRecord('intraday-buy') });
     await chrome.storage.session.set({ daySignals: null, intraday: intraday() });
     const b = (await runBot(NOW, true))!;
-    expect(b.trades).toHaveLength(0);
-    expect(b.shadow?.trades[0]).toMatchObject({ playbook: 'intraday-buy', strategy: 'breakout', shadow: true });
-    expect(b.evidence?.list.find((e) => e.id === 'intraday-buy')?.why).toMatch(/own record is not proven yet/);
+    expect(b.trades[0]).toMatchObject({ playbook: 'intraday-buy', strategy: 'breakout', state: 'watch' });
+    expect(b.trades[0]!.riskRupees).toBeLessThanOrEqual(1_000_000 * 0.002 + 50);
+    const e = b.evidence?.list.find((x) => x.id === 'intraday-buy');
+    expect(e?.state).toBe('watch');
+    expect(e?.why).toMatch(/own record is not proven yet .*learning size/);
   });
 
   it('with money once the record is proven and its results allow; never chased', async () => {

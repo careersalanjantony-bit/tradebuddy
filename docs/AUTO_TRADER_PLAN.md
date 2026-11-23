@@ -12,6 +12,28 @@ that has not shown an edge after charges, and keep each loss small when it is wr
 
 ---
 
+## App 1.24.0 — looser rules (the owner's decision, 23 Nov 2026)
+
+On 23 Nov (NIFTY 50 −1.10 %) the auto-trader on the owner's server looked at 32 ideas and opened none: 22
+buys were stopped by the falling market and 10 sell-first ideas belonged to kinds not proven yet (shadow
+trades only). With ₹1 lakh, Upstox's charges were also more than a quarter of the risk on almost any
+same-day trade, so even a trial kind could rarely trade. The owner chose looser rules:
+
+| Rule | 1.23.0 | 1.24.0 |
+| --- | --- | --- |
+| Kind not proven yet (`watch`) | shadow trades only | money at the **learning size**: 0.2 % at risk, at most 2 open, only with the market; no edge needed; an idea that does not fit is still a shadow trade |
+| Trial / proven | 20 trades (≥ 0 R) / 30 trades (≥ +0.10 R) | **10** trades / **20** trades (same safe estimates) |
+| Charges | at most ¼ of the risk; edge after charges ≥ +0.05 R | at most **½** of the risk; edge after charges ≥ **0 R** (trial and proven) |
+| Against the market's direction | never | trial and proven kinds at **half size**; kinds not proven yet never |
+
+Unchanged: paused kinds and kinds with two losses today are shadow trades; off kinds do nothing; the daily
+loss limit, the profit lock, the drawdown brake (½ at −4 %, stop at −8 %), 2 % open risk in total, 2 trades
+per industry, entry times, news against a stock and the "whole market clearly against it" skip
+(`protect.skipIdea`). A trade keeps its kind's state (`watch` = learning size), so a phone on 1.23.0 still
+reads the state. The sections below describe the 1.23.0 design; where they disagree, this table wins.
+
+---
+
 ## As built (22 Nov 2026) — where the build differs from the plan, and why
 
 1. **Version 1.23.0**, not 1.22.0: 1.22.0 was published on 21 Nov (the cloud auto-trader). PR #4 is merged,

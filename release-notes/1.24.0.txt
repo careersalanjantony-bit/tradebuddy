@@ -1,0 +1,7 @@
+Auto-trader: looser rules, so it trades more. Kinds of trade not proven yet now trade with a small amount (0.2% of its money at risk, at most 2 such trades at once) instead of only being followed without money.
+Auto-trader: a kind becomes "trial" after 10 results (was 20) and "proven" after 20 (was 30).
+Auto-trader: Upstox's charges may now be up to half of a trade's risk (was a quarter), so it can trade with a small amount like ₹1 lakh.
+Auto-trader: proven and trial kinds may now buy on a falling day (or sell first on a rising day) at half size. Kinds not proven yet still follow the market's direction.
+Kept: the daily loss limit, keeping the day's profit, the drawdown brake, at most 2% at risk in all open trades, and pausing a kind that keeps losing.
+It works the same when the auto-trader runs on your server. Your auto-trader's money, trades and learning are kept.
+Not a guarantee - you place every order yourself.

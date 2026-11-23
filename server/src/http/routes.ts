@@ -183,7 +183,7 @@ export function buildRouter(d: ApiDeps): Router {
   /** Trade plans (entry, stop-loss, target, quantity), day trades and the auto-trader's trades (app v1.23: and its kinds of trade) */
   r.add('GET', '/v1/plans', async () => {
     const [plans, dayTrades, bot] = await Promise.all([local('plans'), local('dayTrades'), local('bot')]);
-    // app v1.23: each kind of trade's state (only proven and trial kinds use money), the drawdown stop and the shadow trades
+    // app v1.23: each kind of trade's state (app v1.24: kinds not proven yet trade at a learning size), the drawdown stop and the shadow trades
     const b = bot as { enabled?: boolean; trades?: unknown[]; evidence?: { at: number; list: unknown[] }; ddStop?: unknown; shadow?: { trades?: unknown[] } } | null;
     return answer({
       plans: plans ?? [],

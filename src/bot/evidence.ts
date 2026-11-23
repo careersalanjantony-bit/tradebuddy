@@ -10,6 +10,8 @@ import { PLAYBOOKS, type PlaybookId } from './playbooks';
  * its own finished trades (real and shadow, counted BEFORE charges, because the charges of a future
  * trade depend on its own size) plus its past test on days it was never tuned on, counted cautiously.
  * Only "trial" and "proven" kinds trade with money (bot/policy.ts). Pure: no storage, no network.
+ * App v1.24 (looser rules): kinds not proven yet ("watch") trade too, at a small learning size, and a kind
+ * becomes "trial" after 10 results (was 20) and "proven" after 20 (was 30).
  */
 
 export type PlaybookState = 'proven' | 'trial' | 'watch' | 'paused' | 'off';
@@ -84,8 +86,10 @@ export const EVIDENCE = {
   priorMax: 30,
   /** live fills are worse than tested ones */
   priorHaircutR: 0.05,
-  trialMinN: 20,
-  provenMinN: 30,
+  /** app v1.24: 10 (was 20) */
+  trialMinN: 10,
+  /** app v1.24: 20 (was 30) */
+  provenMinN: 20,
   provenMinSafeR: 0.1,
   pauseLastN: 20,
   pauseBelowR: -0.05,
@@ -167,8 +171,8 @@ export function evaluate(id: PlaybookId, samples: readonly Sample[] | undefined,
   if (state !== 'watch' && cap) return done('watch', cap);
   if (state === 'proven') return done('proven', `Proven: safe estimate ${fmt(safeR!)} per trade before charges, from ${from}.`);
   if (state === 'trial') return done('trial', `Trial (small size): safe estimate ${fmt(safeR!)} per trade before charges, from ${from}. Normal size after ${EVIDENCE.provenMinN} trades at ${fmt(EVIDENCE.provenMinSafeR)} or better.`);
-  if (safeR === null) return done('watch', 'No results yet: it is followed as shadow trades (no money) until it shows an edge.');
-  return done('watch', `Not proven yet: safe estimate ${fmt(safeR)} per trade before charges, from ${from}. Followed as shadow trades (no money) until it reaches ${fmt(0)} with ${EVIDENCE.trialMinN} trades.`);
+  if (safeR === null) return done('watch', `No results yet: it trades at the small learning size (at most 2 such trades at once) until it shows an edge — trial size after ${EVIDENCE.trialMinN} results at ${fmt(0)} or better.`);
+  return done('watch', `Not proven yet: safe estimate ${fmt(safeR)} per trade before charges, from ${from}. It trades at the small learning size until it reaches ${fmt(0)} with ${EVIDENCE.trialMinN} trades.`);
 }
 
 /** Every playbook's state (in the fixed playbook order). */
