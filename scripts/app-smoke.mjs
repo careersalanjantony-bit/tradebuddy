@@ -672,7 +672,7 @@ const miniText = ((await page.textContent('[data-testid="bot-mini"]').catch(() =
 check('Home shows the auto-trader card (money, today, open trades, what it learned from)', miniText.includes('Auto-trader') && /₹\d{2},\d{2},\d{3}/.test(miniText) && miniText.includes('learned from'), miniText.slice(0, 140));
 await page.click('[data-testid="bot-mini"]');
 await page.waitForSelector('[data-testid="bot-view"]', { timeout: 10000 }).catch(() => {});
-// app v1.23: a fresh auto-trader has proven no kind of trade yet — no money, its ideas only followed as shadow trades
+// app v1.23: a fresh auto-trader has proven no kind of trade yet; app v1.24: those kinds trade at the small learning size
 const kindsReady = await until(async () => {
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'bot:run', payload: undefined }));
   return !!(await page.$('[data-testid="bot-kinds"] .kind-row'));
@@ -680,8 +680,8 @@ const kindsReady = await until(async () => {
 const freshBot = await page.evaluate(async () => (await chrome.storage.local.get('bot')).bot);
 const kindsText = ((await page.textContent('[data-testid="bot-kinds"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
-  'a fresh auto-trader has proven no kind of trade: all 8 kinds rated, none "Proven"; a kind is "Trial" only from its own past test, the others are "Not proven yet" and use no money (their ideas are followed as shadow trades)',
-  kindsReady && (freshBot?.evidence?.list ?? []).length === 8 && (freshBot?.evidence?.list ?? []).every((e) => e.state === 'watch' || (e.state === 'trial' && e.priorCounted)) && (freshBot?.trades ?? []).every((t) => t.state === 'trial') && kindsText.includes('Not proven yet') && kindsText.includes('Day-trade buy signals'),
+  'a fresh auto-trader has proven no kind of trade: all 8 kinds rated, none "Proven"; a kind is "Trial" only from its own past test, the others are "Not proven yet · learning size" (app 1.24: their trades risk only 0.2% of the money, at most 2 at once)',
+  kindsReady && (freshBot?.evidence?.list ?? []).length === 8 && (freshBot?.evidence?.list ?? []).every((e) => e.state === 'watch' || (e.state === 'trial' && e.priorCounted)) && (freshBot?.trades ?? []).every((t) => t.state === 'trial' || (t.state === 'watch' && t.riskRupees <= (freshBot.wallet?.startCash ?? 5_000_000) * 0.002 + 50)) && (freshBot?.trades ?? []).filter((t) => t.state === 'watch' && t.status === 'open').length <= 2 && kindsText.includes('Not proven yet · learning size') && kindsText.includes('Day-trade buy signals'),
   `${(freshBot?.shadow?.trades ?? []).length} shadow, ${(freshBot?.trades ?? []).length} real trades · ${(freshBot?.evidence?.list ?? []).map((e) => `${e.id} ${e.state}`).join(', ')}`,
 );
 await page.screenshot({ animations: 'disabled', path: join(out, 'app-bot-kinds.png') });
@@ -696,7 +696,7 @@ const provenNow = await until(async () => {
   });
   return page.evaluate(async () => ((await chrome.storage.local.get('bot')).bot?.evidence?.list ?? []).filter((e) => e.state === 'proven').length === 7);
 }, 15000);
-check('with a proven record (30 finished trades a kind) seven kinds turn "Proven"; the Intraday BUY stays shadow until the scanner’s own record is proven', provenNow);
+check('with a proven record (30 finished trades a kind) seven kinds turn "Proven"; the Intraday BUY stays at the learning size until the scanner’s own record is proven', provenNow);
 const botTraded = await until(async () => {
   await page.evaluate(() => chrome.runtime.sendMessage({ __swing: true, type: 'bot:run', payload: undefined }));
   return (await page.$$('[data-testid="bot-trade"]')).length >= 1;
@@ -706,8 +706,8 @@ const heroText = ((await page.textContent('[data-testid="bot-hero"]').catch(() =
 check('Auto-trader: ₹50 lakh of pretend money, trading by itself in market hours', botState?.wallet?.startCash === 5000000 && heroText.includes('Trading by itself'), heroText.slice(0, 120));
 const openBot = (botState?.trades ?? []).filter((t) => t.status === 'open');
 check(
-  'it opened trades by itself — each with a safety net, a target, reasons; protected: at most 10 stocks for ₹50 lakh, each at most 15% of the money, same-day buys as Intraday (no borrowing), at most 0.5% at risk per trade and 2% for all of them, charges at most a quarter of the risk',
-  botTraded && openBot.length > 0 && openBot.length <= 10 && openBot.reduce((sum, t) => sum + t.qty * t.entry, 0) <= 5e6 + 1 && openBot.reduce((sum, t) => sum + t.riskRupees, 0) <= 0.02 * 5e6 + 100 && openBot.every((t) => t.qty * t.entry <= 0.15 * 5e6 * 1.01 && t.riskRupees <= 0.005 * 5e6 + 100 && t.state === 'proven' && t.chargesR <= 0.25 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy && (t.strategy === 'swing' || t.side === 'short' || t.product === 'intraday')),
+  'it opened trades by itself — each with a safety net, a target, reasons; protected: at most 10 stocks for ₹50 lakh, each at most 15% of the money, same-day buys as Intraday (no borrowing), at most 0.5% at risk per trade (0.25% on a trial kind, 0.2% for a kind not proven yet, at most 2 of those) and 2% for all of them, charges at most half the risk (app 1.24)',
+  botTraded && openBot.length > 0 && openBot.length <= 10 && openBot.reduce((sum, t) => sum + t.qty * t.entry, 0) <= 5e6 + 1 && openBot.reduce((sum, t) => sum + t.riskRupees, 0) <= 0.02 * 5e6 + 100 && openBot.filter((t) => t.state === 'watch').length <= 2 && openBot.every((t) => t.qty * t.entry <= 0.15 * 5e6 * 1.01 && ((t.state === 'proven' && t.riskRupees <= 0.005 * 5e6 + 100) || (t.state === 'trial' && t.riskRupees <= 0.0025 * 5e6 + 100) || (t.state === 'watch' && t.riskRupees <= 0.002 * 5e6 + 100)) && t.chargesR <= 0.5 && t.stop0 !== t.entry && t.reasons.length > 0 && t.sizeWhy && (t.strategy === 'swing' || t.side === 'short' || t.product === 'intraday')),
   openBot.map((t) => `${t.side} ${t.qty} ${t.symbol} @${t.entry} (${t.playbook}, ${t.state}, risk ₹${t.riskRupees}, charges ${t.chargesR} R)`).join('; '),
 );
 check('each open trade moves live on a bar: safety net ← price → target', !!(await page.$('[data-testid="bot-trade"] .trade-track .mark.now')));
@@ -856,12 +856,17 @@ console.log('── Sell-first analysis + remembered filters and scroll');
 // the short filter is still chosen from the section above; open the falling stock's sell-first view
 await page.evaluate((k) => (location.hash = `/stock/${encodeURIComponent(`${k}~short`)}`), fallKey());
 await page.waitForSelector('[data-testid="short-analysis"]', { timeout: 10000 }).catch(() => {});
-const saReady = await until(async () => ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').includes('Live plan'), 15000);
+// the plan needs the stock's price history, loaded through the rate-limited history queue: on a slow
+// machine that can take longer than the page itself (GitHub's runner in market hours: 47 s, behind the
+// start-up study of a year of prices at 30 histories a minute; the time it took is printed with the check)
+const saStart = Date.now();
+const saReady = await until(async () => ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').includes('Live plan'), 120000);
+const saSecs = ((Date.now() - saStart) / 1000).toFixed(1);
 const saText = ((await page.textContent('[data-testid="short-analysis"]').catch(() => '')) ?? '').replace(/\s+/g, ' ');
 check(
   'a short-selling stock opens its full sell-first analysis: entry, stop-loss, two targets, quantity, risk : reward, RSI, VWAP, volume, trend, news',
   saReady && ['Sell first at', 'Stop-loss', 'Target 1', 'Target 2', 'Quantity', 'Risk : reward', 'RSI 14', 'VWAP', 'Volume', 'Trend', 'News'].every((t) => saText.includes(t)) && /1 : \d/.test(saText),
-  saText.slice(0, 220),
+  `ready after ${saSecs} s · ${saText.slice(0, 220)}`,
 );
 check('the stock page has a Buy view / Sell-first view switch, opened on Sell-first', (await page.getAttribute('[data-testid="stock-view"] [data-view="short"]', 'aria-selected')) === 'true');
 await revealAll();

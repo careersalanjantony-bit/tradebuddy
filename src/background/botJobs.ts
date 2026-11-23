@@ -856,7 +856,7 @@ export function samplesFromTrades(bot: BotState): SampleBook {
   return book;
 }
 
-const INTRADAY_UNPROVEN = 'The Intraday scanner’s own record is not proven yet (20 finished BUY alerts, more wins than losses, money made after charges): followed as shadow trades until it is.';
+const INTRADAY_UNPROVEN = 'The Intraday scanner’s own record is not proven yet (20 finished BUY alerts, more wins than losses, money made after charges): it trades at the small learning size until it is.';
 
 /** Each kind of trade's state, from its samples, the stored past tests and what is remembered (off, paused). */
 export async function withEvidence(bot: BotState, now: number): Promise<BotState> {
@@ -1007,7 +1007,7 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
     const plan = decide(
       bot.brain,
       ideas,
-      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue, openRisk: openRiskOf(openTrades), industries, ddFactor, ddText },
+      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue, openRisk: openRiskOf(openTrades), industries, ddFactor, ddText, learningOpen: openTrades.filter((t) => t.state === 'watch').length },
       { evidence: evidenceMap(bot.evidence), market, braked: brakedToday(bot.trades, ctx.today), industryOf, charges: (product, qty, price) => estimateCharges(product, qty, price) },
     );
     for (const d of plan.decisions) {
@@ -1284,7 +1284,7 @@ async function alertOpen(t: BotTrade): Promise<void> {
   const kind = PLAYBOOK_LABEL[playbookOf(t)];
   await notify(`alert:bot-open-${t.id}`, {
     title: `🤖 Auto-trader ${t.side === 'long' ? 'bought' : 'sold first'} ${t.qty} ${t.symbol} at ${px(t.entry)}`,
-    message: `${copyLine(copyOf(t))} ${t.state === 'proven' ? 'Proven kind' : 'Trial kind (small size)'} · ${kind.toLowerCase()}.`,
+    message: `${copyLine(copyOf(t))} ${t.state === 'proven' ? 'Proven kind' : t.state === 'trial' ? 'Trial kind (small size)' : 'Not proven yet (learning size)'} · ${kind.toLowerCase()}.`,
     priority: 2,
     detail: { symbol: t.symbol, key: t.key, side: t.side === 'long' ? 'buy' : 'sell', source: `Auto-trader · ${kind}`, entry: t.entry, stop: t.stop, targets: t.t1 !== undefined ? [t.t1, t.target] : [t.target], qty: t.qty, risk: Math.round(Math.abs(t.entry - t.stop) * t.qty), score: null, reasons: t.reasons },
   });

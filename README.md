@@ -40,6 +40,26 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.24.0 (auto-trader: looser rules)
+
+The owner asked for looser rules: on ₹1 lakh of pretend money the 1.23 rules left the auto-trader idle —
+kinds not proven yet only followed shadow trades, and Upstox's real charges were more than a quarter of the
+risk on almost any same-day trade. Pretend money only; no rule can promise a profit.
+
+- **Kinds not proven yet trade at a small learning size** (`src/bot/policy.ts`): 0.2 % of the money at risk
+  (₹200 on ₹1 lakh), at most 2 such trades open at once, only with the market's direction. They need no
+  proven edge (that is what they are learning), only the charges rule. A learning idea that does not fit
+  is still followed as a shadow trade, so its kind keeps building a record.
+- **Faster to prove** (`src/bot/evidence.ts`): trial after 10 results (was 20), proven after 20 (was 30), with
+  the same safe estimates (0 R and +0.10 R).
+- **Charges** may be up to half of a trade's risk (was a quarter); a trial or proven trade must be worth at
+  least 0 R after them (was +0.05 R). With the Rising now 0.4 % safety net that needs a ₹28,700 trade.
+- **Against the market:** trial and proven kinds may buy on a falling day (or sell first on a rising day) at
+  half size; kinds not proven yet still go with the market.
+- **Kept:** the daily loss limit, the profit lock, the drawdown brake, 2 % open risk in total, 2 trades per
+  industry, the entry times, news against a stock, and pausing a losing kind (paused kinds and kinds with two
+  losses today are followed as shadow trades only).
+
 ## New in 1.23.0 (auto-trader: evidence first)
 
 The auto-trader (pretend money) now trades only what has shown an edge after charges — the design, the exact

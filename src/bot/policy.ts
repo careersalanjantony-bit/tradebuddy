@@ -19,21 +19,37 @@ import { maxOpenFor, maxPositionFor, skipIdea, type ProtectRules } from './prote
  * - No new buys while the market is falling, no new sell-first trades while it is rising (the same rules
  *   as the alerts).
  * - Same-day trades are opened until 2:30 pm (they must be closed by 3:10); top picks until 3:15.
+ *
+ * App v1.24 — looser rules (the owner: "loose the rules"; on ₹1 lakh the rules above left it idle):
+ * - Kinds not proven yet ("watch") trade too, at a small LEARNING size (0.2 % at risk), at most
+ *   MAX_LEARNING_OPEN at once and only with the market's direction; they need no proven edge, only the
+ *   charges rule. Paused kinds and kinds with two losses today stay shadow trades; switched-off kinds
+ *   do nothing. A learning idea that does not fit (charges, room, the learning limit) is followed as a
+ *   shadow trade, so its kind keeps building a record.
+ * - Charges may be up to half of a trade's risk (was a quarter); a trial or proven trade must be worth
+ *   at least 0 R after them (was +0.05 R).
+ * - Trial and proven kinds may also trade against the market's direction, at half size.
+ * Kept: the daily loss limit, the profit lock, the drawdown brake, 2 % open risk in total, 2 trades
+ * per industry, the entry times, news against a stock, and pausing a losing kind.
  */
 
 export const BOT_START = 5_000_000;
 /** smallest trade worth the charges */
 export const MIN_POSITION = 5_000;
-/** share of the money at risk per trade, by the playbook's state */
-export const RISK_SHARE = { trial: 0.0025, proven: 0.005 } as const;
+/** share of the money at risk per trade, by the playbook's state (app v1.24: "learning" = not proven yet) */
+export const RISK_SHARE = { learning: 0.002, trial: 0.0025, proven: 0.005 } as const;
+/** app v1.24: at most this many open trades of kinds not proven yet */
+export const MAX_LEARNING_OPEN = 2;
+/** app v1.24: a trial or proven kind trades against the market's direction at this share of its size */
+export const AGAINST_MARKET_SIZE = 0.5;
 /** all open trades together may lose at most this share of the money at their safety nets */
 export const MAX_OPEN_RISK = 0.02;
 /** open trades in one industry */
 export const MAX_PER_INDUSTRY = 2;
-/** charges may be at most this share of the trade's risk */
-export const MAX_CHARGES_R = 0.25;
-/** a trade must still be worth this much after its charges (R) */
-export const MIN_EDGE_R = 0.05;
+/** charges may be at most this share of the trade's risk (app v1.24: half, was a quarter) */
+export const MAX_CHARGES_R = 0.5;
+/** a trial or proven trade must still be worth this much after its charges (R) (app v1.24: 0, was +0.05) */
+export const MIN_EDGE_R = 0;
 /** no new same-day trades after 2:30 pm; swing (few-day) entries until 3:15 pm */
 export const LAST_DAY_ENTRY_T = 14 * 60 + 30;
 export const LAST_SWING_ENTRY_T = 15 * 60 + 15;
@@ -112,6 +128,8 @@ export interface Book {
   /** app v1.23: the drawdown brake's size factor (1, 0.5 or 0) and why */
   ddFactor?: number;
   ddText?: string | null;
+  /** app v1.24: open trades of kinds not proven yet (learning size) */
+  learningOpen?: number;
 }
 
 /** Why no new trades in one direction right now (null = fine). */
@@ -138,11 +156,15 @@ export interface Decision {
   qty: number;
   /** ₹ it can lose at the safety net */
   riskRupees: number;
-  state: 'trial' | 'proven';
+  /** app v1.24: 'watch' = a kind not proven yet, at the learning size */
+  state: 'trial' | 'proven' | 'watch';
   /** this trade's charges in R */
   chargesR: number;
-  /** what it is worth after its charges: the playbook's safe estimate minus chargesR (R) */
+  /** what it is worth after its charges: the playbook's safe estimate minus chargesR (R; for a kind not
+   * proven yet its estimate so far, 0 without one) */
   edgeR: number;
+  /** app v1.24: opened against the market's direction (half size) */
+  against?: true;
   /** plain words: why this size */
   sizeWhy: string;
 }
@@ -168,15 +190,15 @@ const rText = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)} R
 const RANK: Record<PlaybookState, number> = { proven: 4, trial: 3, watch: 2, paused: 1, off: 0 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The state a playbook trades with now (braked for today = no money today). */
-function stateOf(e: PlaybookEvidence | undefined, braked: boolean): PlaybookState {
-  if (!e) return 'watch';
-  return braked && (e.state === 'trial' || e.state === 'proven') ? 'watch' : e.state;
+/** The state a playbook trades with now (braked for today = no money today: a shadow trade). */
+function stateOf(e: PlaybookEvidence | undefined, braked: boolean): PlaybookState | 'braked' {
+  if (braked && e?.state !== 'off') return 'braked';
+  return e?.state ?? 'watch';
 }
 
-/** Share of the money it risks on a trade of this state (before the drawdown brake). */
+/** Share of the money it risks on a trade of this state (before the drawdown brake); watch = learning size. */
 export function riskShareFor(state: PlaybookState, rules?: ProtectRules): number {
-  const base = state === 'proven' ? RISK_SHARE.proven : state === 'trial' ? RISK_SHARE.trial : 0;
+  const base = state === 'proven' ? RISK_SHARE.proven : state === 'trial' ? RISK_SHARE.trial : state === 'watch' ? RISK_SHARE.learning : 0;
   return rules?.on ? Math.min(base, rules.dayLossPct / 100 / 2) : base;
 }
 
@@ -204,72 +226,92 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
   const counts = { skip: 0, market: 0, late: 0 };
   let marketWhy = '';
 
-  // 1. the plain filters: one trade per stock, entry times, news and market against it, the market gates
-  const passed = ideas.filter((i) => {
-    if (seen.has(i.key)) return false;
-    if (!(i.strategy === 'swing' ? book.t <= LAST_SWING_ENTRY_T : book.t <= LAST_DAY_ENTRY_T)) return (counts.late++, false);
-    if (protect && skipIdea(i.ctx, protect)) return (counts.skip++, false);
-    const gate = i.side === 'long' ? c.market.buys : c.market.shorts;
-    if (gate) {
-      counts.market++;
-      marketWhy ||= i.side === 'long' ? `the market is falling (${gate})` : `the market is rising (${gate})`;
-      return false;
+  // 1. the plain filters: one trade per stock, entry times, news and a market clearly against it; the
+  //    market's direction (the alerts' gates) is only noted here — step 3 decides with the kind's state
+  const passed: Array<{ i: Idea; against: string | null }> = [];
+  for (const i of ideas) {
+    if (seen.has(i.key)) continue;
+    if (!(i.strategy === 'swing' ? book.t <= LAST_SWING_ENTRY_T : book.t <= LAST_DAY_ENTRY_T)) {
+      counts.late++;
+      continue;
     }
-    return true;
-  });
+    if (protect && skipIdea(i.ctx, protect)) {
+      counts.skip++;
+      continue;
+    }
+    const gate = i.side === 'long' ? c.market.buys : c.market.shorts;
+    passed.push({ i, against: gate ? (i.side === 'long' ? `the market is falling (${gate})` : `the market is rising (${gate})`) : null });
+  }
 
   // 2. scored, one idea per stock: the one whose playbook has the better state, then the better estimate
-  const best = new Map<string, Scored>();
-  for (const i of passed) {
+  const best = new Map<string, { s: Scored; against: string | null }>();
+  const rankOf = (x: Scored) => RANK[c.evidence[x.playbook]?.state ?? 'watch'] * 100 + (c.evidence[x.playbook]?.safeR ?? -9);
+  for (const { i, against } of passed) {
     const s = scoreIdea(brain, i);
     if (!s) continue;
     const prev = best.get(i.key);
-    const rank = (x: Scored) => RANK[stateOf(c.evidence[x.playbook], !!c.braked?.has(x.playbook))] * 100 + (c.evidence[x.playbook]?.safeR ?? -9);
-    if (!prev || rank(s) > rank(prev)) best.set(i.key, s);
+    if (!prev || rankOf(s) > rankOf(prev.s)) best.set(i.key, { s, against });
   }
   const scored = [...best.values()];
 
-  // 3. playbooks that may not trade (watch, paused, two losses today): followed as shadow trades, sized as a trial
-  const allowed: Array<{ s: Scored; e: PlaybookEvidence; state: 'trial' | 'proven' }> = [];
+  // 3. by the kind's state (app v1.24): proven / trial → money (against the market: half size); not proven
+  //    yet → money at the learning size, only with the market; paused or two losses today → shadow trade;
+  //    switched off → nothing. Against the market without a trial / proven kind: not taken (as the alerts).
+  const allowed: Array<{ s: Scored; e: PlaybookEvidence | undefined; state: 'trial' | 'proven' | 'watch'; against: boolean }> = [];
   const shadow: ShadowPick[] = [];
-  for (const s of scored) {
-    const e = c.evidence[s.playbook];
-    const braked = !!c.braked?.has(s.playbook);
-    const state = stateOf(e, braked);
-    if ((state === 'trial' || state === 'proven') && e && e.safeR !== null) {
-      allowed.push({ s, e, state });
-      continue;
-    }
-    if (state === 'off') continue;
+  const shadowOf = (s: Scored, why: string): ShadowPick => {
     const perShare = Math.abs(s.price - s.stop);
     const cap = protect ? maxPositionFor(book.equity) : Infinity;
     const qty = Math.max(1, Math.min(Math.floor((book.equity * RISK_SHARE.trial) / perShare), Math.floor(cap / s.price)));
-    shadow.push({ idea: s, qty, riskRupees: Math.round(qty * perShare), why: braked ? 'two losing trades today' : (e?.why ?? 'not proven yet') });
+    return { idea: s, qty, riskRupees: Math.round(qty * perShare), why };
+  };
+  for (const { s, against } of scored) {
+    const e = c.evidence[s.playbook];
+    const state = stateOf(e, !!c.braked?.has(s.playbook));
+    if (state === 'off') continue;
+    const money = state === 'trial' || state === 'proven';
+    if (against && !money) {
+      counts.market++;
+      marketWhy ||= against;
+      continue;
+    }
+    if (state === 'braked' || state === 'paused') {
+      shadow.push(shadowOf(s, state === 'braked' ? 'two losing trades today' : (e?.why ?? 'paused')));
+      continue;
+    }
+    if (money && !(e && e.safeR !== null)) continue; // cannot happen: a trial / proven kind has an estimate
+    allowed.push({ s, e, state: money ? state : 'watch', against: !!against });
   }
+  const kindShadows = shadow.length;
+  // learning ideas that are not opened still build their kind's record, as shadow trades
+  const learningShadow = (exclude: ReadonlySet<Scored>) => allowed.filter((x) => x.state === 'watch' && !exclude.has(x.s)).map((x) => shadowOf(x.s, x.e?.why ?? 'not proven yet'));
+  const none = new Set<Scored>();
 
   if (protect && book.halted) {
-    return { decisions: [], shadow, note: book.halted === 'lock' ? "Stopped for today: it kept today's profit (sold what it bought today). Back tomorrow at 9:30." : 'Stopped for today: the daily loss limit was reached (sold what it bought today). Back tomorrow at 9:30.' };
+    return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: book.halted === 'lock' ? "Stopped for today: it kept today's profit (sold what it bought today). Back tomorrow at 9:30." : 'Stopped for today: the daily loss limit was reached (sold what it bought today). Back tomorrow at 9:30.' };
   }
   const dd = book.ddFactor ?? 1;
-  if (dd <= 0) return { decisions: [], shadow, note: book.ddText ?? 'Stopped: its money is 8% below its best. Press Resume to let it trade again.' };
-  if (!scored.length && !counts.skip && !counts.market) {
+  if (dd <= 0) return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: book.ddText ?? 'Stopped: its money is 8% below its best. Press Resume to let it trade again.' };
+  if (!scored.length && !counts.skip) {
     return { decisions: [], shadow, note: counts.late || book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : 'No idea right now — waiting for one.' };
   }
   const slots = protect ? maxOpenFor(book.equity) - book.openCount : Infinity;
-  if (slots <= 0) return { decisions: [], shadow, note: `Holding ${book.openCount} trades — the most for ${formatRs(book.equity)}. It waits for one to finish.` };
-  if (book.free < MIN_POSITION) return { decisions: [], shadow, note: 'All its money is in open trades — it waits for one to finish.' };
+  if (slots <= 0) return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: `Holding ${book.openCount} trades — the most for ${formatRs(book.equity)}. It waits for one to finish.` };
+  if (book.free < MIN_POSITION) return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: 'All its money is in open trades — it waits for one to finish.' };
 
-  // 4. size each allowed idea and rank them by what they are worth after their own charges
+  // 4. size each allowed idea and rank them: proven, trial, then learning; within, by what they are worth
+  //    after their own charges
   const perTrade = protect ? maxPositionFor(book.equity) : Infinity;
   let swingRoom = protect ? Math.max(0, (book.equity * protect.swingSharePct) / 100 - (book.swingValue ?? 0)) : Infinity;
   let free = book.free;
   let openRisk = book.openRisk ?? 0;
+  let learningRoom = MAX_LEARNING_OPEN - (book.learningOpen ?? 0);
   const industries: Record<string, number> = { ...(book.industries ?? {}) };
-  const skips = { industry: 0, heat: 0, small: 0, charges: 0, edge: 0 };
+  const skips = { industry: 0, heat: 0, small: 0, charges: 0, edge: 0, learning: 0 };
   const sizeOf = (x: (typeof allowed)[number], room: { free: number; openRisk: number; swingRoom: number }) => {
     const { s, state } = x;
     const perShare = Math.abs(s.price - s.stop);
-    const share = riskShareFor(state, protect ?? undefined) * dd;
+    const share = riskShareFor(state, protect ?? undefined) * dd * (x.against ? AGAINST_MARKET_SIZE : 1);
     let qty = Math.floor((book.equity * share) / perShare);
     const fillPrice = s.price * 1.002; // the fill can be a little worse than the live price
     const cash = Math.min(room.free * 0.995, perTrade, s.strategy === 'swing' ? room.swingRoom : Infinity);
@@ -281,17 +323,22 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
     if (qty < 1 || qty * s.price < MIN_POSITION) return { qty: 0, why: byHeat ? ('heat' as const) : ('small' as const), share, perShare, chargesR: 0, edgeR: 0 };
     const chargesR = c.charges(s.strategy === 'swing' ? 'delivery' : 'intraday', qty, s.price) / (qty * perShare);
     if (chargesR > MAX_CHARGES_R) return { qty: 0, why: 'charges' as const, share, perShare, chargesR, edgeR: 0 };
-    const edgeR = x.e.safeR! - chargesR;
-    if (edgeR < MIN_EDGE_R) return { qty: 0, why: 'edge' as const, share, perShare, chargesR, edgeR };
+    // a kind not proven yet has no edge to show: it trades to learn (the charges rule still applies)
+    const edgeR = (x.e?.safeR ?? 0) - chargesR;
+    if (state !== 'watch' && edgeR < MIN_EDGE_R) return { qty: 0, why: 'edge' as const, share, perShare, chargesR, edgeR };
     return { qty, why: null, share, perShare, chargesR, edgeR };
   };
   const ranked = allowed
     .map((x) => ({ x, first: sizeOf(x, { free, openRisk, swingRoom }) }))
-    .sort((a, b) => b.first.edgeR - a.first.edgeR || b.x.s.chance - a.x.s.chance);
+    .sort((a, b) => RANK[b.x.state] - RANK[a.x.state] || b.first.edgeR - a.first.edgeR || b.x.s.chance - a.x.s.chance);
 
   const decisions: Decision[] = [];
   for (const { x } of ranked) {
     if (decisions.length >= slots) break;
+    if (x.state === 'watch' && learningRoom <= 0) {
+      skips.learning++;
+      continue;
+    }
     const industry = c.industryOf?.(x.s.key);
     if (industry && (industries[industry] ?? 0) >= MAX_PER_INDUSTRY) {
       skips.industry++;
@@ -307,8 +354,11 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
     free -= fill;
     openRisk += z.qty * z.perShare;
     if (s.strategy === 'swing') swingRoom -= fill;
+    if (x.state === 'watch') learningRoom--;
     if (industry) industries[industry] = (industries[industry] ?? 0) + 1;
     const riskRupees = Math.round(z.qty * z.perShare);
+    const how = x.state === 'proven' ? 'Proven kind' : x.state === 'trial' ? 'Trial kind (small size)' : 'Not proven yet (learning size)';
+    const halves = [dd < 1 && 'halved by the drawdown brake', x.against && 'halved: against the market’s direction'].filter(Boolean).join(', ');
     decisions.push({
       idea: s,
       qty: z.qty,
@@ -316,23 +366,27 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
       state: x.state,
       chargesR: Math.round(z.chargesR * 1000) / 1000,
       edgeR: Math.round(z.edgeR * 1000) / 1000,
-      sizeWhy: `${x.state === 'proven' ? 'Proven kind' : 'Trial kind (small size)'}: ${formatRs(riskRupees)} at risk (${pctText(riskRupees / book.equity)} of its money${dd < 1 ? ', halved by the drawdown brake' : ''}), charges ${z.chargesR.toFixed(2)} R, worth ${rText(z.edgeR)} after charges.`,
+      ...(x.against ? { against: true as const } : {}),
+      sizeWhy: `${how}: ${formatRs(riskRupees)} at risk (${pctText(riskRupees / book.equity)} of its money${halves ? `, ${halves}` : ''}), charges ${z.chargesR.toFixed(2)} R${x.state === 'watch' ? ' — it trades to learn whether this kind works' : `, worth ${rText(z.edgeR)} after charges`}.`,
     });
   }
+  // learning ideas not opened (charges, room, the learning limit) go on as shadow trades
+  shadow.push(...learningShadow(new Set(decisions.map((d) => d.idea))));
 
   let note: string | null = null;
   if (!decisions.length) {
     const parts = [
-      shadow.length && `${plural(shadow.length, 'idea')} of kinds not proven yet (followed as shadow trades, no money)`,
+      kindShadows && `${plural(kindShadows, 'idea')} of paused kinds or kinds with two losses today (followed as shadow trades, no money)`,
       counts.skip && `skipped ${plural(counts.skip, 'idea')} (news against it, or the whole market going the other way)`,
-      counts.market && `${plural(counts.market, 'idea')} not taken: ${marketWhy}`,
-      skips.charges && `${plural(skips.charges, 'idea')}: charges would be more than a quarter of the risk at this size`,
+      counts.market && `${plural(counts.market, 'idea')} of kinds not proven yet not taken: ${marketWhy}`,
+      skips.learning && `${plural(skips.learning, 'idea')} of kinds not proven yet: already ${MAX_LEARNING_OPEN} learning trades open`,
+      skips.charges && `${plural(skips.charges, 'idea')}: charges would be more than half the risk at this size`,
       skips.edge && `${plural(skips.edge, 'idea')} worth less than ${rText(MIN_EDGE_R)} after charges`,
       skips.heat && `${plural(skips.heat, 'idea')}: its open trades already risk ${pctText(MAX_OPEN_RISK)} of the money`,
       skips.industry && `${plural(skips.industry, 'idea')}: already ${MAX_PER_INDUSTRY} trades in that industry`,
       skips.small && `${plural(skips.small, 'idea')} too small to be worth a trade`,
     ].filter(Boolean);
-    note = parts.length ? `Looked at ${plural(scored.length + counts.skip + counts.market, 'idea')}: ${parts.join('; ')}.` : 'No idea right now — waiting for one.';
+    note = parts.length ? `Looked at ${plural(scored.length + counts.skip, 'idea')}: ${parts.join('; ')}.` : 'No idea right now — waiting for one.';
   }
   return { decisions, shadow, note };
 }

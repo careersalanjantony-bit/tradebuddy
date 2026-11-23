@@ -16,11 +16,12 @@ describe('auto-trader evidence: the worked examples of docs/AUTO_TRADER_PLAN.md'
     expect(e.priorCounted).toBe(true);
     expect(e.why).toMatch(/Trial \(small size\)/);
   });
-  it('past test only at +0.15 R: safe estimate −0.046 → watch (shadow trades only)', () => {
+  it('past test only at +0.15 R: safe estimate −0.046 → watch (app v1.24: the small learning size)', () => {
     const e = evaluate('day-buy', [], prior(30, 0.15));
     expect(e.safeR).toBeCloseTo(-0.046, 3);
     expect(e.state).toBe('watch');
-    expect(e.why).toMatch(/shadow trades/);
+    expect(e.why).toMatch(/It trades at the small learning size until it reaches \+0\.00 R with 10 trades/);
+    expect(evaluate('day-buy', [], null).why).toMatch(/^No results yet: it trades at the small learning size/);
   });
   it('30 live trades averaging +0.30 R with a spread of about 1 R → proven', () => {
     const e = evaluate('rise-strong', around(30, 0.3, 1), null);
@@ -42,11 +43,14 @@ describe('auto-trader evidence: the worked examples of docs/AUTO_TRADER_PLAN.md'
 });
 
 describe('auto-trader evidence: the edges', () => {
-  it('needs 20 trades for trial and 30 for proven', () => {
-    expect(evaluate('breakout', same(19, 1), null).state).toBe('watch');
-    expect(evaluate('breakout', same(20, 1), null).state).toBe('trial');
-    expect(evaluate('breakout', same(29, 1), null).state).toBe('trial');
-    expect(evaluate('breakout', same(30, 1), null).state).toBe('proven');
+  it('needs 10 trades for trial and 20 for proven (app v1.24; was 20 and 30)', () => {
+    expect([EVIDENCE.trialMinN, EVIDENCE.provenMinN]).toEqual([10, 20]);
+    expect(evaluate('breakout', same(9, 1), null).state).toBe('watch');
+    expect(evaluate('breakout', same(10, 1), null).state).toBe('trial');
+    expect(evaluate('breakout', same(19, 1), null).state).toBe('trial');
+    expect(evaluate('breakout', same(20, 1), null).state).toBe('proven');
+    // 10 losing trades are not enough for trial (the safe estimate must be 0 R or better)
+    expect(evaluate('breakout', same(10, -0.2), null).state).toBe('watch');
   });
   it('proven from a safe estimate of +0.10 R (30 trades)', () => {
     const edge = 0.1 + EVIDENCE.sdFloorR / Math.sqrt(30);
