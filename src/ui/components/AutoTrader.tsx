@@ -6,7 +6,8 @@ import { AGAINST_MARKET_SIZE, BOT_START, MAX_CHARGES_R, MAX_LEARNING_OPEN, MAX_O
 import { EVIDENCE } from '../../bot/evidence';
 import { DRAWDOWN, PROTECT_CHOICES, keepLevel, maxOpenFor, maxPositionFor, protectRules, type ProtectRules } from '../../bot/protect';
 import { copySteps } from '../../bot/copy';
-import type { BotState, BotTrade } from '../../background/botJobs';
+import type { BotState, BotTrade, RushSummary } from '../../background/botJobs';
+import { EXIT_STYLE_SHORT, EXIT_STYLES } from '../../bot/openRush';
 import { formatINR, formatNumberIN, formatTimeIST } from '../../lib/format';
 import { errorMessage } from '../../lib/serialize';
 import { istDate } from '../../lib/time';
@@ -155,7 +156,7 @@ export function AutoTraderView() {
           <span class="grow">
             <b>Let it trade by itself</b>
             <span class="tiny muted" style={{ display: 'block' }}>
-              It decides what to buy or sell first, how much, and when to close — every minute from 9:30 am. Pretend money only: it never touches your Upstox account.
+              It decides what to buy or sell first, how much, and when to close — from 9:15 am (Opening rush; the other kinds from 9:30). Pretend money only: it never touches your Upstox account.
             </span>
           </span>
           <input type="checkbox" role="switch" class="switch" data-testid="bot-switch" checked={bot?.enabled ?? true} disabled={!ctl.canControl} onChange={(e) => toggle((e.currentTarget as HTMLInputElement).checked)} />
@@ -269,7 +270,10 @@ export function AutoTraderView() {
         <details class="small">
           <summary>How it decides</summary>
           <ul>
-            <li>Every minute from 9:30 am it looks at today's day-trade buy signals, Rising now, the top picks, the "Falling now" sell-first ideas, breakouts and the Intraday scanner's BUY.</li>
+            <li>
+              <b>Opening rush</b> (9:15–9:35, app 1.25): it reads the pre-open list (price jump, buyers vs sellers, news) and, from 9:15, buys a stock that holds its opening jump — above its opening price and the day's average price, with heavy buying — as it makes a new high, every 15 seconds. The safety net sits close under the day's average price (0.3–1.2% away), so a wrong trade is a small loss and the position can be big for the same money at risk. It sells the way its past test did best after charges: quick profit, half and half, or let it run (see Kinds of trade). Never after the stock fell back or ran 2.5% from its open.
+            </li>
+            <li>From 9:30 am, every minute, it also looks at today's day-trade buy signals, Rising now, the top picks, the "Falling now" sell-first ideas, breakouts and the Intraday scanner's BUY. A stock that already lost money today gets no second try that day.</li>
             <li>
               Each kind of trade is judged on its own results: its finished trades, counted before charges, and its past test on days it never saw, counted cautiously (a safe estimate). <b>Proven</b> kinds ({EVIDENCE.provenMinN} trades, safe estimate +{EVIDENCE.provenMinSafeR.toFixed(2)} R or better) and <b>trial</b> kinds ({EVIDENCE.trialMinN} trades, safe estimate 0 R or better) use their normal sizes; kinds <b>not proven yet</b> trade at a small learning size (at most {MAX_LEARNING_OPEN} such trades at once) so they build a record. A kind whose newest 20 trades average below −0.05 R is paused — followed as shadow trades, no money — until they reach +0.10 R. You can switch any kind off.
             </li>
@@ -361,6 +365,7 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
               </div>
               <div class="tiny muted">{kindLine(e)}</div>
               <div class="tiny">{e.why}</div>
+              {e.id === 'open-drive' && bot?.rush && <RushLine r={bot.rush} />}
               <button class="btn small kind-toggle" type="button" data-testid={`kind-toggle-${e.id}`} disabled={!ctl.canControl || busy === e.id} onClick={() => toggle(e.id, e.state !== 'off')}>
                 {e.state === 'off' ? 'Switch on' : 'Switch off'}
               </button>
@@ -379,6 +384,26 @@ function KindsCard({ bot, total, ctl }: { bot: BotState | null | undefined; tota
         </p>
       )}
     </section>
+  );
+}
+
+/** app v1.25: the Opening rush test — each way of selling on the same trades, after charges. */
+function RushLine({ r }: { r: RushSummary }) {
+  return (
+    <div class="tiny" data-testid="bot-rush">
+      Ways of selling in its past test ({r.from} – {r.to}, same trades, after charges):{' '}
+      {EXIT_STYLES.map((s, i) => {
+        const x = r.styles[s];
+        return (
+          <span key={s}>
+            {i ? ' · ' : ''}
+            {s === r.best ? <b>{EXIT_STYLE_SHORT[s]}</b> : EXIT_STYLE_SHORT[s]} {rText(x.avgNetR)}
+            {x.trades ? ` (won ${x.wins} of ${x.trades})` : ''}
+          </span>
+        );
+      })}
+      . Uses {r.why}
+    </div>
   );
 }
 

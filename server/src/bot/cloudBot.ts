@@ -227,7 +227,7 @@ export class CloudBot {
     if (!this.d.hasToken) return say('error', 'The server has no Upstox token: no prices, no trades.');
     if (analytics === 'invalid') return say('error', 'Upstox refused the server’s token: no prices, no new trades. Put a new UPSTOX_ANALYTICS_TOKEN on the server.');
     if (bot && !bot.enabled) return say('paused', 'Paused — it opens nothing new, and open trades wait (their safety nets are not checked) until it is switched on again.');
-    if (m.phase !== 'open') return say('closed', `Market closed (${m.label}) — it trades by itself from 9:30 am on market days.`);
+    if (m.phase !== 'open') return say('closed', `Market closed (${m.label}) — it trades by itself from 9:15 am on market days (Opening rush; the other kinds from 9:30).`);
     if (this.lastError && (lastRunAt === null || this.lastError.at >= lastRunAt)) return say('error', `Its last run failed: ${this.lastError.message}`);
     if (lastRunAt === null || now - lastRunAt > STALE_RUN_MS) return say('degraded', `It has not run for ${lastRunAt === null ? 'a while' : `${Math.round((now - lastRunAt) / 60_000)} min`} — the server gets no prices (check its Upstox token and price feed).`);
     if (priceAgeSec === null || priceAgeSec * 1000 > STALE_PRICE_MS) return say('degraded', `Prices are ${priceAgeSec === null ? 'missing' : `${Math.round(priceAgeSec / 60)} min old`} — no new trades until they are fresh.`);

@@ -12,6 +12,39 @@ that has not shown an edge after charges, and keep each loss small when it is wr
 
 ---
 
+## App 1.25.0 — Opening rush (the owner's request, 25 Nov 2026)
+
+The owner: "fast buy when market open and sudden sell if we got profit". The auto-trader's own record on
+25 Nov said the same about timing. It waited until 9:30 and then bought stocks that had already risen (its
+learning: "a big move already today means it is late"). On ₹1 lakh it was −₹899 overall, and 23 of its
+52 trades won. The app already ranked stocks before the open (pre-open list, 9:00–9:13) and followed them
+from 9:15 (the Early Movers opening drive, app 1.16), but the auto-trader never traded that list.
+
+| | Before | 1.25.0 |
+| --- | --- | --- |
+| First trades | 9:30 | **9:15** for the new kind `open-drive` (Opening rush, until 9:35); the other kinds still 9:30 |
+| What it buys at the open | nothing | a stock from the pre-open list (or opened 1 %+ up) that **holds its opening jump** (above its open and the day's average price, 1.5×+ usual volume, buyers ahead), bought **as it makes a new high** (within 0.15 %), never after it fell back or ran 2.5 % |
+| Safety net | — | under the day's average price (or the morning low), **0.3–1.2 %** below: small loss, big position for the same money at risk |
+| Selling | — | the past test replays the same trades three ways with the live rules and Upstox's charges: **quick profit** (all at 1× the risk), **half and half** (half at 1×, rest at 2×), **let it run** (half at 1×, rest while the safety net follows). It uses "half and half" unless another way did better on **both** the older and the newer days (20+ trades) |
+| How often it looks | every minute | every **15 s** from 9:15 to 9:35 |
+| Size | — | by the kind's state, as every kind: its past test (20+ trades, positive safe estimate) gives a head start to **trial** (0.25 % at risk); without it, the learning size (0.2 %) |
+| A stock that lost today | could be bought again | **no second try** that day (25 Nov: BAJAJHCARE was tried every minute 11:06–11:11 after its loss) |
+| Stale shared price | the order failed ("not up to date"), every minute | the **fresher** of the shared price and the idea's own is used |
+
+Code: `src/bot/openRush.ts` (plan, replay, past test, choice of the way of selling),
+`src/early/preopen.ts` `openDriveEntry` (the entry rule shared with the Early Movers test), `src/bot/policy.ts`
+`entryWindow` and `lostToday`, `src/background/botJobs.ts` (idea source 8, the 15-second decisions, the
+fresher price), `src/background/earlyJobs.ts` (the test runs with the Early Movers test outside market hours,
+sized with the auto-trader's own money), `src/bot/evidence.ts` (the test is the kind's head start).
+
+Not built yet: the sell-first side of the opening (a stock that opens down and keeps falling). The pre-open
+list has only risers; it comes after the buy side has results of its own.
+
+Unchanged: every safety rule of 1.24 (daily loss limit, profit lock, drawdown brake, 2 % open risk, the
+market gate, at most 2 learning trades, charges at most half the risk). No rule can promise a profit.
+
+---
+
 ## App 1.24.0 — looser rules (the owner's decision, 23 Nov 2026)
 
 On 23 Nov (NIFTY 50 −1.10 %) the auto-trader on the owner's server looked at 32 ideas and opened none: 22

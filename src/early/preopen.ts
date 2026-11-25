@@ -365,7 +365,7 @@ export function drivePlan(x: Pick<DriveIn, 'price' | 'open' | 'high' | 'low' | '
 }
 
 /** Entry, a stop at `base` kept 0.3–1.2 % below the entry, targets at 1× and 2× the distance. */
-function planBelow(entry: number, base: number, tick: number): Omit<EarlyPlan, 'breakout'> {
+export function planBelow(entry: number, base: number, tick: number): Omit<EarlyPlan, 'breakout'> {
   const dist = Math.min(entry * (EARLY.maxStopPct / 100), Math.max(entry * (EARLY.minStopPct / 100), entry - base));
   const stop = downTick(entry - dist, tick);
   const r = entry - stop;
@@ -465,6 +465,32 @@ function addG(g: GroupResult, pnl: number, hitT1: boolean): void {
 }
 
 /**
+ * The opening-drive entry on one stored day (the rule of the past test, shared by the Early Movers test
+ * and the auto-trader's Opening rush test, app v1.25): a gap-up of 1 %+, the first 5-minute candle held
+ * (close ≥ open, ≥ its average price, ≥ half the gap kept, not run 2.5 %+) on 1.5×+ the usual volume,
+ * then bought above that candle's high in one of the next four candles — unless its stop came first.
+ * Returns the candle it was bought in, the fill (the planned price, or the candle's open when it opened
+ * higher) and the plan; null = no trade that day.
+ */
+export function openDriveEntry(d: OpenTestDay, tick = 0.05): { j: number; fill: number; plan: EarlyPlan } | null {
+  const b = d.bars;
+  if (b.t.length < 10 || b.t[0] !== PRE.openT || !d.prevClose) return null;
+  const open = b.o[0]!;
+  if ((open / d.prevClose - 1) * 100 < DRIVE.minOpenGapPct) return null;
+  const vwap1 = (b.h[0]! + b.l[0]! + b.c[0]!) / 3;
+  const plan = drivePlan({ price: b.c[0]!, open, high: b.h[0]!, low: b.l[0]!, vwap: vwap1 }, tick);
+  const usual = usualFrom(d.prev)(PRE.openT).bar;
+  const held = b.c[0]! >= open && b.c[0]! >= vwap1 && (b.c[0]! / d.prevClose - 1) * 100 >= DRIVE.keepGapPct && (b.c[0]! / open - 1) * 100 < DRIVE.maxFromOpenPct;
+  const heavy = usual === null || b.v[0]! >= DRIVE.pace * usual;
+  if (!held || !heavy) return null;
+  for (let k = 1; k <= Math.min(b.t.length - 1, 4); k++) {
+    if (b.l[k]! <= plan.stop) return null;
+    if (b.h[k]! >= plan.breakout) return { j: k, fill: Math.max(plan.entry, b.o[k]!), plan };
+  }
+  return null;
+}
+
+/**
  * The opening-drive rule on stored 5-minute days. The app has no stored pre-open auctions (they are
  * recorded from now on), so this tests what can be tested: the gap and the first minutes. Five-minute
  * candles are coarser than the live check (which starts 30 seconds after 9:15): here the first candle
@@ -496,20 +522,9 @@ export function runOpenTest(days: OpenTestDay[], capital: number, maxRisk: numbe
       }
     }
     // the opening drive: the first candle held (close ≥ open, ≥ its average price, ≥ half the gap kept) with heavy volume
-    const usual = usualFrom(d.prev)(PRE.openT).bar;
-    const held = b.c[0]! >= open && b.c[0]! >= vwap1 && (b.c[0]! / d.prevClose - 1) * 100 >= DRIVE.keepGapPct && (b.c[0]! / open - 1) * 100 < DRIVE.maxFromOpenPct;
-    const heavy = usual === null || b.v[0]! >= DRIVE.pace * usual;
-    if (!held || !heavy) continue;
-    let j = -1;
-    for (let k = 1; k <= Math.min(b.t.length - 1, 4); k++) {
-      if (b.l[k]! <= plan.stop) break;
-      if (b.h[k]! >= plan.breakout) {
-        j = k;
-        break;
-      }
-    }
-    if (j < 0) continue;
-    const fill = Math.max(plan.entry, b.o[j]!);
+    const e = openDriveEntry(d, tick);
+    if (!e) continue;
+    const { j, fill } = e;
     const p = { ...plan, entry: fill };
     const s = sizeTrade(p, capital, maxRisk, tick);
     if (!s.ok) {

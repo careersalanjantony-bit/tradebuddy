@@ -40,6 +40,25 @@ repository; `npm run apk` (`scripts/build-apk.mjs`) expects it cloned next to th
 on Windows, macOS and Linux (it finds the Android SDK through `ANDROID_HOME`, and builds with JDK 21 — `JAVA_HOME`, or the JDK that
 comes with Android Studio). On Windows build in a short folder path outside OneDrive (for example `%TEMP%\tb-build`).
 
+## New in 1.25.0 (auto-trader: Opening rush)
+
+The owner asked for a faster auto-trader: buy when the market opens, sell fast. Until now it waited until
+9:30 and then bought stocks that had already risen. Pretend money only; no rule can promise a profit.
+
+- **Opening rush** (`src/bot/openRush.ts`, a new kind of trade `open-drive`): from **9:15** to 9:35 it
+  buys a stock from the pre-open list (or one that opened 1 %+ up) that holds its opening jump: above its
+  opening price and the day's average price, heavy volume, more buyers. It buys as the stock makes a new
+  high, never after it fell back. It looks every 15 seconds in that window.
+- **Small loss, big position:** the safety net sits close (0.3–1.2 % below), under the day's average price.
+  For the same money at risk the position can be about a third of the money.
+- **Selling, tested:** the past test replays the same trades three ways with the live rules and Upstox's
+  charges: quick profit, half and half, let it run. It uses the way that did best on both the older and
+  the newer days; the screen shows all three (Kinds of trade).
+- **Fixes:**
+  - No second try in a stock that already lost money today.
+  - A stale shared price no longer blocks a fresh idea; it uses the fresher price.
+- Kept: every safety rule of 1.24 (daily loss limit, profit lock, drawdown brake, market gate).
+
 ## New in 1.24.0 (auto-trader: looser rules)
 
 The owner asked for looser rules: on ₹1 lakh of pretend money the 1.23 rules left the auto-trader idle —

@@ -1,6 +1,7 @@
 import type { WalletQuote } from '../wallet/wallet';
 import { features, predict, type Brain, type IdeaContext, type Strategy } from './brain';
 import type { PlaybookEvidence, PlaybookState } from './evidence';
+import { OPEN_RUSH } from './openRush';
 import type { PlaybookId } from './playbooks';
 import { maxOpenFor, maxPositionFor, skipIdea, type ProtectRules } from './protect';
 
@@ -31,6 +32,10 @@ import { maxOpenFor, maxPositionFor, skipIdea, type ProtectRules } from './prote
  * - Trial and proven kinds may also trade against the market's direction, at half size.
  * Kept: the daily loss limit, the profit lock, the drawdown brake, 2 % open risk in total, 2 trades
  * per industry, the entry times, news against a stock, and pausing a losing kind.
+ *
+ * App v1.25 — the Opening rush (bot/openRush.ts): its trades start at 9:15 (the other kinds still wait
+ * until 9:30) and end at 9:35. And no second trade in a stock that already lost money today (on 25 Nov it
+ * tried to buy BAJAJHCARE again for six minutes after its safety net was hit).
  */
 
 export const BOT_START = 5_000_000;
@@ -54,6 +59,12 @@ export const MIN_EDGE_R = 0;
 export const LAST_DAY_ENTRY_T = 14 * 60 + 30;
 export const LAST_SWING_ENTRY_T = 15 * 60 + 15;
 export const FIRST_ENTRY_T = 9 * 60 + 30;
+
+/** App v1.25: the first and last minute a kind may open trades (the Opening rush: 9:15–9:35). */
+export function entryWindow(p: PlaybookId, strategy: Strategy): { from: number; to: number } {
+  if (p === 'open-drive') return { from: OPEN_RUSH.fromT, to: OPEN_RUSH.untilT };
+  return { from: FIRST_ENTRY_T, to: strategy === 'swing' ? LAST_SWING_ENTRY_T : LAST_DAY_ENTRY_T };
+}
 /** top picks are sold after this many trading days if neither price was reached */
 export const SWING_MAX_DAYS = 10;
 
@@ -130,6 +141,8 @@ export interface Book {
   ddText?: string | null;
   /** app v1.24: open trades of kinds not proven yet (learning size) */
   learningOpen?: number;
+  /** app v1.25: stocks that already lost money today (no second trade in them today) */
+  lostToday?: readonly string[];
 }
 
 /** Why no new trades in one direction right now (null = fine). */
@@ -220,18 +233,29 @@ export function minPositionFor(stopPct: number, chargesOfValue: (value: number) 
 }
 
 export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext): Plan {
-  if (book.t < FIRST_ENTRY_T) return { decisions: [], shadow: [], note: 'Waits until 9:30 am — the first minutes are too jumpy.' };
+  // app v1.25: before 9:30 only the Opening rush trades
+  if (book.t < FIRST_ENTRY_T && !ideas.some((i) => book.t >= entryWindow(i.playbook, i.strategy).from)) {
+    return { decisions: [], shadow: [], note: book.t >= OPEN_RUSH.fromT && book.t < OPEN_RUSH.untilT ? 'Opening rush (9:15–9:35): no stock is holding its opening jump at its high right now. The other kinds start at 9:30.' : 'Waits until 9:15 am (Opening rush); the other kinds start at 9:30.' };
+  }
   const protect = book.rules?.on ? book.rules : null;
   const seen = new Set(book.openKeys);
-  const counts = { skip: 0, market: 0, late: 0 };
+  const lost = new Set(book.lostToday ?? []);
+  const counts = { skip: 0, market: 0, late: 0, lost: 0 };
   let marketWhy = '';
 
-  // 1. the plain filters: one trade per stock, entry times, news and a market clearly against it; the
-  //    market's direction (the alerts' gates) is only noted here — step 3 decides with the kind's state
+  // 1. the plain filters: one trade per stock, no second trade in a stock that lost today, entry times,
+  //    news and a market clearly against it; the market's direction (the alerts' gates) is only noted
+  //    here — step 3 decides with the kind's state
   const passed: Array<{ i: Idea; against: string | null }> = [];
   for (const i of ideas) {
     if (seen.has(i.key)) continue;
-    if (!(i.strategy === 'swing' ? book.t <= LAST_SWING_ENTRY_T : book.t <= LAST_DAY_ENTRY_T)) {
+    if (lost.has(i.key)) {
+      counts.lost++;
+      continue;
+    }
+    const w = entryWindow(i.playbook, i.strategy);
+    if (book.t < w.from) continue;
+    if (book.t > w.to) {
       counts.late++;
       continue;
     }
@@ -288,12 +312,13 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
   const none = new Set<Scored>();
 
   if (protect && book.halted) {
-    return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: book.halted === 'lock' ? "Stopped for today: it kept today's profit (sold what it bought today). Back tomorrow at 9:30." : 'Stopped for today: the daily loss limit was reached (sold what it bought today). Back tomorrow at 9:30.' };
+    return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: book.halted === 'lock' ? "Stopped for today: it kept today's profit (sold what it bought today). Back tomorrow at 9:15." : 'Stopped for today: the daily loss limit was reached (sold what it bought today). Back tomorrow at 9:15.' };
   }
   const dd = book.ddFactor ?? 1;
   if (dd <= 0) return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: book.ddText ?? 'Stopped: its money is 8% below its best. Press Resume to let it trade again.' };
   if (!scored.length && !counts.skip) {
-    return { decisions: [], shadow, note: counts.late || book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : 'No idea right now — waiting for one.' };
+    const lostText = counts.lost ? ` (${plural(counts.lost, 'idea')} in stocks that already lost money today: no second try today)` : '';
+    return { decisions: [], shadow, note: book.t > LAST_DAY_ENTRY_T ? 'No new same-day trades after 2:30 pm (they must be closed by 3:10).' : `No idea right now — waiting for one${lostText}.` };
   }
   const slots = protect ? maxOpenFor(book.equity) - book.openCount : Infinity;
   if (slots <= 0) return { decisions: [], shadow: [...shadow, ...learningShadow(none)], note: `Holding ${book.openCount} trades — the most for ${formatRs(book.equity)}. It waits for one to finish.` };
@@ -378,6 +403,7 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
     const parts = [
       kindShadows && `${plural(kindShadows, 'idea')} of paused kinds or kinds with two losses today (followed as shadow trades, no money)`,
       counts.skip && `skipped ${plural(counts.skip, 'idea')} (news against it, or the whole market going the other way)`,
+      counts.lost && `${plural(counts.lost, 'idea')} in stocks that already lost money today (no second try today)`,
       counts.market && `${plural(counts.market, 'idea')} of kinds not proven yet not taken: ${marketWhy}`,
       skips.learning && `${plural(skips.learning, 'idea')} of kinds not proven yet: already ${MAX_LEARNING_OPEN} learning trades open`,
       skips.charges && `${plural(skips.charges, 'idea')}: charges would be more than half the risk at this size`,
@@ -386,7 +412,7 @@ export function decide(brain: Brain, ideas: Idea[], book: Book, c: DecideContext
       skips.industry && `${plural(skips.industry, 'idea')}: already ${MAX_PER_INDUSTRY} trades in that industry`,
       skips.small && `${plural(skips.small, 'idea')} too small to be worth a trade`,
     ].filter(Boolean);
-    note = parts.length ? `Looked at ${plural(scored.length + counts.skip, 'idea')}: ${parts.join('; ')}.` : 'No idea right now — waiting for one.';
+    note = parts.length ? `Looked at ${plural(scored.length + counts.skip + counts.lost, 'idea')}: ${parts.join('; ')}.` : 'No idea right now — waiting for one.';
   }
   return { decisions, shadow, note };
 }

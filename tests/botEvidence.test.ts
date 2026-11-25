@@ -80,8 +80,10 @@ describe('auto-trader evidence: the edges', () => {
     const all = evaluateAll({ 'day-buy': same(30, 1) }, {}, undefined, {}, 123);
     expect(all.at).toBe(123);
     expect(all.list.map((e) => e.id)).toEqual(PLAYBOOKS);
-    expect(all.list[0]!.state).toBe('proven');
-    expect(all.list[1]!.state).toBe('watch');
+    // app v1.25: the Opening rush is listed first
+    expect(all.list[0]!.id).toBe('open-drive');
+    expect(all.list.find((e) => e.id === 'day-buy')!.state).toBe('proven');
+    expect(all.list.find((e) => e.id === 'open-drive')!.state).toBe('watch');
   });
 });
 

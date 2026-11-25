@@ -7,6 +7,8 @@ import { getQuotes } from '../data/quotes';
 import { minutesIST } from '../daytrade/live';
 import { catalystOf, lastCloseBefore, type Catalyst } from '../early/catalyst';
 import { runEarlyTest, type TestDay } from '../early/earlyTest';
+import { runRushTest } from '../bot/openRush';
+import { RISK_SHARE } from '../bot/policy';
 import { runOpenTest } from '../early/preopen';
 import { NSE_BLOCK_URL, NSE_BULK_URL, nseDeliveryUrl, parseDeals, parseDelivery, type Deal, type Delivery } from '../early/nseFiles';
 import { createLogger } from '../lib/log';
@@ -240,7 +242,9 @@ export function testEarly(now = Date.now(), force = false): Promise<unknown> {
     const capital = settings.dayTrade.earlyCapitalInr ?? 10_000;
     const maxRisk = settings.dayTrade.earlyRiskInr ?? 50;
     const prev = await getLocal('earlyTest');
-    if (!force && prev && prev.capital === capital && prev.maxRisk === maxRisk && now - prev.at < 20 * 3600_000) return prev;
+    // app v1.25: the auto-trader's Opening rush test is sized with the auto-trader's own money
+    const money = await botMoney();
+    if (!force && prev && prev.capital === capital && prev.maxRisk === maxRisk && now - prev.at < 20 * 3600_000 && prev.rush !== undefined && (prev.rush === null || prev.rush.money === money)) return prev;
     const today = istDate(now);
     const days: TestDay[] = [];
     for (const k of (await scanUniverse()).keys) {
@@ -261,13 +265,25 @@ export function testEarly(now = Date.now(), force = false): Promise<unknown> {
     const r = runEarlyTest(days, capital, maxRisk);
     // app v1.16: the opening-drive rule on the same days (the pre-open auction itself has no stored history)
     const open = runOpenTest(days, capital, maxRisk);
-    await setLocal('earlyTest', r ? { ...r, at: now, open } : null);
+    // app v1.25: the same entries for the auto-trader, sized like it, with each way of selling
+    const rush = runRushTest(days, money, RISK_SHARE.trial);
+    await setLocal('earlyTest', r ? { ...r, at: now, open, rush } : null);
+    if (rush) log.info(`Opening rush past test: ${rush.days} days, ${rush.styles[rush.best].all.trades} trades, sold "${rush.best}" — ${rush.bestWhy}`);
     if (r) log.info(`Early Movers past test: ${r.days} days, live ${r.live.trades} trades ₹${Math.round(r.live.pnl)}, late ${r.late.trades} ₹${Math.round(r.late.pnl)}, baseline ${r.baseline.trades} ₹${Math.round(r.baseline.pnl)}`);
     return r;
   })().finally(() => {
     testing = null;
   });
   return testing;
+}
+
+/** The auto-trader's money now (cash + open trades at their buy price), or its start amount when it has none yet. */
+async function botMoney(): Promise<number> {
+  const bot = await getLocal('bot');
+  if (!bot) return 100_000;
+  const w = bot.wallet;
+  const held = w.holdings.reduce((sum, h) => sum + h.qty * h.avgPrice, 0);
+  return Math.max(10_000, Math.round(w.cash + held));
 }
 
 /** The slow jobs, at most once a minute from anywhere (each decides itself whether it is due). */
