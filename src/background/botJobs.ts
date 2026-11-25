@@ -3,6 +3,7 @@ import { suggestBuys, type BuySuggestion } from '../advisor/suggest';
 import { stockChance } from '../advisor/shortModel';
 import { dailyShortPlan, type DailyShortPlan } from '../advisor/shortPlan';
 import { newBrain, learnFrom, upgradeBrain, type Brain, type IdeaContext, type Strategy } from '../bot/brain';
+import { avgNetR, EXIT_STYLE_SHORT, EXIT_STYLES, OPEN_RUSH, rushPlan, type ExitStyle, type RushTestResult } from '../bot/openRush';
 import { addSample, evaluateAll, priorsFrom, toSample, type EvidenceSummary, type PlaybookEvidence, type PlaybookMemo, type PlaybookState, type SampleBook } from '../bot/evidence';
 import { PLAYBOOK_LABEL, playbookOf, RISE_STRONG_REASON, type PlaybookId } from '../bot/playbooks';
 import { BOT_START, decide, scoreIdea, SWING_MAX_DAYS, type Idea, type MarketGates, type ShadowPick } from '../bot/policy';
@@ -154,6 +155,8 @@ export interface BotState {
   playbooks?: Partial<Record<PlaybookId, PlaybookMemo>>;
   /** app v1.23: each kind's state, worked out by the one that runs it (the screen shows this) */
   evidence?: EvidenceSummary;
+  /** app v1.25: the Opening rush test's ways of selling (the screen shows this; worked out where it runs) */
+  rush?: RushSummary;
   /** app v1.23: its best money so far (the drawdown brake counts from it) */
   peak?: number;
   /** app v1.23: stopped 8 % below its best — no new trades until Resume */
@@ -468,7 +471,7 @@ function guardDay(bot: BotState, quotes: Record<string, Quote>, ctx: MarketCtx):
     w = closePosition(w, t, p, ctx);
     return { ...t, closeWhy: justHalted === 'lock' ? "sold to keep today's profit" : 'sold at the daily loss limit' };
   });
-  b = addLog({ ...b, wallet: w, trades }, ctx.now, 'info', `Stopped for today: ${why}. Sold what it bought today; it starts again tomorrow at 9:30.`);
+  b = addLog({ ...b, wallet: w, trades }, ctx.now, 'info', `Stopped for today: ${why}. Sold what it bought today; it starts again tomorrow at 9:15.`);
   void alertHalt(justHalted, sum.todayPnl, trades.filter((t) => t.closeWhy && t.date === ctx.today && t.status === 'open').length).catch(() => undefined);
   return b;
 }
@@ -757,6 +760,40 @@ async function gatherIdeas(now: number, quotes: Record<string, Quote>): Promise<
       });
     }
   }
+  // 8. app v1.25: the Opening rush (bot/openRush.ts) — a stock holding its opening jump (the Early Movers
+  //    opening drive, 9:15–9:35), bought as it makes a new high since the open; sold the way its past test
+  //    chose (quick profit / half and half / let it run)
+  const early = t >= OPEN_RUSH.fromT && t < OPEN_RUSH.untilT ? await getSession('early') : null;
+  if (early && early.date === today && now - early.at < 60_000) {
+    const rush = (await getLocal('earlyTest'))?.rush ?? null;
+    const style = rush?.best ?? 'standard';
+    const bestRes = rush?.styles[style].all;
+    const prior = bestRes && bestRes.trades >= OPEN_RUSH.minTrades ? Math.min(0.65, Math.max(0.35, bestRes.wins / bestRes.trades)) : 0.45;
+    for (const row of early.drive ?? []) {
+      const q = quotes[row.key];
+      if (row.state !== 'holding' || !fresh(q) || q.open === null || q.high === null || q.low === null) continue;
+      const tick = (await getInstrument(row.key))?.tick ?? 0.05;
+      const plan = rushPlan({ price: q.ltp, open: q.open, high: Math.max(q.high, q.ltp), low: Math.min(q.low, q.ltp), vwap: q.vwap && q.vwap > 0 ? q.vwap : row.vwap }, style, tick);
+      if (!plan) continue;
+      ideas.push({
+        key: row.key,
+        symbol: row.symbol,
+        strategy: 'breakout',
+        playbook: 'open-drive',
+        side: 'long',
+        price: q.ltp,
+        stop: plan.stop,
+        target: plan.target,
+        ctx: ctxOf(row.key, q, 'breakout', prior, plan.stop, 1),
+        reasons: [
+          `Opening rush: opened ${row.gapPct >= 0 ? '+' : '−'}${Math.abs(row.gapPct).toFixed(1)}% and holding it, at its high since the open`,
+          row.preRank !== null ? `#${row.preRank} on the pre-open list (score ${row.preScore ?? row.score})` : `score ${row.score}`,
+          ...row.reasons.slice(0, 2),
+          `sold: ${EXIT_STYLE_SHORT[style].toLowerCase()}`,
+        ],
+      });
+    }
+  }
   return ideas;
 }
 
@@ -860,9 +897,9 @@ const INTRADAY_UNPROVEN = 'The Intraday scanner’s own record is not proven yet
 
 /** Each kind of trade's state, from its samples, the stored past tests and what is remembered (off, paused). */
 export async function withEvidence(bot: BotState, now: number): Promise<BotState> {
-  const [dayTest, riseModel, shortTest, breakoutTest, intradayTest, intradayRecord] = await Promise.all([getLocal('dayTest'), getLocal('riseModel'), getLocal('shortTest'), getLocal('breakoutTest'), getLocal('intradayTest'), getLocal('intradayRecord')]);
+  const [dayTest, riseModel, shortTest, breakoutTest, intradayTest, intradayRecord, earlyTest] = await Promise.all([getLocal('dayTest'), getLocal('riseModel'), getLocal('shortTest'), getLocal('breakoutTest'), getLocal('intradayTest'), getLocal('intradayRecord'), getLocal('earlyTest')]);
   const samples = bot.samples ?? samplesFromTrades(bot);
-  const priors = priorsFrom({ dayTest, riseModel, shortTest, breakoutTest, intradayTest }, RISE_PLAN.stop);
+  const priors = priorsFrom({ dayTest, riseModel, shortTest, breakoutTest, intradayTest, rushTest: earlyTest?.rush ?? null }, RISE_PLAN.stop);
   const evidence = evaluateAll(samples, priors, bot.playbooks, { 'intraday-buy': sideStats(intradayRecord, 'buy').proven ? null : INTRADAY_UNPROVEN }, now);
   // a paused kind is remembered: it must recover clearly before it trades again
   const playbooks: Partial<Record<PlaybookId, PlaybookMemo>> = { ...(bot.playbooks ?? {}) };
@@ -873,7 +910,27 @@ export async function withEvidence(bot: BotState, now: number): Promise<BotState
     if (Object.keys(memo).length) playbooks[e.id] = memo;
     else delete playbooks[e.id];
   }
-  return { ...bot, samples, evidence, playbooks };
+  const rush = rushSummary(earlyTest?.rush);
+  const { rush: _old, ...rest } = bot;
+  return { ...rest, samples, evidence, playbooks, ...(rush ? { rush } : {}) };
+}
+
+/** App v1.25: the Opening rush test in short, for the screen. */
+export interface RushSummary {
+  from: string;
+  to: string;
+  best: ExitStyle;
+  why: string;
+  styles: Record<ExitStyle, { trades: number; wins: number; avgNetR: number | null }>;
+}
+
+export function rushSummary(r: RushTestResult | null | undefined): RushSummary | undefined {
+  if (!r) return undefined;
+  const styles = Object.fromEntries(EXIT_STYLES.map((s) => {
+    const a = avgNetR(r.styles[s].all);
+    return [s, { trades: r.styles[s].all.trades, wins: r.styles[s].all.wins, avgNetR: a === null ? null : Math.round(a * 1000) / 1000 }];
+  })) as RushSummary['styles'];
+  return { from: r.from, to: r.to, best: r.best, why: r.bestWhy, styles };
 }
 
 export const evidenceMap = (s: EvidenceSummary | undefined): Partial<Record<PlaybookId, PlaybookEvidence>> => Object.fromEntries((s?.list ?? []).map((e) => [e.id, e]));
@@ -903,7 +960,12 @@ export function brakedToday(trades: readonly BotTrade[], today: string): Set<Pla
 
 // ---------------------------------------------------------------- the loop
 
-/** On every price update (exits) and once a minute (new trades). Never twice at the same time. */
+/** App v1.25: stocks whose trade lost money today — no second try in them today. */
+export function lostToday(trades: readonly BotTrade[], today: string): string[] {
+  return [...new Set(trades.filter((t) => t.status === 'closed' && t.date === today && (t.r ?? 0) < 0).map((t) => t.key))];
+}
+
+/** On every price update (exits) and once a minute (new trades; every 15 s in the Opening rush). Never twice at the same time. */
 export function runBot(now = Date.now(), force = false): Promise<BotState | null> {
   return queue(async () => {
     // app v1.22: only where the auto-trader lives (never a second copy trading the same money)
@@ -984,7 +1046,9 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
   const ddText = bot.ddStop ? `Stopped: its money fell ${DRAWDOWN.stopAtPct}% below its best (${rupees(bot.ddStop.peak)} → ${rupees(bot.ddStop.total)}). Look at "Kinds of trade", then press Resume to let it trade again.` : null;
 
   // app v1.23: each kind of trade's state — at every decision, after a trade closed, and at least every 15 minutes
-  const wantDecide = ctx.open && !stale && (force || now - bot.lastDecideAt >= 60_000);
+  // app v1.25: every 15 s while the Opening rush can trade (9:15–9:35), once a minute after
+  const decideEvery = ctx.t >= OPEN_RUSH.fromT && ctx.t < OPEN_RUSH.untilT ? OPEN_RUSH.decideEveryMs : 60_000;
+  const wantDecide = ctx.open && !stale && (force || now - bot.lastDecideAt >= decideEvery);
   const closedNow = bot.trades.filter((t) => t.status === 'closed').length - closedBefore + (bot.shadow?.trades ?? []).filter((t) => t.status === 'closed').length - shadowClosedBefore;
   if (wantDecide || closedNow > 0 || !bot.evidence || now - bot.evidence.at >= 15 * 60_000) bot = await withEvidence(bot, now);
 
@@ -1007,12 +1071,15 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
     const plan = decide(
       bot.brain,
       ideas,
-      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue, openRisk: openRiskOf(openTrades), industries, ddFactor, ddText, learningOpen: openTrades.filter((t) => t.state === 'watch').length },
+      { equity: sum.total, free: sum.free, openKeys: openTrades.map((t) => t.key), openCount: openTrades.length, newToday: bot.day.opened, todayPnl: sum.todayPnl, t: ctx.t, rules, halted: bot.guard?.date === ctx.today ? bot.guard.halted : null, swingValue, openRisk: openRiskOf(openTrades), industries, ddFactor, ddText, learningOpen: openTrades.filter((t) => t.state === 'watch').length, lostToday: lostToday(bot.trades, ctx.today) },
       { evidence: evidenceMap(bot.evidence), market, braked: brakedToday(bot.trades, ctx.today), industryOf, charges: (product, qty, price) => estimateCharges(product, qty, price) },
     );
     for (const d of plan.decisions) {
       const i = d.idea;
-      const q = wq(quotes[i.key]) ?? i.quote;
+      // app v1.25: the fresher of the shared price and the idea's own (on 25 Nov a stale shared price of
+      // BAJAJHCARE blocked its order every minute for six minutes while the scanner's price was fresh)
+      const shared = wq(quotes[i.key]);
+      const q = i.quote && (!shared || i.quote.fetchedAt > shared.fetchedAt) ? i.quote : shared;
       const source = `Auto-trader · ${PLAYBOOK_LABEL[i.playbook]}`;
       const r = i.side === 'long'
         ? // same-day buys as Upstox Intraday (cheaper charges), paid in full — no borrowing
@@ -1060,7 +1127,7 @@ async function runBotNow(now: number, force: boolean): Promise<BotState | null> 
     bot = openShadowTrades(bot, plan.shadow, quotes, ctx, now);
     bot = { ...bot, lastDecideAt: now, note: plan.note, looked: ideas.length };
   } else if (!ctx.open) {
-    bot = { ...bot, note: 'Market closed — it trades by itself from 9:30 am on market days.' };
+    bot = { ...bot, note: 'Market closed — it trades by itself from 9:15 am on market days (Opening rush; the other kinds from 9:30).' };
   }
 
   // one point per day for the chart
@@ -1329,7 +1396,7 @@ async function alertHalt(why: 'lock' | 'loss', pnl: number, sold: number): Promi
   if (!(await botAlertsOn())) return;
   await notify(`alert:bot-halt-${why}-${Date.now()}`, {
     title: why === 'lock' ? `🤖 Auto-trader kept today's profit: ${signedRs(pnl)}` : `🤖 Auto-trader hit today's loss limit: ${signedRs(pnl)}`,
-    message: `It sold ${sold} trade${sold === 1 ? '' : 's'} bought today and stops until tomorrow 9:30. If you copied its trades: sell (or buy back) what you bought today in Upstox.`,
+    message: `It sold ${sold} trade${sold === 1 ? '' : 's'} bought today and stops until tomorrow 9:15. If you copied its trades: sell (or buy back) what you bought today in Upstox.`,
     priority: 2,
     requireInteraction: true,
   });

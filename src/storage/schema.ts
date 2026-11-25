@@ -323,7 +323,8 @@ export interface LocalStore {
   /** app v1.15: Early Movers — NSE end-of-day files, one catalyst per stock, the past test */
   nseFiles: import('../background/earlyJobs').NseFiles | null;
   catalysts: import('../background/earlyJobs').CatalystStore | null;
-  earlyTest: (import('../early/earlyTest').EarlyTestResult & { at: number; open?: import('../early/preopen').OpenTestResult | null }) | null;
+  /** app v1.25: `rush` = the auto-trader's Opening rush test (bot/openRush.ts), on the same days */
+  earlyTest: (import('../early/earlyTest').EarlyTestResult & { at: number; open?: import('../early/preopen').OpenTestResult | null; rush?: import('../bot/openRush').RushTestResult | null }) | null;
   /** app v1.16: each day's final pre-open top 10 and how they did in the first 30 minutes (last 60 days) */
   preopenRecord: import('../background/preopenJobs').PreopenDay[] | null;
   /** app v1.16.2: each "likely to keep rising" suggestion and its price 15 / 30 minutes later (last 20 days) */

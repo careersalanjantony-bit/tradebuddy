@@ -9,11 +9,13 @@ import type { Strategy } from './brain';
  * of trade, and two playbooks can share a strategy (e.g. the Intraday scanner's BUY is a breakout).
  */
 
-export type PlaybookId = 'day-buy' | 'rise-strong' | 'rise-flow' | 'swing-pick' | 'short-scan' | 'short-model' | 'breakout' | 'intraday-buy';
+export type PlaybookId = 'open-drive' | 'day-buy' | 'rise-strong' | 'rise-flow' | 'swing-pick' | 'short-scan' | 'short-model' | 'breakout' | 'intraday-buy';
 
-export const PLAYBOOKS: readonly PlaybookId[] = ['day-buy', 'rise-strong', 'rise-flow', 'swing-pick', 'short-scan', 'short-model', 'breakout', 'intraday-buy'];
+/** App v1.25: the Opening rush first — the kind the owner asked for (bot/openRush.ts). */
+export const PLAYBOOKS: readonly PlaybookId[] = ['open-drive', 'day-buy', 'rise-strong', 'rise-flow', 'swing-pick', 'short-scan', 'short-model', 'breakout', 'intraday-buy'];
 
 export const PLAYBOOK_LABEL: Record<PlaybookId, string> = {
+  'open-drive': 'Opening rush (buy at the open)',
   'day-buy': 'Day-trade buy signals',
   'rise-strong': 'Rising now ("likely to keep rising")',
   'rise-flow': 'Rising today (older list)',
@@ -26,6 +28,8 @@ export const PLAYBOOK_LABEL: Record<PlaybookId, string> = {
 
 /** The brain's strategy for each playbook (its features and its old scorecard). */
 export const PLAYBOOK_STRATEGY: Record<PlaybookId, Strategy> = {
+  // a buy above the high since the open: the brain's breakout features
+  'open-drive': 'breakout',
   'day-buy': 'day-buy',
   'rise-strong': 'rising',
   'rise-flow': 'rising',

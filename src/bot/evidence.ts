@@ -3,6 +3,7 @@ import type { BreakoutTestReport } from '../daytrade/breakout';
 import type { ShortTestReport } from '../daytrade/shortScan';
 import type { IntradayTestReport } from '../intraday/backtest';
 import type { RiseModel } from '../rising/momentum';
+import { avgGrossR, EXIT_STYLE_SHORT, type RushTestResult } from './openRush';
 import { PLAYBOOKS, type PlaybookId } from './playbooks';
 
 /**
@@ -193,12 +194,15 @@ export interface StoredTests {
   shortTest?: ShortTestReport | null;
   breakoutTest?: BreakoutTestReport | null;
   intradayTest?: IntradayTestReport | null;
+  /** app v1.25: the Opening rush test (stored with the Early Movers test) */
+  rushTest?: RushTestResult | null;
 }
 
 /**
  * The past tests as priors. Only results on days the rules were not tuned on: the day-trade test's
  * "check" days, the rise model's kept-aside days, the newest days of the sell-first and breakout tests,
  * and the Intraday test (its rules were fixed before it ran). `riseStopPct` = the quick trade's stop (0.4 %).
+ * App v1.25: the Opening rush test (its entries were fixed in app v1.16), with the way of selling it chose.
  */
 export function priorsFrom(s: StoredTests, riseStopPct: number): Partial<Record<PlaybookId, TestPrior>> {
   const out: Partial<Record<PlaybookId, TestPrior>> = {};
@@ -217,5 +221,8 @@ export function priorsFrom(s: StoredTests, riseStopPct: number): Partial<Record<
   if (bo && bo.newer.trades > 0) out.breakout = { trades: bo.newer.trades, avgR: r3(bo.newer.avgR), label: 'breakout past test, newest days' };
   const it = s.intradayTest;
   if (it && it.trades > 0 && it.avgR !== null) out['intraday-buy'] = { trades: it.trades, avgR: r3(it.avgR), label: `Intraday past test${it.from && it.to ? `, ${it.from}–${it.to}` : ''}` };
+  const rush = s.rushTest;
+  const rushAvg = rush ? avgGrossR(rush.styles[rush.best].all) : null;
+  if (rush && rushAvg !== null) out['open-drive'] = { trades: rush.styles[rush.best].all.trades, avgR: r3(rushAvg), label: `Opening rush past test ("${EXIT_STYLE_SHORT[rush.best]}"), ${rush.from}–${rush.to}` };
   return out;
 }
